@@ -12,7 +12,7 @@ import { Play, RefreshCw, Square } from "lucide-react";
 import { api } from "@/lib/api";
 import {
   BROWSER_LABEL,
-  RUN_TONE,
+  RUN_BADGE,
   formatDuration,
   isRunActive,
   type Browser,
@@ -20,6 +20,7 @@ import {
   type TestRunDetail,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Badge, LiveDot } from "@/components/ui/badge";
 import {
   Alert,
   Card,
@@ -150,12 +151,15 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
                 type="button"
                 onClick={() => toggle(browser)}
                 disabled={active}
-                className={`rounded-md border px-3 py-1.5 text-sm transition ${
+                className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-all ${
                   on
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-input text-muted-foreground hover:text-foreground"
+                    ? "border-primary/30 bg-primary-subtle text-primary shadow-xs"
+                    : "border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground"
                 } disabled:opacity-50`}
               >
+                <span
+                  className={`size-1.5 rounded-full ${on ? "bg-primary" : "bg-border-strong"}`}
+                />
                 {BROWSER_LABEL[browser]}
               </button>
             );
@@ -221,15 +225,11 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
                     onClick={async () => setRun(await api.runs.get(old.id))}
                     className="flex w-full items-center gap-3 rounded px-2 py-1 text-left hover:bg-muted"
                   >
-                    <span
-                      className={`rounded border px-1.5 py-0.5 text-xs ${RUN_TONE[old.status]}`}
-                    >
-                      {old.status}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
+                    <Badge tone={RUN_BADGE[old.status]}>{old.status}</Badge>
+                    <span className="tabular text-xs text-muted-foreground">
                       {old.passed}/{old.total} passed
                     </span>
-                    <span className="ml-auto text-xs text-muted-foreground">
+                    <span className="tabular ml-auto text-xs text-muted-foreground">
                       {new Date(old.created_at).toLocaleString()}
                     </span>
                   </button>
@@ -249,28 +249,29 @@ function RunSummary({ run }: { run: TestRunDetail }) {
   const expected = Math.max(run.total, done);
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/40 px-3 py-2">
-      <span className={`rounded border px-2 py-0.5 text-xs font-medium ${RUN_TONE[run.status]}`}>
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/50 px-3.5 py-2.5">
+      <Badge tone={active ? "primary" : RUN_BADGE[run.status]}>
+        {active && <LiveDot />}
         {active ? "running" : run.status}
-      </span>
+      </Badge>
 
       {active ? (
-        <span className="text-sm text-muted-foreground">
+        <span className="tabular text-sm text-muted-foreground">
           {done} of {expected} finished…
         </span>
       ) : (
-        <span className="text-sm">
-          <span className="font-medium text-emerald-700">{run.passed} passed</span>
+        <span className="tabular flex items-center gap-3 text-sm">
+          <span className="font-medium text-success">{run.passed} passed</span>
           {run.failed > 0 && (
-            <span className="ml-2 font-medium text-red-700">{run.failed} failed</span>
+            <span className="font-medium text-destructive">{run.failed} failed</span>
           )}
           {run.skipped > 0 && (
-            <span className="ml-2 text-muted-foreground">{run.skipped} skipped</span>
+            <span className="text-muted-foreground">{run.skipped} skipped</span>
           )}
         </span>
       )}
 
-      <span className="ml-auto text-xs text-muted-foreground">
+      <span className="tabular ml-auto text-xs text-muted-foreground">
         {run.browsers.map((b) => BROWSER_LABEL[b as Browser] ?? b).join(" · ")}
         {run.duration_ms !== null && ` · ${formatDuration(run.duration_ms)}`}
       </span>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
+import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import {
@@ -41,13 +42,13 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
+    <main className="flex min-h-svh items-center justify-center bg-background p-4">
+      <div className="w-full max-w-sm">
+        <Brand />
+      <Card className="w-full shadow-lg">
         <CardHeader>
-          <CardTitle>Sign in to AutoQA</CardTitle>
-          <CardDescription>
-            Automate your web testing without writing code.
-          </CardDescription>
+          <CardTitle>Sign in</CardTitle>
+          <CardDescription>Welcome back.</CardDescription>
         </CardHeader>
 
         <CardContent>
@@ -86,13 +87,14 @@ export default function LoginPage() {
 
             <p className="text-center text-sm text-muted-foreground">
               No account yet?{" "}
-              <Link href="/register" className="text-foreground underline underline-offset-4">
+              <Link href="/register" className="font-medium text-primary underline-offset-4 hover:underline">
                 Create one
               </Link>
             </p>
           </form>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
     </main>
   );
 }

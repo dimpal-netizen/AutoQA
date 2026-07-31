@@ -5,7 +5,8 @@ import { Circle, ExternalLink, Loader2, Square } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Project, RecordingSession } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/input";
+import { LiveDot } from "@/components/ui/badge";
+import { Input, Label, Select } from "@/components/ui/input";
 import {
   Alert,
   Card,
@@ -95,10 +96,10 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
 
   if (live) {
     return (
-      <Card className="mb-6 border-destructive/40">
-        <CardContent className="flex flex-wrap items-center gap-4 py-4">
-          <span className="flex items-center gap-2 font-medium">
-            <span className="size-2.5 animate-pulse rounded-full bg-destructive" />
+      <Card className="mb-6 border-destructive/30 bg-destructive-subtle/40 shadow-md">
+        <CardContent className="flex flex-wrap items-center gap-4 px-5 pt-5">
+          <span className="flex items-center gap-2 text-sm font-semibold text-destructive">
+            <LiveDot />
             Recording
           </span>
 
@@ -107,7 +108,7 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
             <p className="truncate text-xs text-muted-foreground">{live.start_url}</p>
           </div>
 
-          <span className="text-sm text-muted-foreground">
+          <span className="tabular text-sm text-muted-foreground">
             <b className="text-foreground">{live.action_count}</b> actions
           </span>
 
@@ -117,7 +118,7 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
           </Button>
         </CardContent>
 
-        <CardContent className="pt-0 text-xs text-muted-foreground">
+        <CardContent className="pt-3 text-xs leading-relaxed text-muted-foreground">
           A browser window is open — switch to it and use the site normally.
           Everything you do is captured. You can also press Stop in the panel
           inside that window, or just close it.
@@ -129,7 +130,7 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle className="text-base">Record a new session</CardTitle>
+        <CardTitle>Record a new session</CardTitle>
         <CardDescription>
           Enter a URL. A browser opens with the recorder running — use the site
           normally and every interaction is captured.
@@ -148,11 +149,11 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
         >
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="launch-project">Project</Label>
-            <select
+            <Select
               id="launch-project"
               value={projectId ?? ""}
               onChange={(e) => setProjectId(Number(e.target.value))}
-              className="h-10 min-w-40 rounded-md border border-input bg-background px-2 text-sm"
+              className="min-w-40"
             >
               {projects.length === 0 && <option value="">No projects</option>}
               {projects.map((project) => (
@@ -160,7 +161,7 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
                   {project.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div className="flex min-w-64 flex-1 flex-col gap-1.5">

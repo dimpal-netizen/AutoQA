@@ -301,21 +301,26 @@ export const BROWSER_LABEL: Record<Browser, string> = {
   webkit: "Safari",
 };
 
-export const RESULT_TONE: Record<ResultStatus, string> = {
-  passed: "text-emerald-700 bg-emerald-50 border-emerald-200",
-  failed: "text-red-700 bg-red-50 border-red-200",
-  error: "text-orange-700 bg-orange-50 border-orange-200",
-  skipped: "text-slate-600 bg-slate-50 border-slate-200",
-  flaky: "text-amber-700 bg-amber-50 border-amber-200",
+/** Badge tones, so status colour is decided once and stays consistent.
+ *  Hard-coded Tailwind palette classes were used here before, which ignored
+ *  the theme and looked wrong in dark mode. */
+export type Tone = "neutral" | "primary" | "success" | "danger" | "warning";
+
+export const RESULT_BADGE: Record<ResultStatus, Tone> = {
+  passed: "success",
+  failed: "danger",
+  error: "warning",
+  skipped: "neutral",
+  flaky: "warning",
 };
 
-export const RUN_TONE: Record<RunStatus, string> = {
-  queued: "text-slate-600 bg-slate-50 border-slate-200",
-  running: "text-blue-700 bg-blue-50 border-blue-200",
-  passed: "text-emerald-700 bg-emerald-50 border-emerald-200",
-  failed: "text-red-700 bg-red-50 border-red-200",
-  cancelled: "text-slate-600 bg-slate-50 border-slate-200",
-  error: "text-orange-700 bg-orange-50 border-orange-200",
+export const RUN_BADGE: Record<RunStatus, Tone> = {
+  queued: "neutral",
+  running: "primary",
+  passed: "success",
+  failed: "danger",
+  cancelled: "neutral",
+  error: "warning",
 };
 
 /** "1.8s" / "2m 04s" — durations in a table need to be scannable. */

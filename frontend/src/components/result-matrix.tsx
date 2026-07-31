@@ -11,9 +11,10 @@
 import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Image as ImageIcon, Video } from "lucide-react";
 import { fetchArtifact } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 import {
   BROWSER_LABEL,
-  RESULT_TONE,
+  RESULT_BADGE,
   formatDuration,
   type Artifact,
   type Browser,
@@ -43,7 +44,7 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[32rem] text-sm">
+      <table className="w-full min-w-[32rem] border-separate border-spacing-0 text-sm">
         <thead>
           <tr className="border-b text-left text-xs text-muted-foreground">
             <th className="py-2 pr-3 font-medium">Test</th>
@@ -94,12 +95,13 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
                     }
                     return (
                       <td key={browser} className="py-2 pr-3">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs ${RESULT_TONE[result.status]}`}
+                        <Badge
+                          tone={RESULT_BADGE[result.status]}
+                          className="tabular"
                           title={result.error_message ?? result.status}
                         >
                           {ICON[result.status]} {formatDuration(result.duration_ms)}
-                        </span>
+                        </Badge>
                       </td>
                     );
                   })}
@@ -134,7 +136,7 @@ function FailureDetail({ results }: { results: TestResult[] }) {
           </p>
 
           {result.error_message && (
-            <p className="rounded border border-red-200 bg-red-50 px-2 py-1.5 font-mono text-xs text-red-800">
+            <p className="rounded-md border border-destructive/25 bg-destructive-subtle px-2.5 py-2 font-mono text-xs leading-relaxed text-destructive">
               {result.error_message}
             </p>
           )}
@@ -146,7 +148,7 @@ function FailureDetail({ results }: { results: TestResult[] }) {
               <summary className="cursor-pointer text-xs text-muted-foreground">
                 Full trace
               </summary>
-              <pre className="mt-1 max-h-64 overflow-auto rounded bg-slate-900 p-2 font-mono text-xs text-slate-100">
+              <pre className="mt-1.5 max-h-64 overflow-auto rounded-md bg-[#0b1220] p-3 font-mono text-xs leading-relaxed text-slate-200">
                 {result.stack_trace}
               </pre>
             </details>

@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { FolderKanban, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { hasRole, type Browser, type Project } from "@/lib/types";
+import { BROWSER_LABEL, hasRole, type Browser, type Project } from "@/lib/types";
 import { useAuthStore } from "@/stores/auth-store";
 import { RequireAuth } from "@/components/auth-provider";
-import { AppHeader } from "@/components/app-header";
+import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import {
@@ -16,15 +16,20 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  EmptyState as Empty,
+  PageHeader,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { SkeletonRows } from "@/components/ui/skeleton";
 
 const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
 
 export default function ProjectsPage() {
   return (
     <RequireAuth>
-      <AppHeader />
-      <ProjectsView />
+      <AppShell>
+        <ProjectsView />
+      </AppShell>
     </RequireAuth>
   );
 }
@@ -75,22 +80,18 @@ function ProjectsView() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Projects</h1>
-          <p className="text-sm text-muted-foreground">
-            Each project is one web application you want to test.
-          </p>
-        </div>
-
+    <div className="animate-in">
+      <PageHeader
+        title="Projects"
+        description="Each project is one web application you want to test."
+      >
         {canCreate && (
           <Button onClick={() => setShowForm((v) => !v)}>
-            <Plus className="size-4" />
+            <Plus />
             {showForm ? "Cancel" : "New project"}
           </Button>
         )}
-      </div>
+      </PageHeader>
 
       {error && <Alert className="mb-4">{error}</Alert>}
 
@@ -104,11 +105,11 @@ function ProjectsView() {
       )}
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading projects…</p>
+        <SkeletonRows count={2} />
       ) : projects.length === 0 ? (
         <EmptyState canCreate={canCreate} />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((project) => (
             <ProjectCard
               key={project.id}
@@ -118,7 +119,7 @@ function ProjectsView() {
           ))}
         </div>
       )}
-    </main>
+    </div>
   );
 }
 
@@ -130,7 +131,7 @@ function ProjectCard({
   onDelete: () => void;
 }) {
   return (
-    <Card>
+    <Card className="group transition-all hover:border-border-strong hover:shadow-md">
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -144,8 +145,9 @@ function ProjectCard({
             size="icon"
             aria-label={`Delete ${project.name}`}
             onClick={onDelete}
+            className="opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
           >
-            <Trash2 className="size-4 text-destructive" />
+            <Trash2 />
           </Button>
         </div>
       </CardHeader>
@@ -156,12 +158,9 @@ function ProjectCard({
         )}
         <div className="flex flex-wrap gap-1.5">
           {project.default_browsers.map((browser) => (
-            <span
-              key={browser}
-              className="rounded-full bg-secondary px-2.5 py-0.5 text-xs text-secondary-foreground"
-            >
-              {browser}
-            </span>
+            <Badge key={browser} tone="outline">
+              {BROWSER_LABEL[browser as Browser] ?? browser}
+            </Badge>
           ))}
         </div>
       </CardContent>
@@ -171,16 +170,15 @@ function ProjectCard({
 
 function EmptyState({ canCreate }: { canCreate: boolean }) {
   return (
-    <Card>
-      <CardContent className="py-10 text-center">
-        <p className="font-medium">No projects yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {canCreate
-            ? "Create your first project to start recording tests."
-            : "Ask a QA Engineer or Test Manager to create one for you."}
-        </p>
-      </CardContent>
-    </Card>
+    <Empty
+      icon={<FolderKanban />}
+      title="No projects yet"
+      description={
+        canCreate
+          ? "A project is one web application under test. Create one to start recording."
+          : "Ask a QA Engineer or Test Manager to create one for you."
+      }
+    />
   );
 }
 

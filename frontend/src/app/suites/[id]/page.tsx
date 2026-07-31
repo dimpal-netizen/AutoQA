@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { RELIABLE_RANK, SELECTOR_RANK, type TestSuiteDetail } from "@/lib/types";
-import { AppHeader } from "@/components/app-header";
+import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
 import { RunPanel } from "@/components/run-panel";
 import { TestCaseList } from "@/components/test-case-list";
@@ -25,7 +25,9 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  PageHeader,
 } from "@/components/ui/card";
+import { SkeletonRows } from "@/components/ui/skeleton";
 
 export default function SuiteDetailPage({
   params,
@@ -36,8 +38,9 @@ export default function SuiteDetailPage({
   const { id } = use(params);
   return (
     <RequireAuth>
-      <AppHeader />
-      <SuiteDetail id={Number(id)} />
+      <AppShell>
+        <SuiteDetail id={Number(id)} />
+      </AppShell>
     </RequireAuth>
   );
 }
@@ -79,13 +82,13 @@ function SuiteDetail({ id }: { id: number }) {
 
   if (error && !suite) {
     return (
-      <main className="mx-auto max-w-4xl p-6">
+      <div>
         <Alert>{error}</Alert>
-      </main>
+      </div>
     );
   }
   if (!suite) {
-    return <main className="mx-auto max-w-4xl p-6 text-sm text-muted-foreground">Loading…</main>;
+    return <SkeletonRows count={3} />;
   }
 
   const steps = suite.cases.flatMap((c) => c.steps);
@@ -99,36 +102,31 @@ function SuiteDetail({ id }: { id: number }) {
   ].sort();
 
   return (
-    <main className="mx-auto max-w-4xl p-6">
+    <div className="animate-in">
       <Link
         href="/suites"
-        className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        className="mb-5 inline-flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
       >
-        <ArrowLeft className="size-4" />
+        <ArrowLeft className="size-3.5" />
         All tests
       </Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold">{suite.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{suite.description}</p>
-        </div>
-
+      <PageHeader title={suite.name} description={suite.description}>
         {suite.recording_id && (
-          <div className="flex items-center gap-2">
+          <>
             <Link href={`/recordings/${suite.recording_id}`}>
-              <Button variant="outline" size="sm">
-                <Video className="size-4" />
+              <Button variant="outline">
+                <Video />
                 Recording
               </Button>
             </Link>
-            <Button variant="outline" size="sm" disabled={regenerating} onClick={regenerate}>
-              <RefreshCw className={`size-4 ${regenerating ? "animate-spin" : ""}`} />
+            <Button variant="outline" disabled={regenerating} onClick={regenerate}>
+              <RefreshCw className={regenerating ? "animate-spin" : ""} />
               {regenerating ? "Regenerating…" : "Regenerate"}
             </Button>
-          </div>
+          </>
         )}
-      </div>
+      </PageHeader>
 
       {error && <Alert className="mt-4">{error}</Alert>}
 
@@ -146,15 +144,15 @@ function SuiteDetail({ id }: { id: number }) {
         </Alert>
       )}
 
-      <h2 className="mt-8 text-lg font-semibold">
+      <h2 className="mt-10 text-lg font-semibold">
         Test cases{suite.cases.length > 1 && ` (${suite.cases.length})`}
       </h2>
-      <p className="mb-3 mt-1 text-sm text-muted-foreground">
+      <p className="mb-4 mt-1 text-[13px] text-muted-foreground">
         What each test does, in order. No code needed to review it.
       </p>
 
       <TestCaseList cases={suite.cases} />
-    </main>
+    </div>
   );
 }
 
@@ -190,7 +188,7 @@ function ScriptLocation({
   return (
     <Card className="mt-5">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex items-center gap-2">
           <FolderOpen className="size-4" />
           Scripts
         </CardTitle>

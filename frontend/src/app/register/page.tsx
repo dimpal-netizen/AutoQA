@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
 import { ROLE_LABEL, type UserRole } from "@/lib/types";
+import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import {
@@ -57,8 +58,10 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
+    <main className="flex min-h-svh items-center justify-center bg-background p-4">
+      <div className="w-full max-w-sm">
+        <Brand />
+      <Card className="w-full shadow-lg">
         <CardHeader>
           <CardTitle>Create your account</CardTitle>
           <CardDescription>
@@ -130,13 +133,14 @@ export default function RegisterPage() {
 
             <p className="text-center text-sm text-muted-foreground">
               Already registered?{" "}
-              <Link href="/login" className="text-foreground underline underline-offset-4">
+              <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">
                 Sign in
               </Link>
             </p>
           </form>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
     </main>
   );
 }

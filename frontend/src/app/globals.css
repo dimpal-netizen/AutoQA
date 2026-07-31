@@ -1,59 +1,119 @@
 @import "tailwindcss";
 
-/* ShadCN-style design tokens. Tailwind v4 reads these through @theme inline,
-   so `bg-background`, `text-muted-foreground`, etc. work as utility classes. */
+/* Design tokens.
+   Tailwind v4 reads these through @theme inline, so `bg-background`,
+   `text-muted-foreground` and friends work as utility classes.
+
+   Two deliberate choices worth knowing:
+
+   - Neutrals are slate-tinted, not pure grey. Pure #f5f5f5 next to white reads
+     as "unstyled"; a hint of blue reads as a surface someone chose.
+   - `--background` sits a shade below `--card`, so the page recedes and cards
+     sit on top of it. Without that separation every panel floats on the same
+     white and the eye has nothing to follow. */
 :root {
-  --background: #ffffff;
-  --foreground: #0a0a0a;
+  --background: #f7f8fa;
+  --surface: #f2f4f7;
+  --foreground: #0b1220;
+
   --card: #ffffff;
-  --card-foreground: #0a0a0a;
-  --primary: #171717;
-  --primary-foreground: #fafafa;
-  --secondary: #f5f5f5;
-  --secondary-foreground: #171717;
-  --muted: #f5f5f5;
-  --muted-foreground: #737373;
-  --accent: #f5f5f5;
-  --accent-foreground: #171717;
+  --card-foreground: #0b1220;
+
+  /* Indigo. Used sparingly: primary actions, the active nav item, focus rings. */
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-foreground: #ffffff;
+  --primary-subtle: #eef2ff;
+
+  --secondary: #eef1f6;
+  --secondary-foreground: #1e2939;
+
+  --muted: #f1f4f8;
+  --muted-foreground: #5c6a80;
+
+  --accent: #eef1f6;
+  --accent-foreground: #1e2939;
+
   --destructive: #dc2626;
-  --destructive-foreground: #fafafa;
-  --success: #16a34a;
-  --border: #e5e5e5;
-  --input: #e5e5e5;
-  --ring: #0a0a0a;
-  --radius: 0.625rem;
+  --destructive-foreground: #ffffff;
+  --destructive-subtle: #fef2f2;
+
+  --success: #059669;
+  --success-subtle: #ecfdf5;
+
+  --warning: #d97706;
+  --warning-subtle: #fffbeb;
+
+  --border: #e3e8ef;
+  --border-strong: #cdd5e0;
+  --input: #dfe4ec;
+  --ring: #4f46e5;
+
+  --radius: 0.75rem;
+
+  /* Layered rather than one blurry drop. Soft ambient light plus a tight
+     contact shadow is what makes a card look lifted instead of smudged. */
+  --shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(16 24 40 / 0.06), 0 1px 2px -1px rgb(16 24 40 / 0.04);
+  --shadow-md: 0 4px 8px -2px rgb(16 24 40 / 0.06), 0 2px 4px -2px rgb(16 24 40 / 0.04);
+  --shadow-lg: 0 12px 16px -4px rgb(16 24 40 / 0.08), 0 4px 6px -2px rgb(16 24 40 / 0.03);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #fafafa;
-    --card: #171717;
-    --card-foreground: #fafafa;
-    --primary: #fafafa;
-    --primary-foreground: #171717;
-    --secondary: #262626;
-    --secondary-foreground: #fafafa;
-    --muted: #262626;
-    --muted-foreground: #a3a3a3;
-    --accent: #262626;
-    --accent-foreground: #fafafa;
-    --destructive: #ef4444;
-    --destructive-foreground: #fafafa;
-    --success: #22c55e;
-    --border: #262626;
-    --input: #262626;
-    --ring: #d4d4d4;
+    --background: #0a0d14;
+    --surface: #0f131c;
+    --foreground: #e8ecf3;
+
+    --card: #141926;
+    --card-foreground: #e8ecf3;
+
+    --primary: #6366f1;
+    --primary-hover: #818cf8;
+    --primary-foreground: #ffffff;
+    --primary-subtle: #1e1b4b;
+
+    --secondary: #1c2334;
+    --secondary-foreground: #e8ecf3;
+
+    --muted: #1a2030;
+    --muted-foreground: #94a3b8;
+
+    --accent: #1c2334;
+    --accent-foreground: #e8ecf3;
+
+    --destructive: #f87171;
+    --destructive-foreground: #0a0d14;
+    --destructive-subtle: #2a1416;
+
+    --success: #34d399;
+    --success-subtle: #06251c;
+
+    --warning: #fbbf24;
+    --warning-subtle: #2a1f06;
+
+    --border: #232b3d;
+    --border-strong: #33405a;
+    --input: #2a3346;
+    --ring: #6366f1;
+
+    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 12px 16px -4px rgb(0 0 0 / 0.5), 0 4px 6px -2px rgb(0 0 0 / 0.3);
   }
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-subtle: var(--primary-subtle);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -62,18 +122,71 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-subtle: var(--destructive-subtle);
   --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
   --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 3px);
+  --radius-sm: calc(var(--radius) - 5px);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+* {
+  border-color: var(--border);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Headings get slightly negative tracking. At large sizes the default spacing
+   looks loose, and tightening it is most of what separates a considered
+   setting from a default one. */
+h1, h2, h3 {
+  letter-spacing: -0.018em;
+}
+
+/* Tabular figures so durations and counts do not jitter as they update during
+   a run - digits of differing width make a live table look unstable. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A scrollbar that does not shout. */
+@media (pointer: fine) {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border: 3px solid var(--background);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.animate-in {
+  animation: fade-up 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }

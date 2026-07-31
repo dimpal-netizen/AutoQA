@@ -12,9 +12,10 @@ import {
   type RecordingSessionDetail,
   type Selector,
 } from "@/lib/types";
-import { AppHeader } from "@/components/app-header";
+import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
 import { Alert, Card, CardContent } from "@/components/ui/card";
+import { SkeletonRows } from "@/components/ui/skeleton";
 
 export default function RecordingDetailPage({
   params,
@@ -25,8 +26,9 @@ export default function RecordingDetailPage({
   const { id } = use(params);
   return (
     <RequireAuth>
-      <AppHeader />
-      <RecordingDetail id={Number(id)} />
+      <AppShell>
+        <RecordingDetail id={Number(id)} />
+      </AppShell>
     </RequireAuth>
   );
 }
@@ -55,14 +57,14 @@ function RecordingDetail({ id }: { id: number }) {
 
   if (error) {
     return (
-      <main className="mx-auto max-w-4xl p-6">
+      <div>
         <Alert>{error}</Alert>
-      </main>
+      </div>
     );
   }
   if (!session) {
     return (
-      <main className="mx-auto max-w-4xl p-6 text-sm text-muted-foreground">Loading…</main>
+      <SkeletonRows count={3} />
     );
   }
 
@@ -71,7 +73,7 @@ function RecordingDetail({ id }: { id: number }) {
   ).length;
 
   return (
-    <main className="mx-auto max-w-4xl p-6">
+    <div>
       <Link
         href="/recordings"
         className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -108,7 +110,7 @@ function RecordingDetail({ id }: { id: number }) {
           <ActionRow key={action.id} action={action} />
         ))}
       </div>
-    </main>
+    </div>
   );
 }
 
