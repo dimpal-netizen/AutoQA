@@ -23,6 +23,7 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { ROLE_LABEL } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV = [
   { href: "/projects", label: "Projects", icon: FolderKanban },
@@ -38,7 +39,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <Sidebar open={open} onClose={() => setOpen(false)} />
 
       {/* Narrow screens get a top bar instead; the sidebar slides over. */}
-      <div className="flex items-center gap-3 border-b border-border bg-card px-4 py-3 lg:hidden">
+      <div className="flex items-center gap-3 border-b border-border bg-surface/80 px-4 py-3 backdrop-blur-xl lg:hidden">
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -73,7 +74,10 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[248px] flex-col border-r border-border bg-card",
+          "fixed inset-y-0 left-0 z-50 flex w-[248px] flex-col border-r border-border",
+          // A shade darker than the page, so the sidebar reads as a fixed
+          // frame the content scrolls inside rather than another panel.
+          "bg-surface/80 backdrop-blur-xl",
           "transition-transform duration-200 lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
@@ -101,7 +105,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
                 className={cn(
                   "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   active
-                    ? "bg-primary-subtle text-primary"
+                    ? "lit bg-primary-subtle text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-foreground",
                 )}
               >
@@ -127,11 +131,11 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 function Wordmark() {
   return (
     <Link href="/projects" className="flex items-center gap-2.5">
-      <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+      <span className="brand-gradient lit flex size-8 items-center justify-center rounded-lg text-white">
         <Radar className="size-[17px]" />
       </span>
       <span className="flex flex-col leading-none">
-        <span className="text-[15px] font-semibold tracking-tight">AutoQA</span>
+        <span className="brand-text text-[15px] font-semibold tracking-tight">AutoQA</span>
         <span className="mt-1 text-[11px] text-muted-foreground">
           Test automation
         </span>
@@ -167,6 +171,7 @@ function UserCard() {
             {ROLE_LABEL[user.role]}
           </span>
         </span>
+        <ThemeToggle />
         <button
           type="button"
           onClick={() => {

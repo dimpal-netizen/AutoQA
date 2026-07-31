@@ -9,11 +9,11 @@ import { Radar } from "lucide-react";
 export function Brand() {
   return (
     <div className="mb-6 flex flex-col items-center gap-3">
-      <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
+      <span className="brand-gradient lit-lg flex size-12 items-center justify-center rounded-xl text-white">
         <Radar className="size-6" />
       </span>
       <span className="text-center">
-        <span className="block text-lg font-semibold tracking-tight">AutoQA</span>
+        <span className="brand-text block text-xl font-semibold tracking-tight">AutoQA</span>
         <span className="block text-[13px] text-muted-foreground">
           Test automation without writing code
         </span>

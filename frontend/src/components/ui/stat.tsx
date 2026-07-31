@@ -29,7 +29,7 @@ export function Stat({
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-card px-4 py-3 shadow-xs",
+        "lit sheen rounded-lg border border-border bg-card px-4 py-3",
         className,
       )}
     >

@@ -15,13 +15,14 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow-sm hover:bg-primary-hover " +
+          "brand-gradient text-primary-foreground shadow-[0_1px_2px_rgb(0_0_0/0.3),inset_0_1px_0_rgb(255_255_255/0.18)] " +
+          "hover:brightness-110 hover:shadow-[0_0_0_1px_var(--primary-glow),0_4px_16px_var(--primary-glow)] " +
           "active:translate-y-px",
         destructive:
           "bg-destructive text-destructive-foreground shadow-sm hover:brightness-95 " +
           "active:translate-y-px",
         outline:
-          "border border-border bg-card text-foreground shadow-xs " +
+          "lit border border-border bg-card text-foreground " +
           "hover:bg-accent hover:border-border-strong active:translate-y-px",
         secondary:
           "bg-secondary text-secondary-foreground hover:brightness-[0.97] active:translate-y-px",

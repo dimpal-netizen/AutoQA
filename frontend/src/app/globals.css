@@ -1,37 +1,97 @@
 @import "tailwindcss";
 
 /* Design tokens.
-   Tailwind v4 reads these through @theme inline, so `bg-background`,
-   `text-muted-foreground` and friends work as utility classes.
+   Light by default, dark on request — the theme is stamped on <html> as
+   data-theme by a script in the head, so it is chosen before first paint
+   rather than flashing.
 
-   Two deliberate choices worth knowing:
+   Three things carry most of the weight here:
 
-   - Neutrals are slate-tinted, not pure grey. Pure #f5f5f5 next to white reads
-     as "unstyled"; a hint of blue reads as a surface someone chose.
-   - `--background` sits a shade below `--card`, so the page recedes and cards
-     sit on top of it. Without that separation every panel floats on the same
-     white and the eye has nothing to follow. */
-:root {
-  --background: #f7f8fa;
-  --surface: #f2f4f7;
-  --foreground: #0b1220;
+   - Surfaces are layered, not flat. Background, card and elevated card are
+     three distinct values, so depth comes from the palette rather than from
+     piling on shadows.
+   - Borders in dark are lighter than the surface, in light they are darker.
+     A dark theme lit like a light one looks like a bug.
+   - The accent is a gradient, not a colour. One flat indigo across every
+     button is what makes an interface read as a default template. */
+:root[data-theme="dark"] {
+  --background: #0a0c12;
+  --surface: #0f1219;
+  --card: #141822;
+  --card-elevated: #1a1f2b;
+  --card-foreground: #e9edf5;
+  --foreground: #e9edf5;
 
+  --primary: #6366f1;
+  --primary-hover: #7c7ff3;
+  --primary-foreground: #ffffff;
+  --primary-subtle: #1e1f3d;
+  --primary-glow: rgb(99 102 241 / 0.35);
+
+  --secondary: #1e2431;
+  --secondary-foreground: #e9edf5;
+
+  --muted: #191e29;
+  --muted-foreground: #8d99ae;
+
+  --accent: #1e2431;
+  --accent-foreground: #e9edf5;
+
+  --destructive: #f2707a;
+  --destructive-foreground: #ffffff;
+  --destructive-subtle: #2a161b;
+
+  --success: #34d399;
+  --success-subtle: #0c2620;
+
+  --warning: #fbbf24;
+  --warning-subtle: #2a2109;
+
+  --border: #232a38;
+  --border-strong: #333c4e;
+  --input: #232a38;
+  --ring: #6366f1;
+
+  --radius: 0.75rem;
+
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 8px 16px -4px rgb(0 0 0 / 0.5), 0 3px 6px -3px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 20px 32px -8px rgb(0 0 0 / 0.6), 0 6px 12px -6px rgb(0 0 0 / 0.4);
+
+  /* A hairline of light along the top edge of raised surfaces. This is the
+     single cheapest thing that makes a dark interface look lit rather than
+     painted. */
+  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.05);
+  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 45%);
+}
+
+:root,
+:root[data-theme="light"] {
+  /* Not white. A page that is #ffffff behind #ffffff cards has no depth to
+     work with, which is exactly what makes an interface look unfinished. The
+     background is a tinted slate, the cards are white, and the difference
+     between them is what the eye follows. */
+  --background: #eef1f6;
+  --surface: #e6eaf2;
   --card: #ffffff;
-  --card-foreground: #0b1220;
+  --card-elevated: #ffffff;
+  --card-foreground: #101828;
+  --foreground: #101828;
 
-  /* Indigo. Used sparingly: primary actions, the active nav item, focus rings. */
   --primary: #4f46e5;
   --primary-hover: #4338ca;
   --primary-foreground: #ffffff;
-  --primary-subtle: #eef2ff;
+  --primary-subtle: #e8e9ff;
+  --primary-glow: rgb(79 70 229 / 0.28);
 
-  --secondary: #eef1f6;
+  --secondary: #e8ecf3;
   --secondary-foreground: #1e2939;
 
-  --muted: #f1f4f8;
-  --muted-foreground: #5c6a80;
+  --muted: #f4f6fa;
+  --muted-foreground: #5a6779;
 
-  --accent: #eef1f6;
+  --accent: #eaeef5;
   --accent-foreground: #1e2939;
 
   --destructive: #dc2626;
@@ -44,64 +104,18 @@
   --warning: #d97706;
   --warning-subtle: #fffbeb;
 
-  --border: #e3e8ef;
-  --border-strong: #cdd5e0;
-  --input: #dfe4ec;
+  --border: #dde3ec;
+  --border-strong: #c2ccdb;
+  --input: #d8dfea;
   --ring: #4f46e5;
 
-  --radius: 0.75rem;
-
-  /* Layered rather than one blurry drop. Soft ambient light plus a tight
-     contact shadow is what makes a card look lifted instead of smudged. */
   --shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.04);
-  --shadow-sm: 0 1px 3px 0 rgb(16 24 40 / 0.06), 0 1px 2px -1px rgb(16 24 40 / 0.04);
-  --shadow-md: 0 4px 8px -2px rgb(16 24 40 / 0.06), 0 2px 4px -2px rgb(16 24 40 / 0.04);
-  --shadow-lg: 0 12px 16px -4px rgb(16 24 40 / 0.08), 0 4px 6px -2px rgb(16 24 40 / 0.03);
-}
+  --shadow-sm: 0 1px 3px 0 rgb(16 24 40 / 0.07), 0 1px 2px -1px rgb(16 24 40 / 0.04);
+  --shadow-md: 0 8px 16px -4px rgb(16 24 40 / 0.08), 0 3px 6px -3px rgb(16 24 40 / 0.05);
+  --shadow-lg: 0 20px 32px -8px rgb(16 24 40 / 0.10), 0 6px 12px -6px rgb(16 24 40 / 0.05);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0d14;
-    --surface: #0f131c;
-    --foreground: #e8ecf3;
-
-    --card: #141926;
-    --card-foreground: #e8ecf3;
-
-    --primary: #6366f1;
-    --primary-hover: #818cf8;
-    --primary-foreground: #ffffff;
-    --primary-subtle: #1e1b4b;
-
-    --secondary: #1c2334;
-    --secondary-foreground: #e8ecf3;
-
-    --muted: #1a2030;
-    --muted-foreground: #94a3b8;
-
-    --accent: #1c2334;
-    --accent-foreground: #e8ecf3;
-
-    --destructive: #f87171;
-    --destructive-foreground: #0a0d14;
-    --destructive-subtle: #2a1416;
-
-    --success: #34d399;
-    --success-subtle: #06251c;
-
-    --warning: #fbbf24;
-    --warning-subtle: #2a1f06;
-
-    --border: #232b3d;
-    --border-strong: #33405a;
-    --input: #2a3346;
-    --ring: #6366f1;
-
-    --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
-    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.3);
-    --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
-    --shadow-lg: 0 12px 16px -4px rgb(0 0 0 / 0.5), 0 4px 6px -2px rgb(0 0 0 / 0.3);
-  }
+  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
+  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.6), transparent 45%);
 }
 
 @theme inline {
@@ -109,6 +123,7 @@
   --color-surface: var(--surface);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
+  --color-card-elevated: var(--card-elevated);
   --color-card-foreground: var(--card-foreground);
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
@@ -157,20 +172,57 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Headings get slightly negative tracking. At large sizes the default spacing
-   looks loose, and tightening it is most of what separates a considered
-   setting from a default one. */
+/* A single wash of colour behind everything, so the background is a space
+   rather than a flat fill. Fixed, so it does not travel with the scroll. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(55rem 38rem at 12% -8%, var(--primary-subtle), transparent 62%),
+    radial-gradient(45rem 30rem at 100% 4%, var(--success-subtle), transparent 58%);
+  opacity: 0.85;
+}
+
 h1, h2, h3 {
-  letter-spacing: -0.018em;
+  letter-spacing: -0.02em;
 }
 
 /* Tabular figures so durations and counts do not jitter as they update during
-   a run - digits of differing width make a live table look unstable. */
+   a run — digits of differing width make a live table look unstable. */
 .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-/* A scrollbar that does not shout. */
+/* Raised surfaces: the top-edge highlight plus a faint sheen. Applied as a
+   utility so cards, buttons and the sidebar share one treatment. */
+.lit {
+  box-shadow: var(--edge), var(--shadow-sm);
+}
+
+.lit-lg {
+  box-shadow: var(--edge), var(--shadow-md);
+}
+
+.sheen {
+  background-image: var(--sheen);
+}
+
+/* The brand gradient. One accent used deliberately in a few places beats an
+   evenly coloured interface. */
+.brand-gradient {
+  background-image: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+}
+
+.brand-text {
+  background-image: linear-gradient(135deg, var(--foreground) 30%, var(--primary) 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 @media (pointer: fine) {
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -183,10 +235,16 @@ h1, h2, h3 {
 }
 
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
 
 .animate-in {
-  animation: fade-up 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fade-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Theme switches should not animate every colour on the page at once — that
+   reads as a slow repaint rather than a change of lighting. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in { animation: none; }
 }
