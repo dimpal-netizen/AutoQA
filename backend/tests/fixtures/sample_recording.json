@@ -1,0 +1,384 @@
+{
+  "_comment": "Reference recording: sign in, fill a shipping form, upload a file, reorder items, check out. Exercises all 13 action types, iframes, and the full selector ranking. This is the contract the Chrome extension must produce.",
+  "session": {
+    "name": "Checkout flow",
+    "start_url": "https://shop.example.com/login",
+    "extension_version": "0.1.0",
+    "browser_info": {
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+      "viewport": { "width": 1440, "height": 900 },
+      "device_pixel_ratio": 2,
+      "platform": "Win32"
+    }
+  },
+  "actions": [
+    {
+      "sequence": 0,
+      "action_type": "navigate",
+      "timestamp_ms": 0,
+      "url": "https://shop.example.com/login",
+      "frame_path": [],
+      "selectors": [],
+      "element": null,
+      "payload": { "url": "https://shop.example.com/login" }
+    },
+    {
+      "sequence": 1,
+      "action_type": "click",
+      "timestamp_ms": 1420,
+      "url": "https://shop.example.com/login",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "email-input", "unique": true, "score": 98 },
+        { "strategy": "label", "value": "Email address", "unique": true, "score": 90 },
+        { "strategy": "placeholder", "value": "you@company.com", "unique": true, "score": 78 },
+        { "strategy": "css", "value": "form.login input[type='email']", "unique": true, "score": 55 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "email",
+        "role": "textbox",
+        "accessible_name": "Email address",
+        "attributes": { "id": "email", "name": "email", "data-testid": "email-input" },
+        "bounding_box": { "x": 520, "y": 280, "width": 400, "height": 44 }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 2,
+      "action_type": "input",
+      "timestamp_ms": 2650,
+      "url": "https://shop.example.com/login",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "email-input", "unique": true, "score": 98 },
+        { "strategy": "label", "value": "Email address", "unique": true, "score": 90 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "email",
+        "role": "textbox",
+        "accessible_name": "Email address",
+        "attributes": { "data-testid": "email-input" }
+      },
+      "payload": { "value": "buyer@example.com" }
+    },
+    {
+      "sequence": 3,
+      "action_type": "input",
+      "timestamp_ms": 4100,
+      "url": "https://shop.example.com/login",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "password-input", "unique": true, "score": 98 },
+        { "strategy": "label", "value": "Password", "unique": true, "score": 90 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "password",
+        "role": "textbox",
+        "accessible_name": "Password",
+        "attributes": { "data-testid": "password-input" }
+      },
+      "payload": { "value": "hunter2-not-a-real-password" }
+    },
+    {
+      "sequence": 4,
+      "action_type": "check",
+      "timestamp_ms": 5300,
+      "url": "https://shop.example.com/login",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "remember-me", "unique": true, "score": 97 },
+        { "strategy": "label", "value": "Remember me", "unique": true, "score": 88 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "checkbox",
+        "role": "checkbox",
+        "accessible_name": "Remember me",
+        "attributes": { "data-testid": "remember-me" }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 5,
+      "action_type": "click",
+      "timestamp_ms": 6200,
+      "url": "https://shop.example.com/login",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "role_name", "value": "button|Sign in", "unique": true, "score": 95 },
+        { "strategy": "test_id", "value": "login-submit", "unique": true, "score": 99 },
+        { "strategy": "text", "value": "Sign in", "unique": true, "score": 80 }
+      ],
+      "element": {
+        "tag": "button",
+        "input_type": "submit",
+        "role": "button",
+        "accessible_name": "Sign in",
+        "text": "Sign in",
+        "attributes": { "data-testid": "login-submit" }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 6,
+      "action_type": "navigate",
+      "timestamp_ms": 7850,
+      "url": "https://shop.example.com/account",
+      "frame_path": [],
+      "selectors": [],
+      "element": null,
+      "payload": { "url": "https://shop.example.com/account" }
+    },
+    {
+      "sequence": 7,
+      "action_type": "assert",
+      "timestamp_ms": 8400,
+      "url": "https://shop.example.com/account",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "account-greeting", "unique": true, "score": 96 }
+      ],
+      "element": {
+        "tag": "h1",
+        "role": "heading",
+        "text": "Welcome back, Buyer",
+        "attributes": { "data-testid": "account-greeting" }
+      },
+      "payload": { "kind": "to_have_text", "expected": "Welcome back, Buyer" }
+    },
+    {
+      "sequence": 8,
+      "action_type": "hover",
+      "timestamp_ms": 9600,
+      "url": "https://shop.example.com/account",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "role_name", "value": "navigation|Main", "unique": true, "score": 85 },
+        { "strategy": "css", "value": "nav.main > ul > li:nth-child(2)", "unique": true, "score": 50 }
+      ],
+      "element": {
+        "tag": "li",
+        "text": "Shop",
+        "attributes": { "class": "nav-item has-dropdown" }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 9,
+      "action_type": "click",
+      "timestamp_ms": 10250,
+      "url": "https://shop.example.com/account",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "role_name", "value": "link|Shipping details", "unique": true, "score": 92 },
+        { "strategy": "text", "value": "Shipping details", "unique": true, "score": 80 }
+      ],
+      "element": {
+        "tag": "a",
+        "role": "link",
+        "accessible_name": "Shipping details",
+        "text": "Shipping details",
+        "attributes": { "href": "/checkout/shipping" }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 10,
+      "action_type": "scroll",
+      "timestamp_ms": 11800,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [],
+      "element": null,
+      "payload": { "x": 0, "y": 640 }
+    },
+    {
+      "sequence": 11,
+      "action_type": "select",
+      "timestamp_ms": 12900,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "country-select", "unique": true, "score": 97 },
+        { "strategy": "label", "value": "Country", "unique": true, "score": 89 }
+      ],
+      "element": {
+        "tag": "select",
+        "role": "combobox",
+        "accessible_name": "Country",
+        "attributes": { "data-testid": "country-select", "name": "country" }
+      },
+      "payload": { "values": ["IN"] }
+    },
+    {
+      "sequence": 12,
+      "action_type": "input",
+      "timestamp_ms": 14100,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "label", "value": "Address line 1", "unique": true, "score": 91 },
+        { "strategy": "css_id", "value": "#address1", "unique": true, "score": 70 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "text",
+        "role": "textbox",
+        "accessible_name": "Address line 1",
+        "attributes": { "id": "address1", "name": "address1" }
+      },
+      "payload": { "value": "42 Example Street" }
+    },
+    {
+      "sequence": 13,
+      "action_type": "key_press",
+      "timestamp_ms": 15200,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "label", "value": "Address line 1", "unique": true, "score": 91 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "text",
+        "accessible_name": "Address line 1",
+        "attributes": { "id": "address1" }
+      },
+      "payload": { "key": "Tab", "modifiers": [] }
+    },
+    {
+      "sequence": 14,
+      "action_type": "uncheck",
+      "timestamp_ms": 16400,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "billing-same", "unique": true, "score": 96 },
+        { "strategy": "label", "value": "Billing address is the same", "unique": true, "score": 87 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "checkbox",
+        "role": "checkbox",
+        "accessible_name": "Billing address is the same",
+        "attributes": { "data-testid": "billing-same", "checked": "true" }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 15,
+      "action_type": "upload",
+      "timestamp_ms": 18700,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "gst-certificate", "unique": true, "score": 95 },
+        { "strategy": "label", "value": "GST certificate", "unique": true, "score": 86 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "file",
+        "accessible_name": "GST certificate",
+        "attributes": { "data-testid": "gst-certificate", "accept": ".pdf" }
+      },
+      "payload": { "files": ["gst-certificate.pdf"] }
+    },
+    {
+      "sequence": 16,
+      "action_type": "drag_drop",
+      "timestamp_ms": 21300,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "cart-item-2", "unique": true, "score": 94 },
+        { "strategy": "xpath", "value": "//ul[@id='cart']/li[2]", "unique": true, "score": 40 }
+      ],
+      "element": {
+        "tag": "li",
+        "text": "Mechanical keyboard",
+        "attributes": { "data-testid": "cart-item-2", "draggable": "true" }
+      },
+      "payload": {
+        "target_selectors": [
+          { "strategy": "test_id", "value": "cart-item-1", "unique": true, "score": 94 }
+        ]
+      }
+    },
+    {
+      "sequence": 17,
+      "action_type": "double_click",
+      "timestamp_ms": 23100,
+      "url": "https://shop.example.com/checkout/shipping",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "quantity-1", "unique": true, "score": 93 },
+        { "strategy": "nth_child", "value": "#cart > li:nth-child(1) > input", "unique": false, "score": 20 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "number",
+        "accessible_name": "Quantity",
+        "attributes": { "data-testid": "quantity-1", "value": "1" }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 18,
+      "action_type": "input",
+      "timestamp_ms": 25400,
+      "url": "https://shop.example.com/checkout/payment",
+      "frame_path": ["iframe[name='stripe-card']"],
+      "selectors": [
+        { "strategy": "placeholder", "value": "Card number", "unique": true, "score": 84 },
+        { "strategy": "css", "value": "input[name='cardnumber']", "unique": true, "score": 60 }
+      ],
+      "element": {
+        "tag": "input",
+        "input_type": "text",
+        "accessible_name": "Card number",
+        "attributes": { "name": "cardnumber", "placeholder": "Card number" }
+      },
+      "payload": { "value": "4242424242424242" }
+    },
+    {
+      "sequence": 19,
+      "action_type": "click",
+      "timestamp_ms": 27900,
+      "url": "https://shop.example.com/checkout/payment",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "place-order", "unique": true, "score": 99 },
+        { "strategy": "role_name", "value": "button|Place order", "unique": true, "score": 95 },
+        { "strategy": "text", "value": "Place order", "unique": true, "score": 80 }
+      ],
+      "element": {
+        "tag": "button",
+        "role": "button",
+        "accessible_name": "Place order",
+        "text": "Place order",
+        "attributes": { "data-testid": "place-order" }
+      },
+      "payload": {}
+    },
+    {
+      "sequence": 20,
+      "action_type": "assert",
+      "timestamp_ms": 30500,
+      "url": "https://shop.example.com/checkout/confirmation",
+      "frame_path": [],
+      "selectors": [
+        { "strategy": "test_id", "value": "order-confirmation", "unique": true, "score": 98 }
+      ],
+      "element": {
+        "tag": "div",
+        "role": "status",
+        "text": "Thank you! Your order is confirmed.",
+        "attributes": { "data-testid": "order-confirmation" }
+      },
+      "payload": { "kind": "to_be_visible", "expected": true }
+    }
+  ]
+}

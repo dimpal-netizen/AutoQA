@@ -154,7 +154,7 @@ Three rules keep it maintainable:
 |---|---|---|
 | 0 | Project setup, Docker, config, health check | ✅ Done |
 | 1 | Auth, users, roles, projects — backend **and** frontend | ✅ Done |
-| 2 | Recording storage (+ freeze the recording JSON format) | ⬜ |
+| 2 | Recording storage (+ freeze the recording JSON format) | ✅ Done — [format spec](docs/recording-format.md) |
 | 3 | Recording → Playwright code generation | ⬜ |
 | 4 | AI layer + failure analysis (Workflow 3) | ⬜ |
 | 5 | Test execution + live WebSocket updates | ⬜ |

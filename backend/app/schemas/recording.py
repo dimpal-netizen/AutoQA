@@ -1,0 +1,237 @@
+"""Recording schemas — THE CONTRACT between the Chrome extension and the backend.
+
+The extension (Phase 9) is written to match this exactly. Changing anything here
+after the extension ships means shipping a new extension too, so treat additions
+as safe and removals/renames as breaking.
+
+Per-action payload shapes:
+
+    click, double_click, hover   {}                       optional: button, modifiers
+    input                        {"value": str}
+    select                       {"values": [str]}
+    check, uncheck               {}
+    navigate                     {"url": str}
+    key_press                    {"key": str}             optional: modifiers
+    upload                       {"files": [str]}
+    scroll                       {"x": int, "y": int}
+    drag_drop                    {"target_selectors": [Selector]}
+    assert                       {"kind": str, "expected": Any}
+"""
+
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+
+from app.models.enums import (
+    ELEMENT_ACTIONS,
+    SELECTOR_RANK,
+    ActionType,
+    RecordingStatus,
+    SelectorStrategy,
+)
+
+MAX_ACTIONS_PER_BATCH = 500
+
+
+# ---------------------------------------------------------------------------
+# Building blocks
+# ---------------------------------------------------------------------------
+class Selector(BaseModel):
+    """One way to find an element. Actions carry several, best first."""
+
+    strategy: SelectorStrategy
+    value: str = Field(min_length=1, max_length=4096)
+    # Did this match exactly one element when it was recorded? A non-unique
+    # selector is a warning sign the generated test will be flaky.
+    unique: bool = True
+    # Extension's own confidence, 0-100. Advisory; the backend re-ranks by
+    # strategy anyway so a buggy extension can't promote a bad selector.
+    score: int = Field(default=0, ge=0, le=100)
+
+    @property
+    def rank(self) -> int:
+        return SELECTOR_RANK[self.strategy]
+
+
+class BoundingBox(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class ElementInfo(BaseModel):
+    """What the element looked like when recorded.
+
+    Used for human-readable step descriptions, and in Phase 7 to re-find an
+    element whose selector has drifted.
+    """
+
+    tag: str = Field(max_length=64)
+    input_type: str | None = Field(default=None, max_length=64)
+    role: str | None = Field(default=None, max_length=64)
+    accessible_name: str | None = Field(default=None, max_length=512)
+    text: str | None = Field(default=None, max_length=2048)
+    attributes: dict[str, str] = Field(default_factory=dict)
+    bounding_box: BoundingBox | None = None
+
+
+class ViewportInfo(BaseModel):
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
+class BrowserInfo(BaseModel):
+    user_agent: str | None = Field(default=None, max_length=512)
+    viewport: ViewportInfo | None = None
+    device_pixel_ratio: float | None = Field(default=None, gt=0)
+    platform: str | None = Field(default=None, max_length=64)
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+class RecordedActionIn(BaseModel):
+    """One interaction, as the extension sends it."""
+
+    sequence: int = Field(ge=0)
+    action_type: ActionType
+    timestamp_ms: int = Field(ge=0)
+    url: str = Field(min_length=1, max_length=2048)
+
+    frame_path: list[str] = Field(default_factory=list)
+    selectors: list[Selector] = Field(default_factory=list)
+    element: ElementInfo | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    note: str | None = None
+
+    @field_validator("selectors")
+    @classmethod
+    def rank_selectors(cls, value: list[Selector]) -> list[Selector]:
+        """Sort best-first here, so nothing downstream has to remember to."""
+        return sorted(value, key=lambda s: (s.rank, -s.score))
+
+    @model_validator(mode="after")
+    def check_shape(self) -> "RecordedActionIn":
+        if self.action_type in ELEMENT_ACTIONS and not self.selectors:
+            raise ValueError(
+                f"'{self.action_type.value}' targets an element, so it needs at least "
+                f"one selector — otherwise the generated test cannot find it"
+            )
+        _validate_payload(self.action_type, self.payload)
+        return self
+
+
+def _validate_payload(action_type: ActionType, payload: dict[str, Any]) -> None:
+    """Reject payloads missing the keys the code generator will need.
+
+    Catching this at ingest means Phase 3 never has to defend against a
+    half-recorded action, and a buggy extension build fails loudly and early.
+    """
+    required: dict[ActionType, tuple[str, ...]] = {
+        ActionType.INPUT: ("value",),
+        ActionType.SELECT: ("values",),
+        ActionType.NAVIGATE: ("url",),
+        ActionType.KEY_PRESS: ("key",),
+        ActionType.UPLOAD: ("files",),
+        ActionType.SCROLL: ("x", "y"),
+        ActionType.DRAG_DROP: ("target_selectors",),
+        ActionType.ASSERT: ("kind",),
+    }
+
+    missing = [key for key in required.get(action_type, ()) if key not in payload]
+    if missing:
+        raise ValueError(
+            f"'{action_type.value}' payload is missing {missing}; "
+            f"got keys {sorted(payload)}"
+        )
+
+    # List-shaped fields must actually be lists, or the generator would emit
+    # code that crashes at runtime rather than failing here.
+    for key in ("values", "files", "target_selectors"):
+        if key in payload and not isinstance(payload[key], list):
+            raise ValueError(f"'{action_type.value}' payload field '{key}' must be a list")
+
+
+class ActionBatchIn(BaseModel):
+    """A chunk of actions. The extension uploads as it records, not just at stop."""
+
+    actions: list[RecordedActionIn] = Field(min_length=1, max_length=MAX_ACTIONS_PER_BATCH)
+
+    @field_validator("actions")
+    @classmethod
+    def no_duplicate_sequences(cls, value: list[RecordedActionIn]) -> list[RecordedActionIn]:
+        sequences = [a.sequence for a in value]
+        if len(set(sequences)) != len(sequences):
+            raise ValueError("Two actions in this batch share a sequence number")
+        return value
+
+
+class ActionBatchResult(BaseModel):
+    """Reports what actually happened, since ingest is idempotent."""
+
+    stored: int
+    skipped_duplicates: int
+    action_count: int  # total on the session now
+
+
+class RecordedActionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sequence: int
+    action_type: ActionType
+    timestamp_ms: int
+    url: str
+    frame_path: list[str]
+    selectors: list[Selector]
+    element: ElementInfo | None
+    payload: dict[str, Any]
+    is_ignored: bool
+    note: str | None
+
+
+class RecordedActionUpdate(BaseModel):
+    """Lets a QA engineer fix a bad selector or silence a noisy step."""
+
+    selectors: list[Selector] | None = None
+    payload: dict[str, Any] | None = None
+    is_ignored: bool | None = None
+    note: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Sessions
+# ---------------------------------------------------------------------------
+class RecordingSessionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    start_url: HttpUrl
+    browser_info: BrowserInfo = Field(default_factory=BrowserInfo)
+    extension_version: str | None = Field(default=None, max_length=32)
+
+
+class RecordingSessionStop(BaseModel):
+    duration_ms: int | None = Field(default=None, ge=0)
+
+
+class RecordingSessionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    project_id: int
+    created_by_id: int | None
+    name: str
+    start_url: str
+    status: RecordingStatus
+    browser_info: dict[str, Any]
+    extension_version: str | None
+    action_count: int
+    duration_ms: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecordingSessionDetail(RecordingSessionRead):
+    actions: list[RecordedActionRead]

@@ -6,8 +6,32 @@ module defining them is imported.
 """
 
 from app.core.database import Base
-from app.models.enums import ROLE_LEVEL, Browser, UserRole
+from app.models.enums import (
+    ELEMENT_ACTIONS,
+    ROLE_LEVEL,
+    SELECTOR_RANK,
+    ActionType,
+    Browser,
+    RecordingStatus,
+    SelectorStrategy,
+    UserRole,
+)
 from app.models.project import Project
+from app.models.recording import RecordedAction, RecordingSession
 from app.models.user import User
 
-__all__ = ["ROLE_LEVEL", "Base", "Browser", "Project", "User", "UserRole"]
+__all__ = [
+    "ELEMENT_ACTIONS",
+    "ROLE_LEVEL",
+    "SELECTOR_RANK",
+    "ActionType",
+    "Base",
+    "Browser",
+    "Project",
+    "RecordedAction",
+    "RecordingSession",
+    "RecordingStatus",
+    "SelectorStrategy",
+    "User",
+    "UserRole",
+]

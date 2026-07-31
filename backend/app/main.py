@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import auth, health, projects
+from app.api import auth, health, projects, recordings
 from app.core.config import settings
 from app.services.exceptions import ServiceError
 
@@ -66,8 +66,9 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
     app.include_router(projects.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(recordings.router, prefix=settings.API_V1_PREFIX)
 
-    # Later phases add: recordings, test_cases, runs, analysis, reports, bugs,
+    # Later phases add: test_cases, runs, analysis, reports, bugs,
     # integrations, agent, websocket.
 
     return app
