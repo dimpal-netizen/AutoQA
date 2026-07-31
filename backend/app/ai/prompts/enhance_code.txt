@@ -1,0 +1,42 @@
+You are a senior QA automation engineer reviewing a Playwright test that was
+generated automatically from a recorded browser session.
+
+The code already works. Your job is to make it readable, not to rewrite it.
+
+Here is the test, described as structured data rather than source, so you cannot
+accidentally break it:
+
+Suite name: {suite_name}
+Starting URL: {start_url}
+
+Pages:
+{pages}
+
+Steps:
+{steps}
+
+Return improvements for the following, and nothing else:
+
+1. `function_name` - a pytest function name describing what this flow verifies.
+   snake_case, starts with `test_`, under 60 characters.
+
+2. `title` - a short human-readable name for the suite. Title case, no
+   trailing punctuation, under 60 characters.
+
+3. `description` - one or two sentences on what this test verifies and why it
+   matters. Written for a QA engineer reading a test report.
+
+4. `step_descriptions` - a clearer sentence for each step, keyed by the step's
+   sequence number as a string. Describe intent, not mechanics: prefer
+   "Sign in as a returning customer" over "Click the button". Keep every step;
+   do not merge, reorder, or invent any.
+
+5. `locator_names` - better names for page object properties, keyed by
+   "PageClassName.current_name". Only include the ones you would actually
+   change. Valid Python identifiers, snake_case, no leading underscore.
+
+Rules:
+- Do not invent steps, selectors, URLs, or assertions that are not listed above.
+- Do not suggest a locator name that collides with another on the same page.
+- If a name or description is already good, leave it out of your response.
+- Keep test data values exactly as recorded; they may be meaningful.

@@ -6,6 +6,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.ai.enhancer import enhance
 from app.codegen.converter import build_ir
 from app.codegen.generator import GeneratedCodeError, render
 from app.codegen.writer import suite_directory, write_suite
@@ -101,6 +102,14 @@ class CodegenService:
             start_url=session.start_url,
         )
 
+        # AI pass: better names and descriptions on code that already works.
+        # `enhance` never raises and never writes code, so the worst case here
+        # is that the deterministic output above is what gets saved.
+        polish = enhance(ir)
+        if polish.skipped:
+            logger.info("Recording %s: no AI enhancement (%s)", recording_id, polish.skipped)
+        suite_name = polish.title or suite_name
+
         try:
             rendered = render(ir, browser_info=session.browser_info)
         except GeneratedCodeError as exc:
@@ -109,6 +118,11 @@ class CodegenService:
             logger.exception("Codegen produced invalid Python for recording %s", recording_id)
             raise ValidationError(f"Generated code was not valid Python: {exc}") from exc
 
+        generator = f"{GENERATOR}+{polish.model}" if polish.applied else GENERATOR
+        description = polish.description or (
+            f"Generated from recording {recording_id} ({len(usable)} actions)"
+        )
+
         suite = self.suites.get_by_recording(recording_id)
         if suite is None:
             suite = self.suites.create(
@@ -116,13 +130,15 @@ class CodegenService:
                 recording_id=recording_id,
                 created_by_id=created_by_id,
                 name=suite_name,
-                description=f"Generated from recording {recording_id} ({len(usable)} actions)",
+                description=description,
                 source=CaseSource.RECORDING,
-                generator=GENERATOR,
+                generator=generator,
             )
         else:
             self.suites.delete_generated(suite)
-            self.suites.update(suite, name=suite_name, generator=GENERATOR)
+            self.suites.update(
+                suite, name=suite_name, description=description, generator=generator
+            )
 
         test_file = next(f for f in rendered if f.path == ir.file_path)
         case = self.cases.create(
@@ -130,7 +146,8 @@ class CodegenService:
             project_id=session.project_id,
             name=suite_name,
             description=(
-                f"{len(ir.steps)} steps across {len(ir.pages)} page(s)."
+                (polish.description + " " if polish.description else "")
+                + f"{len(ir.steps)} steps across {len(ir.pages)} page(s)."
                 + (
                     f" {ir.fragile_count} step(s) use a fragile selector."
                     if ir.fragile_count
