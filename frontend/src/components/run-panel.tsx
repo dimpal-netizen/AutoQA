@@ -139,7 +139,7 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
   }
 
   return (
-    <Card className="mt-5">
+    <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Play className="size-4" />

@@ -128,7 +128,7 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
   }
 
   return (
-    <Card className="mb-6">
+    <Card className="mb-6 shadow-md">
       <CardHeader>
         <CardTitle>Record a new session</CardTitle>
         <CardDescription>

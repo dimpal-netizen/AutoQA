@@ -100,7 +100,11 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
                           className="tabular"
                           title={result.error_message ?? result.status}
                         >
-                          {ICON[result.status]} {formatDuration(result.duration_ms)}
+                          {/* A stopped run leaves results with no duration
+                              recorded; "✓ -" is worse than just "✓". */}
+                          {ICON[result.status]}
+                          {result.duration_ms !== null &&
+                            ` ${formatDuration(result.duration_ms)}`}
                         </Badge>
                       </td>
                     );

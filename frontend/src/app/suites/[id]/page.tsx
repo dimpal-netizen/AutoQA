@@ -7,12 +7,20 @@ import {
   ArrowLeft,
   Check,
   Copy,
+  FlaskConical,
   FolderOpen,
+  Play,
   RefreshCw,
   Video,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { RELIABLE_RANK, SELECTOR_RANK, type TestSuiteDetail } from "@/lib/types";
+import {
+  RELIABLE_RANK,
+  SELECTOR_RANK,
+  formatDuration,
+  type TestRun,
+  type TestSuiteDetail,
+} from "@/lib/types";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
 import { RunPanel } from "@/components/run-panel";
@@ -29,6 +37,8 @@ import {
   PageHeader,
 } from "@/components/ui/card";
 import { SkeletonRows } from "@/components/ui/skeleton";
+import { Tabs } from "@/components/ui/tabs";
+import { Stat, StatRow } from "@/components/ui/stat";
 
 export default function SuiteDetailPage({
   params,
@@ -50,13 +60,21 @@ function SuiteDetail({ id }: { id: number }) {
   const [suite, setSuite] = useState<TestSuiteDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [tab, setTab] = useState("run");
+  const [lastRun, setLastRun] = useState<TestRun | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const data = await api.suites.get(id);
-        if (!cancelled) setSuite(data);
+        const [data, runs] = await Promise.all([
+          api.suites.get(id),
+          api.runs.list({ suiteId: id }).catch(() => [] as TestRun[]),
+        ]);
+        if (!cancelled) {
+          setSuite(data);
+          setLastRun(runs[0] ?? null);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Could not load this suite");
@@ -131,46 +149,123 @@ function SuiteDetail({ id }: { id: number }) {
 
       {error && <Alert className="mt-4">{error}</Alert>}
 
-      <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
+      <SuiteStats
+        suite={suite}
+        steps={steps.length}
+        fragile={fragile.length}
+        run={lastRun}
+      />
 
-      <ScriptLocation outputDir={suite.output_dir} paths={paths} />
-
-      {fragile.length > 0 && (
-        <Alert className="mt-4">
-          <AlertTriangle className="mr-1 inline size-4" />
-          {fragile.length} of {steps.length} steps rely on a fragile selector. Those
-          are the ones most likely to break when the UI changes — adding a{" "}
-          <code className="font-mono text-xs">data-testid</code> to those elements
-          would fix it.
-        </Alert>
-      )}
-
-      <div className="mt-10 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">
-            Test cases
-            <span className="tabular ml-2 text-base font-normal text-muted-foreground">
-              {suite.cases.length}
-            </span>
-          </h2>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            What each test does, in order. No code needed to review it.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-lg border border-dashed border-border bg-muted/30 p-4">
-        <GenerateCases
-          suiteId={suite.id}
-          hasGenerated={suite.cases.some((c) => c.category !== "recorded")}
-          onGenerated={setSuite}
-        />
-      </div>
+      <Tabs
+        className="mt-8"
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "run", label: "Run", icon: <Play /> },
+          {
+            id: "cases",
+            label: "Test cases",
+            count: suite.cases.length,
+            icon: <FlaskConical />,
+          },
+          {
+            id: "scripts",
+            label: "Scripts",
+            count: paths.length,
+            icon: <FolderOpen />,
+          },
+        ]}
+      />
 
       <div className="mt-6">
-        <TestCaseList cases={suite.cases} />
+        {tab === "run" && (
+          <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
+        )}
+
+        {tab === "cases" && (
+          <div className="flex flex-col gap-6">
+            <div className="rounded-lg border border-dashed border-border bg-muted/30 p-4">
+              <GenerateCases
+                suiteId={suite.id}
+                hasGenerated={suite.cases.some((c) => c.category !== "recorded")}
+                onGenerated={setSuite}
+              />
+            </div>
+
+            {fragile.length > 0 && (
+              <Alert variant="warning">
+                <AlertTriangle className="mr-1 inline size-4" />
+                {fragile.length} of {steps.length} steps rely on a fragile
+                selector — the ones most likely to break when the UI changes.
+                Adding a <code className="font-mono text-xs">data-testid</code>{" "}
+                to those elements would fix it.
+              </Alert>
+            )}
+
+            <TestCaseList cases={suite.cases} />
+          </div>
+        )}
+
+        {tab === "scripts" && (
+          <ScriptLocation outputDir={suite.output_dir} paths={paths} />
+        )}
       </div>
     </div>
+  );
+}
+
+/** The numbers worth knowing before reading anything else. */
+function SuiteStats({
+  suite,
+  steps,
+  fragile,
+  run,
+}: {
+  suite: TestSuiteDetail;
+  steps: number;
+  fragile: number;
+  run: TestRun | null;
+}) {
+  const generated = suite.cases.filter((c) => c.category !== "recorded").length;
+
+  return (
+    <StatRow className="mt-6">
+      <Stat
+        label="Test cases"
+        value={suite.cases.length}
+        hint={
+          generated
+            ? `1 recorded · ${generated} generated`
+            : "from your recording"
+        }
+      />
+      <Stat label="Steps" value={steps} hint={`across ${suite.cases.length} case(s)`} />
+      <Stat
+        label="Last run"
+        value={run ? `${run.passed}/${run.total}` : "—"}
+        // A cancelled run passed everything it got to, which is not the same
+        // as passing. Green there would read as "all good" on a run the user
+        // stopped after two of thirteen.
+        tone={
+          !run || run.status === "cancelled"
+            ? "muted"
+            : run.failed > 0
+              ? "danger"
+              : "success"
+        }
+        hint={
+          run
+            ? `${run.status}${run.duration_ms ? ` · ${formatDuration(run.duration_ms)}` : ""}`
+            : "not run yet"
+        }
+      />
+      <Stat
+        label="Fragile steps"
+        value={fragile}
+        tone={fragile ? "warning" : "success"}
+        hint={fragile ? "may break on a UI change" : "all reliable selectors"}
+      />
+    </StatRow>
   );
 }
 
@@ -196,7 +291,7 @@ function ScriptLocation({
 
   if (!outputDir) {
     return (
-      <Alert className="mt-5">
+      <Alert>
         The scripts could not be written to disk. They are still stored and will
         run, but there is no folder to open.
       </Alert>
@@ -204,7 +299,7 @@ function ScriptLocation({
   }
 
   return (
-    <Card className="mt-5">
+    <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <FolderOpen className="size-4" />
