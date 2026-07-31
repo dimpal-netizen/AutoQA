@@ -22,7 +22,8 @@ psycopg = { extras = ["binary"], version = ">=3.2" }
 alembic = ">=1.14"
 
 # --- Config & validation ---
-pydantic = ">=2.9"
+# The "email" extra pulls in email-validator, which EmailStr needs at runtime.
+pydantic = { extras = ["email"], version = ">=2.9" }
 pydantic-settings = ">=2.6"
 
 # --- Background jobs & real-time ---

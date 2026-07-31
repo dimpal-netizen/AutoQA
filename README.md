@@ -31,8 +31,24 @@ Test Managers automate web application testing **without writing code**.
 | Docker Desktop | any | must be **running** before `docker compose up` |
 | Node.js | 20+ | only needed for Phases 8–9 |
 
-> **Windows note:** if `python --version` opens the Microsoft Store, turn off the alias at
-> *Settings → Apps → Advanced app settings → App execution aliases*.
+### Windows gotchas
+
+**The Microsoft Store `python` alias breaks Poetry.** If `python --version` opens the Store,
+Poetry's environment detection fails with `exit status 9009`. Turn the alias off at
+*Settings → Apps → Advanced app settings → App execution aliases* (switch off both
+`python.exe` and `python3.exe`), or put the real interpreter first on PATH:
+
+```powershell
+$py = "$env:LOCALAPPDATA\Programs\Python\Python313"
+$env:PATH = "$py;$py\Scripts;$env:APPDATA\Python\Python313\Scripts;$env:PATH"
+```
+
+**Poetry's scripts are not on PATH** after `pip install --user poetry`. Either add
+`%APPDATA%\Python\Python313\Scripts` to PATH, or call it as `py -3.13 -m poetry`.
+
+**Ruff may be blocked by Windows Application Control** (`WinError 4551`). Linting is
+optional — nothing else depends on it. If you hit this, skip `ruff check` or get the
+binary allow-listed.
 
 ---
 
