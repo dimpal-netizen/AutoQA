@@ -93,6 +93,13 @@ class RecordingService:
             action_count=self.recordings.count_actions(session_id),
         )
         self.db.commit()
+
+        # Turn it straight into a test suite. Imported here rather than at
+        # module level because CodegenService imports this module.
+        from app.services.codegen_service import CodegenService
+
+        CodegenService(self.db).autogenerate(session, created_by_id=user.id)
+        self.db.refresh(session)
         return session
 
     def discard(self, session_id: int, user: User) -> RecordingSession:

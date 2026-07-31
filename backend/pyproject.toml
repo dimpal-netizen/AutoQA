@@ -102,6 +102,10 @@ ignore = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+# This product's domain objects are literally called TestSuite, TestCase and
+# TestStep, so pytest's default class discovery keeps trying to collect them.
+# We only write function-style tests, so turn class collection off entirely.
+python_classes = []
 addopts = "-v --strict-markers"
 asyncio_mode = "auto"
 markers = [

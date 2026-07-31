@@ -24,6 +24,7 @@ from app.models.enums import ActionType, RecordingStatus
 
 if TYPE_CHECKING:
     from app.models.project import Project
+    from app.models.test_case import TestSuite
     from app.models.user import User
 
 
@@ -67,6 +68,16 @@ class RecordingSession(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="RecordedAction.sequence",
     )
+    # The suite generated from this recording, if any. viewonly because
+    # TestSuite owns the foreign key and the lifecycle.
+    suite: Mapped["TestSuite | None"] = relationship(
+        "TestSuite", uselist=False, viewonly=True
+    )
+
+    @property
+    def suite_id(self) -> int | None:
+        """Lets the UI jump from a recording straight to its generated code."""
+        return self.suite.id if self.suite is not None else None
 
     def __repr__(self) -> str:
         return f"<RecordingSession {self.id} {self.name!r} ({self.status.value})>"

@@ -239,6 +239,8 @@ class RecordingSessionRead(BaseModel):
     extension_version: str | None
     action_count: int
     duration_ms: int | None
+    # Set once code has been generated from this recording.
+    suite_id: int | None = None
     created_at: datetime
     updated_at: datetime
 

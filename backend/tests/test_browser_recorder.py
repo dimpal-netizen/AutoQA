@@ -18,6 +18,7 @@ from app.core.security import hash_password
 from app.models.enums import ActionType, RecordingStatus, UserRole
 from app.repositories.project_repo import ProjectRepository
 from app.repositories.recording_repo import RecordingRepository
+from app.repositories.test_case_repo import TestSuiteRepository
 from app.repositories.user_repo import UserRepository
 from app.services import browser_recorder
 
@@ -172,6 +173,36 @@ async def test_close_finalises_the_session(recording_session) -> None:
         session = RecordingRepository(db).get(session_id)
         assert session.status is RecordingStatus.COMPLETED
         assert session.action_count >= 1
+
+
+async def test_closing_generates_a_test_suite(recording_session) -> None:
+    """The whole point: record in a browser, close it, get runnable code."""
+    session_id, project_id = recording_session
+
+    def act_like_a_user(page) -> None:
+        page.get_by_test_id("email-input").fill("buyer@example.com")
+        page.get_by_test_id("remember-me").check()
+        page.get_by_test_id("login-submit").click()
+        page.wait_for_timeout(2500)
+
+    await launch(session_id, project_id, on_page_ready=act_like_a_user)
+    await wait_for_actions(session_id, 3)
+    result = await browser_recorder.close(session_id)
+
+    assert result["suite_id"] is not None, "closing the browser did not generate a suite"
+
+    def read_suite() -> tuple[str, list[str]]:
+        with session_scope() as db:
+            suite = TestSuiteRepository(db).get_full(result["suite_id"])
+            return suite.cases[0].code, [f.path for f in suite.files]
+
+    code, paths = await asyncio.to_thread(read_suite)
+
+    assert "def test_" in code
+    assert ".fill('buyer@example.com')" in code
+    assert ".check()" in code
+    assert "conftest.py" in paths
+    assert any(p.startswith("pages/") for p in paths)
 
 
 async def test_closing_an_unknown_session_raises(recording_session) -> None:

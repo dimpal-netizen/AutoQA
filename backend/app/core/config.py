@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
 
+    # --- Code generation ---
+    # Generate a test suite the moment a recording stops. Deterministic and
+    # fast, so there is no reason to make the user ask for it.
+    AUTO_GENERATE_ON_STOP: bool = True
+
     # --- Test execution (Phase 5) ---
     STORAGE_PATH: str = "./storage"
     WORKSPACE_PATH: str = "./workspaces"

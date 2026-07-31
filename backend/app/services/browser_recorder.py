@@ -125,6 +125,16 @@ def _session_progress(session_id: int) -> dict[str, int]:
 
 
 def _finalise(session_id: int, duration_ms: int | None) -> dict[str, Any]:
+    """Mark the recording complete and turn it into a test suite.
+
+    Reached three ways — Stop in the page panel, Stop in our web app, or the
+    user simply closing the window — so the generation hook belongs here
+    rather than on any one of them.
+    """
+    # Imported inside the function: codegen_service pulls in the recording
+    # service, which would be a cycle at module level.
+    from app.services.codegen_service import CodegenService
+
     with session_scope() as db:
         repo = RecordingRepository(db)
         session = repo.get(session_id)
@@ -132,7 +142,8 @@ def _finalise(session_id: int, duration_ms: int | None) -> dict[str, Any]:
             raise NotFound(f"Recording {session_id} not found")
 
         total = repo.count_actions(session_id)
-        if session.status is RecordingStatus.RECORDING:
+        already_finished = session.status is not RecordingStatus.RECORDING
+        if not already_finished:
             repo.update(
                 session,
                 status=RecordingStatus.COMPLETED,
@@ -141,7 +152,20 @@ def _finalise(session_id: int, duration_ms: int | None) -> dict[str, Any]:
                 ),
                 action_count=total,
             )
-        return {"id": session_id, "action_count": total, "duration_ms": session.duration_ms}
+            db.commit()
+
+        suite = None
+        if not already_finished:
+            suite = CodegenService(db).autogenerate(
+                session, created_by_id=session.created_by_id
+            )
+
+        return {
+            "id": session_id,
+            "action_count": total,
+            "duration_ms": session.duration_ms,
+            "suite_id": suite.id if suite else None,
+        }
 
 
 # ---------------------------------------------------------------------------

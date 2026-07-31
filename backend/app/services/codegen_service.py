@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.codegen.converter import build_ir
 from app.codegen.generator import GeneratedCodeError, render
+from app.core.config import settings
 from app.models.enums import CaseSource, CaseStatus, RecordingStatus
 from app.models.test_case import TestSuite
 from app.models.user import User
@@ -37,12 +38,38 @@ class CodegenService:
     def generate_from_recording(
         self, recording_id: int, user: User, *, name: str | None = None
     ) -> TestSuite:
+        """Build a suite from a finished recording, checking permissions first."""
+        session = self.recording_service.get(recording_id, user)
+        return self._generate(session, created_by_id=user.id, name=name)
+
+    def autogenerate(self, session, *, created_by_id: int | None) -> TestSuite | None:
+        """Generate right after a recording stops.
+
+        Called from the stop paths, which have already authorised the caller.
+        Never raises: a codegen problem must not make stopping a recording
+        fail, or the user would lose the recording as well as the code.
+        """
+        if not settings.AUTO_GENERATE_ON_STOP:
+            return None
+
+        try:
+            return self._generate(session, created_by_id=created_by_id, name=None)
+        except ValidationError as exc:
+            # Nothing worth generating (an empty recording, usually).
+            logger.info("Recording %s: skipped autogeneration - %s", session.id, exc)
+        except Exception:
+            logger.exception("Recording %s: autogeneration failed", session.id)
+        return None
+
+    def _generate(
+        self, session, *, created_by_id: int | None, name: str | None
+    ) -> TestSuite:
         """Build a suite from a finished recording.
 
         Regenerating replaces the previous output rather than piling up
         duplicates — the recording is the source of truth, not the code.
         """
-        session = self.recording_service.get(recording_id, user)
+        recording_id = session.id
 
         if session.status is RecordingStatus.RECORDING:
             raise ValidationError(
@@ -86,7 +113,7 @@ class CodegenService:
             suite = self.suites.create(
                 project_id=session.project_id,
                 recording_id=recording_id,
-                created_by_id=user.id,
+                created_by_id=created_by_id,
                 name=suite_name,
                 description=f"Generated from recording {recording_id} ({len(usable)} actions)",
                 source=CaseSource.RECORDING,
