@@ -425,6 +425,22 @@ def test_thinking_tokens_are_counted_as_output():
     assert result.provider == "gemini"
 
 
+@pytest.mark.parametrize(
+    ("model", "expected_input_rate"),
+    [
+        ("gemini-3.5-flash-lite", 0.10),
+        ("gemini-flash-latest", 0.30),
+        ("gemini-2.5-pro", 1.25),
+        ("some-unreleased-model", 1.25),  # unknown falls back to the dearest tier
+    ],
+)
+def test_cost_is_priced_for_the_model_actually_used(model, expected_input_rate):
+    """The model is configurable, so quoting pro rates for a flash run lies."""
+    from app.ai.gemini import _rates
+
+    assert _rates(model)[0] == expected_input_rate
+
+
 def test_a_wrong_model_id_says_how_to_fix_it():
     """A 404 here almost always means a stale model name, not a broken key."""
     from google.genai import errors

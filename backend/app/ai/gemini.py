@@ -35,12 +35,32 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-DEFAULT_MODEL = "gemini-2.5-pro"
+# An alias, not a pinned version, and deliberately so. Gemini model ids turn
+# over fast — a key that has gemini-3.6-flash may no longer serve
+# gemini-2.5-pro — and a hard-coded id silently becomes a 404 months later.
+# Flash also has far higher free-tier limits than pro, which matters because
+# these tasks are structured rewrites, not deep reasoning. Pin a specific
+# version with GEMINI_MODEL when you want one.
+DEFAULT_MODEL = "gemini-flash-latest"
 
-# Per million tokens, for the cost ledger only. Gemini prices by prompt size
-# tier, so treat these as an estimate rather than an invoice.
-INPUT_COST_PER_MTOK = 1.25
-OUTPUT_COST_PER_MTOK = 10.00
+# Per million tokens, for the cost ledger only. Matched on the model id because
+# the model is configurable: quoting pro prices for a flash run would overstate
+# spend by an order of magnitude. Longest prefix wins, and the fallback is the
+# most expensive tier so an unknown model is never *under*stated.
+_COST_PER_MTOK: dict[str, tuple[float, float]] = {
+    "flash-lite": (0.10, 0.40),
+    "flash": (0.30, 2.50),
+    "pro": (1.25, 10.00),
+}
+_FALLBACK_COST = (1.25, 10.00)
+
+
+def _rates(model: str) -> tuple[float, float]:
+    name = model.lower()
+    for family in ("flash-lite", "flash", "pro"):
+        if family in name:
+            return _COST_PER_MTOK[family]
+    return _FALLBACK_COST
 
 # Candidate outcomes that mean "the model declined", as opposed to "the model
 # answered". Retrying these with the same input will not help.
@@ -130,6 +150,8 @@ class GeminiClient(LLMClient):
             getattr(usage, "thoughts_token_count", 0) or 0
         )
 
+        input_rate, output_rate = _rates(self.model)
+
         return LLMResponse(
             text=text,
             parsed=parsed,
@@ -138,8 +160,8 @@ class GeminiClient(LLMClient):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_usd=round(
-                input_tokens / 1_000_000 * INPUT_COST_PER_MTOK
-                + output_tokens / 1_000_000 * OUTPUT_COST_PER_MTOK,
+                input_tokens / 1_000_000 * input_rate
+                + output_tokens / 1_000_000 * output_rate,
                 6,
             ),
             latency_ms=int((time.monotonic() - started) * 1000),
@@ -207,8 +229,12 @@ def list_models(api_key: str | None = None) -> list[str]:
     if not key:
         raise LLMError("GEMINI_API_KEY is not set")
 
+    # The client must outlive the iteration: `list()` returns a lazy pager, so
+    # letting the client go out of scope fails mid-loop with "client has been
+    # closed" rather than at the call site.
+    client = genai.Client(api_key=key)
     try:
-        models = genai.Client(api_key=key).models.list()
+        models = list(client.models.list())
     except Exception as exc:
         raise _translate(exc, "") from exc
 
