@@ -15,6 +15,7 @@ import { api } from "@/lib/api";
 import { RELIABLE_RANK, SELECTOR_RANK, type TestSuiteDetail } from "@/lib/types";
 import { AppHeader } from "@/components/app-header";
 import { RequireAuth } from "@/components/auth-provider";
+import { RunPanel } from "@/components/run-panel";
 import { Button } from "@/components/ui/button";
 import {
   Alert,
@@ -129,6 +130,8 @@ function SuiteDetail({ id }: { id: number }) {
       </div>
 
       {error && <Alert className="mt-4">{error}</Alert>}
+
+      <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
 
       <ScriptLocation outputDir={suite.output_dir} paths={paths} />
 

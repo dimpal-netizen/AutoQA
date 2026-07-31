@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.enums import Browser, ResultStatus, RunStatus
@@ -48,14 +50,17 @@ class TestRunRepository(BaseRepository[TestRun]):
         statement = statement.order_by(TestRun.id.desc()).offset(skip).limit(limit)
         return list(self.db.execute(statement).scalars().all())
 
-    def list_active(self) -> list[TestRun]:
-        """Runs that claim to be in progress.
+    def list_stale(self, before: datetime) -> list[TestRun]:
+        """Runs still claiming to be in progress that started before `before`.
 
-        Used at startup to fail runs orphaned by a restart — otherwise they sit
-        at "running" forever and the UI spins on something that died.
+        The cutoff matters. A naive "everything still running" query looks
+        right at startup and is wrong the moment a second process exists: it
+        kills runs that are alive and working in another worker. Only a run
+        older than its own timeout is provably dead.
         """
         statement = select(TestRun).where(
-            TestRun.status.in_([RunStatus.QUEUED, RunStatus.RUNNING])
+            TestRun.status.in_([RunStatus.QUEUED, RunStatus.RUNNING]),
+            func.coalesce(TestRun.started_at, TestRun.created_at) < before,
         )
         return list(self.db.execute(statement).scalars().all())
 

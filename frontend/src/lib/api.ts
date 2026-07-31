@@ -6,10 +6,14 @@
 
 import { useAuthStore } from "@/stores/auth-store";
 import type {
+  Browser,
   Project,
   ProjectCreate,
   RecordingSession,
   RecordingSessionDetail,
+  TestResult,
+  TestRun,
+  TestRunDetail,
   TestSuite,
   TestSuiteDetail,
   TokenPair,
@@ -69,6 +73,14 @@ async function rawRequest<T>(
 
   // 204 No Content has no body to parse.
   if (response.status === 204) return undefined as T;
+
+  // Screenshots and videos come back as bytes. Deciding on the response's own
+  // content type rather than a flag from the caller means a route that starts
+  // returning a file cannot silently break its callers.
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!contentType.includes("json")) {
+    return (await response.blob()) as T;
+  }
   return response.json() as Promise<T>;
 }
 
@@ -187,4 +199,47 @@ export const api = {
 
     remove: (id: number) => request<void>(`/suites/${id}`, { method: "DELETE" }),
   },
+
+  runs: {
+    /** Starts a run and returns immediately — the run is queued, not finished. */
+    start: (
+      suiteId: number,
+      options: { browsers?: Browser[]; case_ids?: number[]; headless?: boolean } = {},
+    ) =>
+      request<TestRun>(`/suites/${suiteId}/runs`, {
+        method: "POST",
+        body: JSON.stringify(options),
+      }),
+
+    list: (params: { projectId?: number; suiteId?: number } = {}) => {
+      const query = new URLSearchParams();
+      if (params.projectId) query.set("project_id", String(params.projectId));
+      if (params.suiteId) query.set("suite_id", String(params.suiteId));
+      const suffix = query.toString();
+      return request<TestRun[]>(`/runs${suffix ? `?${suffix}` : ""}`);
+    },
+
+    /** The run plus its full per-browser result matrix. */
+    get: (id: number) => request<TestRunDetail>(`/runs/${id}`),
+
+    results: (id: number) => request<TestResult[]>(`/runs/${id}/results`),
+
+    cancel: (id: number) => request<TestRun>(`/runs/${id}/cancel`, { method: "POST" }),
+  },
 };
+
+/** Download a screenshot or video as a blob URL usable in <img> or <video>.
+ *
+ *  An <img src> cannot carry an Authorization header, so pointing one straight
+ *  at the endpoint would 401. Fetching it here — with the token, and with the
+ *  same refresh-once behaviour as everything else — and handing back an object
+ *  URL keeps artifacts protected instead of making the route public.
+ *
+ *  Callers must URL.revokeObjectURL() when done, or the blobs leak.
+ */
+export async function fetchArtifact(artifactId: number): Promise<string> {
+  const blob = await request<Blob>(`/artifacts/${artifactId}/download`, {
+    headers: { Accept: "*/*" },
+  });
+  return URL.createObjectURL(blob);
+}

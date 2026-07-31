@@ -223,3 +223,107 @@ export function hasRole(user: User | null, minimum: UserRole): boolean {
   if (!user) return false;
   return ROLE_LEVEL[user.role] >= ROLE_LEVEL[minimum];
 }
+
+// ---------------------------------------------------------------------------
+// Test execution
+// ---------------------------------------------------------------------------
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "passed"
+  | "failed"
+  | "cancelled"
+  | "error";
+
+export type ResultStatus = "passed" | "failed" | "skipped" | "error" | "flaky";
+
+export type ArtifactType =
+  | "screenshot"
+  | "video"
+  | "log"
+  | "trace"
+  | "html_report"
+  | "allure_report";
+
+export interface Artifact {
+  id: number;
+  type: ArtifactType;
+  file_path: string;
+  file_size: number | null;
+}
+
+export interface TestResult {
+  id: number;
+  test_case_id: number | null;
+  case_name: string;
+  function_name: string;
+  browser: Browser;
+  status: ResultStatus;
+  duration_ms: number | null;
+  error_message: string | null;
+  stack_trace: string | null;
+  failed_step: number | null;
+  retries: number;
+  artifacts: Artifact[];
+}
+
+export interface TestRun {
+  id: number;
+  project_id: number;
+  suite_id: number | null;
+  status: RunStatus;
+  browsers: string[];
+  case_ids: number[];
+  headless: boolean;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  duration_ms: number | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface TestRunDetail extends TestRun {
+  results: TestResult[];
+}
+
+/** A run that is still going. Drives polling and the spinner. */
+export function isRunActive(run: Pick<TestRun, "status">): boolean {
+  return run.status === "queued" || run.status === "running";
+}
+
+export const BROWSER_LABEL: Record<Browser, string> = {
+  chromium: "Chrome",
+  firefox: "Firefox",
+  webkit: "Safari",
+};
+
+export const RESULT_TONE: Record<ResultStatus, string> = {
+  passed: "text-emerald-700 bg-emerald-50 border-emerald-200",
+  failed: "text-red-700 bg-red-50 border-red-200",
+  error: "text-orange-700 bg-orange-50 border-orange-200",
+  skipped: "text-slate-600 bg-slate-50 border-slate-200",
+  flaky: "text-amber-700 bg-amber-50 border-amber-200",
+};
+
+export const RUN_TONE: Record<RunStatus, string> = {
+  queued: "text-slate-600 bg-slate-50 border-slate-200",
+  running: "text-blue-700 bg-blue-50 border-blue-200",
+  passed: "text-emerald-700 bg-emerald-50 border-emerald-200",
+  failed: "text-red-700 bg-red-50 border-red-200",
+  cancelled: "text-slate-600 bg-slate-50 border-slate-200",
+  error: "text-orange-700 bg-orange-50 border-orange-200",
+};
+
+/** "1.8s" / "2m 04s" — durations in a table need to be scannable. */
+export function formatDuration(ms: number | null): string {
+  if (ms === null || ms < 0) return "-";
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(Math.round(seconds % 60)).padStart(2, "0")}s`;
+}

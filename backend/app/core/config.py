@@ -60,11 +60,18 @@ class Settings(BaseSettings):
     AUTO_GENERATE_ON_STOP: bool = True
     # Where generated scripts are written for the user to open in VS Code.
     # The web app shows the path; reviewing and editing happens in the editor.
-    GENERATED_PATH: str = "./generated"
+    #
+    # NOTE THE `../`. Everything AutoQA writes at runtime lives OUTSIDE
+    # `backend/`, and that is load-bearing rather than tidiness:
+    # `uvicorn --reload` watches the directory it was started from for *.py
+    # changes. Generated suites and run workspaces are full of .py files, so
+    # writing them under backend/ restarts the server every time a recording
+    # is generated or a test is run - killing the run that triggered it.
+    GENERATED_PATH: str = "../generated"
 
     # --- Test execution (Phase 5) ---
-    STORAGE_PATH: str = "./storage"
-    WORKSPACE_PATH: str = "./workspaces"
+    STORAGE_PATH: str = "../.autoqa/storage"
+    WORKSPACE_PATH: str = "../.autoqa/workspaces"
     TEST_TIMEOUT_SECONDS: int = 600
     # Wall-clock ceiling for one browser's pytest process. A generated test can
     # hang on a page that never loads, and without this the run never finishes.

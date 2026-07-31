@@ -155,10 +155,11 @@ AutoQA/
 ├── docker-compose.yml        # Postgres + Redis
 ├── .env                      # your settings and API keys (never committed)
 ├── docs/                     # the recording format the extension must match
+├── generated/                # YOUR TEST SCRIPTS land here — open in VS Code
+├── .autoqa/                  # screenshots, videos, run workspaces (disposable)
 │
 ├── backend/                  # the API and all the logic
 │   ├── alembic/              #   database migrations, in order
-│   ├── generated/            #   YOUR TEST SCRIPTS land here — open in VS Code
 │   ├── tests/                #   tests for AutoQA itself
 │   └── app/
 │       ├── main.py           #   starts the API
@@ -184,10 +185,19 @@ AutoQA/
 
 | Folder | What it is |
 |---|---|
-| `backend/generated/` | The Playwright scripts AutoQA writes for you. This is what you open in VS Code. |
+| `generated/` | The Playwright scripts AutoQA writes for you. This is what you open in VS Code. |
 | `.env` | Your settings — database, API keys. The only file you normally edit by hand. |
 
 Everything else is the application itself.
+
+> **Why `generated/` and `.autoqa/` sit outside `backend/`, and why that must not
+> change:** `uvicorn --reload` watches the folder it was started from for `.py`
+> changes. Generating a suite and running a test both write `.py` files. Put
+> them under `backend/` and every run restarts the server — killing the run that
+> triggered it, with the unhelpful message *"pytest produced no report"*.
+>
+> `.env` is read at startup and is **not** watched. After changing it, restart
+> the API; `--reload` will not notice on its own.
 
 > **VS Code showing dozens of folders you didn't create?** `.venv`, `node_modules`,
 > `__pycache__` and `.next` are installed packages and build caches — not your
@@ -218,8 +228,9 @@ Three rules keep it maintainable:
 | 2 | Recording storage (+ freeze the recording JSON format) | ✅ Done — [format spec](docs/recording-format.md) |
 | 3 | Recording → Playwright code, written to `backend/generated/` | ✅ Done |
 | 4 | AI layer — better names and descriptions on generated code | ✅ Done |
-| 5 | **Test execution** — run the scripts, screenshots, video, live results | ⬜ Next |
-| 6 | AI failure analysis (Workflow 3) — needs runs from Phase 5 first | ⬜ |
+| 5 | **Test execution** — Run button, cross-browser, screenshots, video | ✅ Done |
+| 6 | AI test cases — positive, negative, edge and security *(needs an API key)* | ⬜ Next |
+| 6b | AI failure analysis (Workflow 3) | ⬜ |
 | 7 | HTML / Allure reports + bug reports | ⬜ |
 | 8 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
 | 9 | Chrome extension (Manifest V3) | ⬜ |

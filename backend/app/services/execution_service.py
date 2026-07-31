@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -382,11 +382,18 @@ class ExecutionService:
 
     @staticmethod
     def reap_orphans() -> int:
-        """Fail runs left 'running' by a restart. Called once at startup."""
+        """Fail runs that are provably dead. Called once at startup.
+
+        Only runs older than their own timeout are touched. Reaping every
+        in-progress run instead looks correct on a single process and silently
+        kills healthy runs the moment there are two — including, under
+        `uvicorn --reload`, the run whose own files triggered the reload.
+        """
+        cutoff = datetime.now(UTC) - timedelta(seconds=settings.RUN_TIMEOUT_SECONDS + 60)
         try:
             with session_scope() as db:
                 repo = TestRunRepository(db)
-                orphans = repo.list_active()
+                orphans = repo.list_stale(cutoff)
                 for run in orphans:
                     repo.update(
                         run,
