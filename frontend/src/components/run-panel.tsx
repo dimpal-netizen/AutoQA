@@ -8,11 +8,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Play, RefreshCw, Square } from "lucide-react";
+import { Eye, Play, RefreshCw, Square } from "lucide-react";
 import { api } from "@/lib/api";
 import {
   BROWSER_LABEL,
   RUN_BADGE,
+  WATCH_SPEEDS,
   formatDuration,
   isRunActive,
   type Browser,
@@ -20,6 +21,7 @@ import {
   type TestRunDetail,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/input";
 import { Badge, LiveDot } from "@/components/ui/badge";
 import {
   Alert,
@@ -37,6 +39,7 @@ const POLL_MS = 2000;
 export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: number }) {
   const [browsers, setBrowsers] = useState<Browser[]>(["chromium"]);
   const [headless, setHeadless] = useState(true);
+  const [slowMo, setSlowMo] = useState(WATCH_SPEEDS[1].ms);
   const [run, setRun] = useState<TestRunDetail | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +101,11 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
     setStarting(true);
     setError(null);
     try {
-      const started = await api.runs.start(suiteId, { browsers, headless });
+      const started = await api.runs.start(suiteId, {
+        browsers,
+        headless,
+        slow_mo_ms: slowMo,
+      });
       setRun({ ...started, results: [] });
       void loadHistory();
     } catch (err) {
@@ -165,7 +172,10 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
             );
           })}
 
-          <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
+          <label
+            className="ml-1 flex cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm transition-colors hover:border-border-strong"
+            title="Opens a real browser and slows each action down so you can follow along"
+          >
             <input
               type="checkbox"
               checked={!headless}
@@ -173,8 +183,25 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
               onChange={(e) => setHeadless(!e.target.checked)}
               className="size-3.5 accent-primary"
             />
+            <Eye className="size-4 text-muted-foreground" />
             Watch it run
           </label>
+
+          {!headless && (
+            <Select
+              value={slowMo}
+              disabled={active}
+              onChange={(e) => setSlowMo(Number(e.target.value))}
+              className="h-8.5 w-auto text-[13px]"
+              aria-label="Playback speed"
+            >
+              {WATCH_SPEEDS.map((speed) => (
+                <option key={speed.ms} value={speed.ms}>
+                  {speed.label}
+                </option>
+              ))}
+            </Select>
+          )}
 
           <div className="ml-auto flex items-center gap-2">
             {active ? (
@@ -200,6 +227,12 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
 
         {browsers.length === 0 && (
           <p className="text-xs text-muted-foreground">Pick at least one browser.</p>
+        )}
+        {!headless && !active && (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            A browser window opens and pauses {slowMo}ms between each action so
+            you can follow along. The run will take noticeably longer.
+          </p>
         )}
         {error && <Alert>{error}</Alert>}
 
@@ -275,6 +308,17 @@ function RunSummary({ run }: { run: TestRunDetail }) {
         {run.browsers.map((b) => BROWSER_LABEL[b as Browser] ?? b).join(" · ")}
         {run.duration_ms !== null && ` · ${formatDuration(run.duration_ms)}`}
       </span>
+
+      {active && (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-border">
+          {/* Real progress, not a spinner: each test writes its row the moment
+              pytest reports it, so this tracks actual work rather than time. */}
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-500"
+            style={{ width: `${expected ? (done / expected) * 100 : 4}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }

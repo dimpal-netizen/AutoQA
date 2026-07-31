@@ -21,6 +21,15 @@ class RunCreate(BaseModel):
     headless: bool = Field(
         default=True, description="Set false to watch the browser as it runs"
     )
+    slow_mo_ms: int | None = Field(
+        default=None,
+        ge=0,
+        le=5000,
+        description=(
+            "Pause between actions while watching. Defaults to the configured "
+            "watch speed; ignored when headless."
+        ),
+    )
 
 
 class ArtifactRead(BaseModel):
@@ -61,6 +70,7 @@ class RunRead(BaseModel):
     browsers: list[str]
     case_ids: list[int]
     headless: bool
+    slow_mo_ms: int
     total: int
     passed: int
     failed: int

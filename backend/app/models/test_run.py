@@ -64,6 +64,10 @@ class TestRun(Base, TimestampMixin):
     browsers: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     case_ids: Mapped[list[int]] = mapped_column(JSONB, default=list, nullable=False)
     headless: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # Pause between actions, in milliseconds. Stored on the run rather than
+    # read from config at execution time so an old run still explains why it
+    # took four minutes.
+    slow_mo_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     passed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

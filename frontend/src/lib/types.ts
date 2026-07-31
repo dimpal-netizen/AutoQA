@@ -278,6 +278,7 @@ export interface TestRun {
   browsers: string[];
   case_ids: number[];
   headless: boolean;
+  slow_mo_ms: number;
   total: number;
   passed: number;
   failed: number;
@@ -288,6 +289,15 @@ export interface TestRun {
   finished_at: string | null;
   created_at: string;
 }
+
+/** How slowly to drive the browser when watching, in milliseconds per action.
+ *  Offered as a choice because the right speed depends on why you are
+ *  watching: proving it works, or reading every field as it is filled. */
+export const WATCH_SPEEDS: { label: string; ms: number }[] = [
+  { label: "Normal", ms: 300 },
+  { label: "Slow", ms: 1000 },
+  { label: "Step by step", ms: 2500 },
+];
 
 export interface TestRunDetail extends TestRun {
   results: TestResult[];

@@ -212,7 +212,12 @@ export const api = {
     /** Starts a run and returns immediately — the run is queued, not finished. */
     start: (
       suiteId: number,
-      options: { browsers?: Browser[]; case_ids?: number[]; headless?: boolean } = {},
+      options: {
+        browsers?: Browser[];
+        case_ids?: number[];
+        headless?: boolean;
+        slow_mo_ms?: number;
+      } = {},
     ) =>
       request<TestRun>(`/suites/${suiteId}/runs`, {
         method: "POST",

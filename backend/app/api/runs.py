@@ -38,6 +38,7 @@ def start_run(
         browsers=[b.value for b in data.browsers] if data.browsers else None,
         case_ids=data.case_ids,
         headless=data.headless,
+        slow_mo_ms=data.slow_mo_ms,
     )
     return RunRead.model_validate(run)
 

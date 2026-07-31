@@ -256,6 +256,105 @@ def test_runtime_output_never_lands_inside_the_backend_package():
         )
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("tests/test_login.py::test_signs_in[chromium] PASSED   [ 15%]", "PASSED"),
+        ("tests/t.py::test_fails FAILED  [100%]", "FAILED"),
+        ("tests/t.py::test_skip SKIPPED (needs staging) [ 50%]", "SKIPPED"),
+        ("tests/t.py::test_boom ERROR [ 20%]", "ERROR"),
+    ],
+)
+def test_progress_lines_are_recognised(line, expected):
+    from app.runner.executor import _RESULT_LINE
+
+    match = _RESULT_LINE.search(line)
+    assert match and match.group("status") == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["collected 13 items", "=== 10 passed, 3 failed in 99.70s ===", "rootdir: /x"],
+)
+def test_summary_lines_are_not_mistaken_for_results(line):
+    """`10 passed` in the summary must not be reported as a test called `10`."""
+    from app.runner.executor import _RESULT_LINE
+
+    assert _RESULT_LINE.search(line) is None
+
+
+def test_results_are_reported_while_the_run_is_still_going(monkeypatch, tmp_path: Path):
+    """The fix for "I cannot see what is going on".
+
+    Without streaming, a thirteen-test run shows nothing for two minutes and
+    then everything at once — indistinguishable from being hung.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "WORKSPACE_PATH", str(tmp_path / "work"))
+    monkeypatch.setattr(settings, "STORAGE_PATH", str(tmp_path / "store"))
+
+    seen: list[tuple[str, ResultStatus]] = []
+
+    run_suite(
+        {
+            "pytest.ini": "[pytest]\ntestpaths = tests\npython_files = test_*.py\naddopts = -v\n",
+            "tests/test_three.py": textwrap.dedent(
+                """
+                def test_one(): assert True
+                def test_two(): assert False
+                def test_three(): assert True
+                """
+            ),
+        },
+        run_id=3,
+        browser=Browser.CHROMIUM,
+        timeout_s=120,
+        on_progress=lambda name, status: seen.append((name, status)),
+    )
+
+    assert [name for name, _ in seen] == ["test_one", "test_two", "test_three"]
+    assert dict(seen)["test_two"] is ResultStatus.FAILED
+
+
+def test_a_broken_progress_callback_does_not_kill_the_run(monkeypatch, tmp_path: Path):
+    """Reporting is a nicety; it must never cost the run it reports on."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "WORKSPACE_PATH", str(tmp_path / "work"))
+    monkeypatch.setattr(settings, "STORAGE_PATH", str(tmp_path / "store"))
+
+    def explode(name, status):
+        raise RuntimeError("the database went away")
+
+    outcome = run_suite(
+        {
+            "pytest.ini": "[pytest]\ntestpaths = tests\npython_files = test_*.py\naddopts = -v\n",
+            "tests/test_x.py": "def test_x(): assert True\n",
+        },
+        run_id=4,
+        browser=Browser.CHROMIUM,
+        timeout_s=120,
+        on_progress=explode,
+    )
+
+    assert [r.status for r in outcome.results] == [ResultStatus.PASSED]
+
+
+def test_watching_slows_the_browser_down():
+    """Headed without slowmo is a window that flickers open and shut."""
+    from app.runner.executor import _command
+
+    watched = _command(Browser.CHROMIUM, headless=False, slow_mo_ms=700)
+    assert "--headed" in watched
+    assert "--slowmo=700" in watched
+
+    # Nobody is watching a headless run, so it must not be slowed down.
+    assert not any(
+        arg.startswith("--slowmo") for arg in _command(Browser.CHROMIUM, headless=True)
+    )
+
+
 def test_the_workspace_is_deleted_afterwards(monkeypatch, tmp_path: Path):
     """Generated code must not accumulate on the user's disk."""
     from app.core.config import settings

@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.config import settings
-from app.models.enums import ArtifactType, Browser
+from app.models.enums import ArtifactType, Browser, ResultStatus
 from app.runner.parser import ParsedResult, parse_junit
 
 logger = logging.getLogger(__name__)
@@ -80,8 +82,16 @@ def run_suite(
     headless: bool = True,
     base_url: str | None = None,
     timeout_s: int | None = None,
+    slow_mo_ms: int = 0,
+    on_progress: Callable[[str, ResultStatus], None] | None = None,
 ) -> ExecutionOutcome:
     """Write `bundle` to a fresh workspace, run pytest, collect the evidence.
+
+    `on_progress` is called as each test finishes, parsed from pytest's own
+    output while it streams. Without it a thirteen-test run shows nothing for
+    two minutes and then everything at once, which is indistinguishable from
+    being hung. The JUnit report is still the authority for durations and
+    tracebacks; this only makes the wait legible.
 
     Never raises: a run that cannot start is a recorded outcome with `error`
     set, because the caller has a database row to finish either way.
@@ -99,23 +109,17 @@ def run_suite(
         return outcome
 
     try:
-        completed = subprocess.run(
-            _command(browser, headless=headless),
+        outcome.exit_code, output, timed_out = _stream(
+            _command(browser, headless=headless, slow_mo_ms=slow_mo_ms),
             cwd=workspace,
             env=_environment(base_url),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            # No shell: the suite name reaches this path from user input, and a
-            # shell would make that a command injection.
-            shell=False,
+            timeout_s=timeout_s,
+            on_progress=on_progress,
         )
-        outcome.exit_code = completed.returncode
-        outcome.output = _tail(completed.stdout, completed.stderr)
-    except subprocess.TimeoutExpired as exc:
-        outcome.error = f"Timed out after {timeout_s}s"
-        outcome.output = _tail(exc.stdout, exc.stderr)
-        logger.warning("Run %s (%s): timed out", run_id, browser.value)
+        outcome.output = _tail(output, None)
+        if timed_out:
+            outcome.error = f"Timed out after {timeout_s}s"
+            logger.warning("Run %s (%s): timed out", run_id, browser.value)
     except FileNotFoundError:
         outcome.error = "Python interpreter not found - cannot start pytest"
         logger.exception("Run %s (%s): interpreter missing", run_id, browser.value)
@@ -173,7 +177,84 @@ def _materialise(bundle: dict[str, str], workspace: Path) -> None:
         destination.write_text(content, encoding="utf-8", newline="\n")
 
 
-def _command(browser: Browser, *, headless: bool) -> list[str]:
+# "tests/test_login.py::test_signs_in[chromium] PASSED   [ 15%]"
+_RESULT_LINE = re.compile(
+    r"::(?P<name>[A-Za-z_]\w*)(?:\[[^\]]*\])?\s+"
+    r"(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
+)
+
+_LIVE_STATUS: dict[str, ResultStatus] = {
+    "PASSED": ResultStatus.PASSED,
+    "XPASS": ResultStatus.PASSED,
+    "FAILED": ResultStatus.FAILED,
+    "ERROR": ResultStatus.ERROR,
+    "SKIPPED": ResultStatus.SKIPPED,
+    "XFAIL": ResultStatus.SKIPPED,
+}
+
+
+def _stream(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_s: int,
+    on_progress: Callable[[str, ResultStatus], None] | None,
+) -> tuple[int | None, str, bool]:
+    """Run pytest, reporting each test as it finishes.
+
+    Line-buffered rather than `subprocess.run`, because the whole point is to
+    see progress before the process ends. stderr is folded into stdout so the
+    ordering between them survives.
+    """
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        # No shell: the suite name reaches this path from user input, and a
+        # shell would make that a command injection.
+        shell=False,
+    )
+
+    deadline = time.monotonic() + timeout_s
+    lines: list[str] = []
+    timed_out = False
+
+    try:
+        for line in process.stdout or ():
+            lines.append(line)
+
+            if on_progress:
+                match = _RESULT_LINE.search(line)
+                status = _LIVE_STATUS.get(match.group("status")) if match else None
+                if status is not None:
+                    try:
+                        on_progress(match.group("name"), status)
+                    except Exception:
+                        # A reporting failure must not kill the run it reports on.
+                        logger.exception("Progress callback failed")
+
+            if time.monotonic() > deadline:
+                timed_out = True
+                break
+    finally:
+        if timed_out:
+            process.kill()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        if process.stdout is not None:
+            process.stdout.close()
+
+    return process.returncode, "".join(lines), timed_out
+
+
+def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[str]:
     """The pytest invocation.
 
     `sys.executable` rather than a bare "pytest": the API may be started from
@@ -195,6 +276,10 @@ def _command(browser: Browser, *, headless: bool) -> list[str]:
     ]
     if not headless:
         command.append("--headed")
+    if slow_mo_ms > 0:
+        # Playwright drives a browser faster than anyone can follow. Without
+        # this, "watch it run" is a window that flickers open and shut.
+        command.append(f"--slowmo={slow_mo_ms}")
     return command
 
 

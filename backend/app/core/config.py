@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     # How many browsers may run at once. Each is a browser plus a Python
     # process, so this is a memory ceiling as much as a speed setting.
     MAX_PARALLEL_BROWSERS: int = 3
+    # Pause between actions when running headed, in milliseconds. Playwright
+    # drives a browser far faster than anyone can follow, so watching a run
+    # without this shows a window flickering open and shut.
+    WATCH_SLOWMO_MS: int = 700
     # Comma-separated. Read it through `default_browsers`, not directly:
     # pydantic-settings tries to JSON-parse list-typed fields, which chokes on "a,b".
     DEFAULT_BROWSERS: str = "chromium,firefox,webkit"

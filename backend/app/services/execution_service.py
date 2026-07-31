@@ -65,6 +65,7 @@ class ExecutionService:
         browsers: list[str] | None = None,
         case_ids: list[int] | None = None,
         headless: bool = True,
+        slow_mo_ms: int | None = None,
     ) -> TestRun:
         """Queue a run and return straight away.
 
@@ -90,6 +91,11 @@ class ExecutionService:
             browsers=[b.value for b in chosen],
             case_ids=[c.id for c in wanted],
             headless=headless,
+            # Only meaningful when watching: there is nobody to watch a
+            # headless run, and slowing one down just wastes time.
+            slow_mo_ms=0 if headless else (
+                settings.WATCH_SLOWMO_MS if slow_mo_ms is None else slow_mo_ms
+            ),
             total=len(wanted) * len(chosen),
         )
         self.db.commit()
@@ -170,6 +176,8 @@ class ExecutionService:
                         browser=browser,
                         headless=run.headless,
                         base_url=base_url,
+                        slow_mo_ms=run.slow_mo_ms,
+                        on_progress=self._progress_reporter(run_id, browser, cases),
                     ),
                     browsers,
                 )
@@ -179,6 +187,31 @@ class ExecutionService:
             self._record(run, outcome, cases)
 
         self._finish(run, outcomes)
+
+    def _progress_reporter(self, run_id: int, browser: Browser, cases: dict[str, object]):
+        """A callback that records each test the moment pytest reports it.
+
+        Writes through its own session: this runs on the pool thread, and a
+        SQLAlchemy Session is not safe to share across threads. The rows it
+        writes are provisional - no duration, no traceback - and the JUnit
+        parse overwrites them with the authoritative version when the browser
+        finishes. Their only job is to let the UI fill in as it goes instead of
+        staring at "running" for two minutes.
+        """
+
+        def report(function_name: str, status: ResultStatus) -> None:
+            case = cases.get(function_name)
+            with session_scope() as db:
+                TestResultRepository(db).upsert(
+                    run_id=run_id,
+                    browser=browser,
+                    test_case_id=getattr(case, "id", None),
+                    case_name=getattr(case, "name", function_name),
+                    function_name=function_name,
+                    status=status,
+                )
+
+        return report
 
     def _prepare(self, run: TestRun) -> tuple[dict[str, str] | None, dict[str, object]]:
         """The files to run, and a lookup from function name back to the case."""
