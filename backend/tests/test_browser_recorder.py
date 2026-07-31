@@ -56,7 +56,7 @@ def recording_session() -> tuple[int, int]:
         return session.id, project.id
 
 
-async def launch(session_id: int, project_id: int) -> None:
+async def launch(session_id: int, project_id: int, on_page_ready=None) -> None:
     await browser_recorder.launch(
         session_id=session_id,
         project_id=project_id,
@@ -64,6 +64,7 @@ async def launch(session_id: int, project_id: int) -> None:
         session_name="Launched by test",
         url=DEMO_PAGE,
         headless=True,
+        on_page_ready=on_page_ready,
     )
 
 
@@ -110,16 +111,20 @@ async def test_launch_records_the_opening_navigation(recording_session) -> None:
 
 async def test_interaction_in_the_launched_browser_is_recorded(recording_session) -> None:
     session_id, project_id = recording_session
-    await launch(session_id, project_id)
+
+    def act_like_a_user(page) -> None:
+        """Runs on the browser's own thread — see launch(on_page_ready=...)."""
+        page.get_by_test_id("email-input").fill("buyer@example.com")
+        page.get_by_label("Password").fill("hunter2000")
+        page.get_by_test_id("remember-me").check()
+        page.get_by_test_id("country-select").select_option("GB")
+        page.get_by_test_id("login-submit").click()
+        # The recorder buffers keystrokes and uploads on a timer; give it a
+        # moment to flush before the assertions start polling.
+        page.wait_for_timeout(2500)
+
+    await launch(session_id, project_id, on_page_ready=act_like_a_user)
     try:
-        page = browser_recorder._sessions[session_id].page
-
-        await page.get_by_test_id("email-input").fill("buyer@example.com")
-        await page.get_by_label("Password").fill("hunter2000")
-        await page.get_by_test_id("remember-me").check()
-        await page.get_by_test_id("country-select").select_option("GB")
-        await page.get_by_test_id("login-submit").click()
-
         actions = await wait_for_actions(session_id, 6)
         by_type = {a["action_type"]: a for a in actions}
 
