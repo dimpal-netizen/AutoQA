@@ -1,0 +1,112 @@
+"use client";
+
+/** What the AI worked out about one failure.
+ *
+ *  Sits inside the expanded failure row, next to the error and the screenshot,
+ *  because that is where the question is being asked. The verdict comes first:
+ *  is this the application or the test? Everything else is detail.
+ */
+
+import { useEffect, useState } from "react";
+import { Bug, FlaskConical, Sparkles } from "lucide-react";
+import { api } from "@/lib/api";
+import {
+  CATEGORY_TEXT,
+  SEVERITY_TONE,
+  type Analysis,
+} from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/card";
+
+export function FailureAnalysis({ resultId }: { resultId: number }) {
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  // Show an existing analysis without spending anything to find out there is one.
+  useEffect(() => {
+    let cancelled = false;
+    void api.analysis
+      .get(resultId)
+      .then((found) => {
+        if (!cancelled) setAnalysis(found);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resultId]);
+
+  async function explain() {
+    setBusy(true);
+    setError(null);
+    try {
+      setAnalysis(await api.analysis.forResult(resultId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not analyse this failure");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!loaded) return null;
+
+  if (!analysis) {
+    return (
+      <div className="flex flex-col gap-2">
+        <div>
+          <Button size="sm" variant="outline" onClick={explain} disabled={busy}>
+            <Sparkles className={busy ? "animate-pulse" : ""} />
+            {busy ? "Working it out…" : "Explain this failure"}
+          </Button>
+        </div>
+        {error && <Alert>{error}</Alert>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border bg-card p-3.5">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* The verdict first — it decides what the reader does next. */}
+        <Badge tone={analysis.is_product_bug ? "danger" : "neutral"}>
+          {analysis.is_product_bug ? <Bug /> : <FlaskConical />}
+          {analysis.is_product_bug ? "Application bug" : "Test problem"}
+        </Badge>
+        <Badge tone="outline">{CATEGORY_TEXT[analysis.category]}</Badge>
+        <Badge tone={SEVERITY_TONE[analysis.severity]}>
+          {analysis.severity}
+        </Badge>
+
+        <span
+          className="tabular ml-auto text-xs text-muted-foreground"
+          title="How sure the model is. Treat anything under 60% as a hint, not an answer."
+        >
+          {Math.round(analysis.confidence * 100)}% confident
+        </span>
+      </div>
+
+      <dl className="mt-3 flex flex-col gap-2.5 text-[13px] leading-relaxed">
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Root cause</dt>
+          <dd className="mt-0.5">{analysis.root_cause}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Suggested fix</dt>
+          <dd className="mt-0.5">{analysis.suggested_fix}</dd>
+        </div>
+      </dl>
+
+      <p className="mt-3 border-t border-border pt-2 text-[11px] text-muted-foreground">
+        {analysis.model} · {analysis.tokens.toLocaleString()} tokens · $
+        {analysis.cost_usd.toFixed(4)} · read the error and the trace, not the
+        screenshot
+      </p>
+    </div>
+  );
+}

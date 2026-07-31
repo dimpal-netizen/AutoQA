@@ -248,8 +248,8 @@ Three rules keep it maintainable:
 | 4 | AI layer — better names and descriptions on generated code | ✅ Done |
 | 5 | **Test execution** — Run button, cross-browser, screenshots, video | ✅ Done |
 | 6 | AI test cases — positive, negative, edge and security | ✅ Done |
-| 7 | AI failure analysis (Workflow 3) | ⬜ Next |
-| 8 | HTML / Allure reports + bug reports | ⬜ |
+| 7 | AI failure analysis (Workflow 3) | ✅ Done |
+| 8 | HTML / Allure reports + bug reports | ⬜ Next |
 | 9 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
 | 10 | Chrome extension (Manifest V3) | ⬜ |
 

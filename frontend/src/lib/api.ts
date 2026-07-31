@@ -6,6 +6,7 @@
 
 import { useAuthStore } from "@/stores/auth-store";
 import type {
+  Analysis,
   Browser,
   GenerateCasesResult,
   Project,
@@ -238,6 +239,16 @@ export const api = {
     results: (id: number) => request<TestResult[]>(`/runs/${id}/results`),
 
     cancel: (id: number) => request<TestRun>(`/runs/${id}/cancel`, { method: "POST" }),
+  },
+
+  analysis: {
+    /** Explain one failure. Costs a fraction of a cent; needs an AI key. */
+    forResult: (resultId: number) =>
+      request<Analysis>(`/results/${resultId}/analyze`, { method: "POST" }),
+
+    /** Whatever has already been worked out, or null. */
+    get: (resultId: number) =>
+      request<Analysis | null>(`/results/${resultId}/analysis`),
   },
 };
 

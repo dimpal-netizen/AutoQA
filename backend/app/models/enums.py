@@ -214,6 +214,28 @@ class ResultStatus(str, Enum):
     FLAKY = "flaky"
 
 
+class Severity(str, Enum):
+    """Shared by analyses and, later, bug reports."""
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class FailureCategory(str, Enum):
+    """Why a test failed. The first question is always the same one:
+    is the application broken, or is the test?"""
+
+    APPLICATION_BUG = "application_bug"   # the app is wrong
+    TEST_BUG = "test_bug"                 # the test is wrong
+    SELECTOR_BROKEN = "selector_broken"   # the element moved or was renamed
+    TIMING = "timing"                     # raced the page; needs a wait
+    ENVIRONMENT = "environment"           # the app was down, or not reachable
+    TEST_DATA = "test_data"               # the data the test used is stale
+    FLAKY = "flaky"                       # passes and fails on the same code
+
+
 class ArtifactType(str, Enum):
     """Evidence saved from a run. Files live on disk; only paths go in the database."""
 

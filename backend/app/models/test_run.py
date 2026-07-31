@@ -31,6 +31,7 @@ from app.core.database import Base, TimestampMixin
 from app.models.enums import ArtifactType, Browser, ResultStatus, RunStatus
 
 if TYPE_CHECKING:
+    from app.models.ai_analysis import AIAnalysis
     from app.models.project import Project
     from app.models.test_case import TestCase, TestSuite
     from app.models.user import User
@@ -134,6 +135,11 @@ class TestResult(Base, TimestampMixin):
     test_case: Mapped["TestCase | None"] = relationship()
     artifacts: Mapped[list["ExecutionArtifact"]] = relationship(
         back_populates="result", cascade="all, delete-orphan"
+    )
+    analyses: Mapped[list["AIAnalysis"]] = relationship(
+        back_populates="result",
+        cascade="all, delete-orphan",
+        order_by="AIAnalysis.id.desc()",
     )
 
     def __repr__(self) -> str:

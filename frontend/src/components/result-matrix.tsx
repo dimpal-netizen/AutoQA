@@ -12,6 +12,7 @@ import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Image as ImageIcon, Video } from "lucide-react";
 import { fetchArtifact } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import { FailureAnalysis } from "@/components/failure-analysis";
 import {
   BROWSER_LABEL,
   RESULT_BADGE,
@@ -144,6 +145,8 @@ function FailureDetail({ results }: { results: TestResult[] }) {
               {result.error_message}
             </p>
           )}
+
+          <FailureAnalysis resultId={result.id} />
 
           {result.artifacts.length > 0 && <Evidence artifacts={result.artifacts} />}
 

@@ -412,3 +412,52 @@ export interface GenerateCasesResult {
   tokens: number;
   cost_usd: number;
 }
+
+// ---------------------------------------------------------------------------
+// AI failure analysis
+// ---------------------------------------------------------------------------
+export type FailureCategory =
+  | "application_bug"
+  | "test_bug"
+  | "selector_broken"
+  | "timing"
+  | "environment"
+  | "test_data"
+  | "flaky";
+
+export type Severity = "critical" | "high" | "medium" | "low";
+
+export const CATEGORY_TEXT: Record<FailureCategory, string> = {
+  application_bug: "Application bug",
+  test_bug: "Test bug",
+  selector_broken: "Selector broken",
+  timing: "Timing",
+  environment: "Environment",
+  test_data: "Test data",
+  flaky: "Flaky",
+};
+
+export const SEVERITY_TONE: Record<Severity, Tone> = {
+  critical: "danger",
+  high: "warning",
+  medium: "neutral",
+  low: "neutral",
+};
+
+export interface Analysis {
+  id: number;
+  result_id: number;
+  run_id: number;
+  provider: string;
+  model: string;
+  root_cause: string;
+  suggested_fix: string;
+  category: FailureCategory;
+  severity: Severity;
+  priority: Severity;
+  is_product_bug: boolean;
+  confidence: number;
+  tokens: number;
+  cost_usd: number;
+  created_at: string;
+}

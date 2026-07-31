@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, health, projects, recordings, runs, test_cases
+from app.api import analysis, auth, health, projects, recordings, runs, test_cases
 from app.core.config import settings
 from app.services import browser_recorder
 from app.services.exceptions import ServiceError
@@ -90,8 +90,9 @@ def create_app() -> FastAPI:
     app.include_router(recordings.router, prefix=settings.API_V1_PREFIX)
     app.include_router(test_cases.router, prefix=settings.API_V1_PREFIX)
     app.include_router(runs.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(analysis.router, prefix=settings.API_V1_PREFIX)
 
-    # Later phases add: analysis, reports, bugs, integrations, agent, websocket.
+    # Later phases add: reports, bugs, integrations, agent, websocket.
 
     return app
 
