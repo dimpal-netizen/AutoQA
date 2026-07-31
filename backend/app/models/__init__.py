@@ -18,6 +18,7 @@ from app.models.enums import (
 )
 from app.models.project import Project
 from app.models.recording import RecordedAction, RecordingSession
+from app.models.test_case import GeneratedFile, TestCase, TestStep, TestSuite
 from app.models.user import User
 
 __all__ = [
@@ -27,11 +28,15 @@ __all__ = [
     "ActionType",
     "Base",
     "Browser",
+    "GeneratedFile",
     "Project",
     "RecordedAction",
     "RecordingSession",
     "RecordingStatus",
     "SelectorStrategy",
+    "TestCase",
+    "TestStep",
+    "TestSuite",
     "User",
     "UserRole",
 ]

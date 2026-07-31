@@ -119,3 +119,29 @@ SELECTOR_RANK: dict[SelectorStrategy, int] = {
 # Anything at or below this rank is reliable enough to use without warning the
 # user. Beyond it the UI should flag the step as fragile.
 RELIABLE_SELECTOR_RANK = SELECTOR_RANK[SelectorStrategy.CSS_ID]
+
+
+class CaseSource(str, Enum):
+    """Where a test case came from."""
+
+    RECORDING = "recording"
+    AGENT = "agent"
+    MANUAL = "manual"
+
+
+class CaseStatus(str, Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+    DEPRECATED = "deprecated"
+
+
+class FileType(str, Enum):
+    """Kind of generated file. Drives where it lands in the suite directory."""
+
+    TEST = "test"
+    PAGE_OBJECT = "page_object"
+    CONFTEST = "conftest"
+    CONFIG = "config"
+    FIXTURE = "fixture"
+    UTIL = "util"
+    HELPER = "helper"
