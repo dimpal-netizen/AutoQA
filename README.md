@@ -106,6 +106,34 @@ npm run dev
 Open <http://localhost:3000>. Register an account — **the first account created becomes
 the admin** — then create a project.
 
+### AI features — optional, and off until you add a key
+
+AutoQA works **without an API key**. Nothing is blocked, no feature disappears,
+no error is shown. This is deliberate: recordings are turned into Playwright
+code by ordinary Python, not by AI, so the part that actually runs never depends
+on a network call succeeding.
+
+To switch AI on, fill in one line in `.env`:
+
+```ini
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=sk-ant-...     # get one at console.anthropic.com
+```
+
+Restart the API. That is the whole setup.
+
+| | Without a key | With a key |
+|---|---|---|
+| Recording → runnable script | ✅ | ✅ |
+| Page objects, fallback selectors | ✅ | ✅ |
+| Step list in the UI | ✅ | ✅ |
+| Names like `sign_in_button` | ❌ `button_2` | ✅ |
+| Readable step descriptions | ❌ `Click "Sign in"` | ✅ `Submit the sign-in form` |
+| Failure analysis *(Phase 5+)* | ❌ | ✅ |
+
+Roughly a fraction of a cent per recording. Every call records its own token
+count and dollar cost, so spend is never a mystery.
+
 ### Background workers (from Phase 3 onward)
 
 ```bash
@@ -119,32 +147,52 @@ poetry run celery -A app.core.celery_app worker -Q codegen,execution,ai,reports 
 
 ## Project structure
 
+Only folders that exist today are listed. Folders for later phases are created
+when that phase starts, so an empty folder never means "something is missing".
+
 ```
 AutoQA/
 ├── docker-compose.yml        # Postgres + Redis
-├── .env.example
-├── backend/
-│   ├── pyproject.toml
-│   ├── alembic/              # database migrations
-│   ├── storage/              # screenshots, videos, logs, reports (gitignored)
-│   ├── workspaces/           # one temp dir per test run (gitignored)
-│   ├── tests/
+├── .env                      # your settings and API keys (never committed)
+├── docs/                     # the recording format the extension must match
+│
+├── backend/                  # the API and all the logic
+│   ├── alembic/              #   database migrations, in order
+│   ├── generated/            #   YOUR TEST SCRIPTS land here — open in VS Code
+│   ├── tests/                #   tests for AutoQA itself
 │   └── app/
-│       ├── main.py           # FastAPI app
-│       ├── core/             # config, database, security, celery, events
-│       ├── models/           # SQLAlchemy tables
-│       ├── schemas/          # Pydantic request/response models
-│       ├── repositories/     # ALL database queries live here
-│       ├── services/         # ALL business logic lives here
-│       ├── api/              # HTTP routes (thin — no logic)
-│       ├── codegen/          # recording JSON → Playwright code
-│       ├── ai/               # Claude / OpenAI clients + prompts
-│       ├── runner/           # runs pytest, parses results
-│       ├── agent/            # autonomous crawler
-│       └── tasks/            # Celery tasks (thin wrappers over services)
-├── frontend/                 # Phase 8 — Next.js 15
-└── extension/                # Phase 9 — Manifest V3
+│       ├── main.py           #   starts the API
+│       ├── api/              #   the URLs the frontend calls (no logic here)
+│       ├── services/         #   all the decisions and rules
+│       ├── repositories/     #   all the database queries
+│       ├── models/           #   what the database tables look like
+│       ├── schemas/          #   what a request and response must contain
+│       ├── codegen/          #   recording -> Playwright code (no AI)
+│       ├── ai/               #   Claude / OpenAI, prompts, code polish
+│       ├── core/             #   config, database connection, passwords, JWT
+│       └── static/           #   recorder.js, injected into the browser
+│
+└── frontend/                 # the website you click on
+    └── src/
+        ├── app/              #   one folder per page (/login, /recordings, ...)
+        ├── components/       #   reusable pieces of UI
+        ├── lib/              #   API calls and shared types
+        └── stores/           #   who is logged in
 ```
+
+**The two folders that matter to you day to day:**
+
+| Folder | What it is |
+|---|---|
+| `backend/generated/` | The Playwright scripts AutoQA writes for you. This is what you open in VS Code. |
+| `.env` | Your settings — database, API keys. The only file you normally edit by hand. |
+
+Everything else is the application itself.
+
+> **VS Code showing dozens of folders you didn't create?** `.venv`, `node_modules`,
+> `__pycache__` and `.next` are installed packages and build caches — not your
+> code. `.vscode/settings.json` hides them. Nothing is deleted; flip any entry to
+> `false` to see it again.
 
 ### How the layers fit together
 
@@ -168,12 +216,13 @@ Three rules keep it maintainable:
 | 0 | Project setup, Docker, config, health check | ✅ Done |
 | 1 | Auth, users, roles, projects — backend **and** frontend | ✅ Done |
 | 2 | Recording storage (+ freeze the recording JSON format) | ✅ Done — [format spec](docs/recording-format.md) |
-| 3 | Recording → Playwright code generation | ⬜ |
-| 4 | AI layer + failure analysis (Workflow 3) | ⬜ |
-| 5 | Test execution + live WebSocket updates | ⬜ |
-| 6 | HTML / Allure reports + bug reports | ⬜ |
-| 7 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
-| 8 | Chrome extension (Manifest V3) | ⬜ |
+| 3 | Recording → Playwright code, written to `backend/generated/` | ✅ Done |
+| 4 | AI layer — better names and descriptions on generated code | ✅ Done |
+| 5 | **Test execution** — run the scripts, screenshots, video, live results | ⬜ Next |
+| 6 | AI failure analysis (Workflow 3) — needs runs from Phase 5 first | ⬜ |
+| 7 | HTML / Allure reports + bug reports | ⬜ |
+| 8 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
+| 9 | Chrome extension (Manifest V3) | ⬜ |
 
 Each phase extends both the backend and the UI, so the app stays runnable throughout.
 
