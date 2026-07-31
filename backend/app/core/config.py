@@ -50,9 +50,15 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = ""
 
     # --- AI providers (Phase 4) ---
+    # One of: claude, openai, gemini. Only the matching key is needed; every
+    # AI feature talks to the LLMClient interface, never to a vendor SDK.
     LLM_PROVIDER: str = "claude"
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    # Override when the default model is not available to your key. Gemini
+    # model ids change often, so this is a setting rather than a constant.
+    GEMINI_MODEL: str = ""
 
     # --- Code generation ---
     # Generate a test suite the moment a recording stops. Deterministic and

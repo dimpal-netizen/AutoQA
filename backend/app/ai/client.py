@@ -105,9 +105,24 @@ def get_llm_client() -> LLMClient:
 
         return OpenAIClient()
 
+    if provider == "gemini":
+        from app.ai.gemini import GeminiClient
+
+        return GeminiClient()
+
     raise LLMError(
-        f"Unknown LLM_PROVIDER {settings.LLM_PROVIDER!r}. Use 'claude' or 'openai'."
+        f"Unknown LLM_PROVIDER {settings.LLM_PROVIDER!r}. "
+        f"Use one of: {', '.join(sorted(_KEY_FOR))}."
     )
+
+
+# Which setting holds the key for each provider. One mapping so adding a
+# provider cannot leave `ai_available()` silently answering for the wrong one.
+_KEY_FOR: dict[str, str] = {
+    "claude": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+}
 
 
 def ai_available() -> bool:
@@ -116,9 +131,5 @@ def ai_available() -> bool:
     Callers use this to skip enhancement rather than fail: generated code must
     still be produced when no API key is configured.
     """
-    provider = settings.LLM_PROVIDER.strip().lower()
-    if provider == "claude":
-        return bool(settings.ANTHROPIC_API_KEY)
-    if provider == "openai":
-        return bool(settings.OPENAI_API_KEY)
-    return False
+    setting = _KEY_FOR.get(settings.LLM_PROVIDER.strip().lower())
+    return bool(setting and getattr(settings, setting, ""))

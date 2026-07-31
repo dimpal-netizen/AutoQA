@@ -306,3 +306,134 @@ def test_enhancement_defaults_are_empty():
     empty = CodeEnhancement()
     assert empty.function_name is None
     assert empty.step_descriptions == {} and empty.locator_names == {}
+
+
+# ---------------------------------------------------------------------------
+# Provider selection
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("provider", "setting"),
+    [
+        ("claude", "ANTHROPIC_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+        ("gemini", "GEMINI_API_KEY"),
+    ],
+)
+def test_ai_is_available_only_with_the_matching_key(monkeypatch, provider, setting):
+    """Each provider must read its own key, not another one's."""
+    from app.ai.client import ai_available
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", provider)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.setattr(settings, name, "")
+
+    assert not ai_available()
+
+    monkeypatch.setattr(settings, setting, "a-key")
+    assert ai_available()
+
+
+def test_an_unknown_provider_names_the_valid_ones(monkeypatch):
+    from app.ai.client import get_llm_client
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "llama")
+    with pytest.raises(LLMError, match="claude, gemini, openai"):
+        get_llm_client()
+
+
+def test_a_provider_without_a_key_refuses_to_build(monkeypatch):
+    """Better to fail loudly here than to send an unauthenticated request."""
+    from app.ai.gemini import GeminiClient
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+    with pytest.raises(LLMError, match="GEMINI_API_KEY"):
+        GeminiClient()
+
+
+# ---------------------------------------------------------------------------
+# Gemini specifics — the parts a fake client cannot cover
+# ---------------------------------------------------------------------------
+def _gemini_response(**kwargs):
+    """A GenerateContentResponse built from the real SDK types."""
+    from google.genai import types
+
+    return types.GenerateContentResponse(**kwargs)
+
+
+def test_a_blocked_prompt_is_a_refusal_not_a_crash():
+    """Gemini returns HTTP 200 for a safety block, with no text to read."""
+    from google.genai import types
+
+    from app.ai.gemini import _guard_refusal
+
+    response = _gemini_response(
+        prompt_feedback=types.GenerateContentResponsePromptFeedback(
+            block_reason=types.BlockedReason.SAFETY
+        )
+    )
+
+    with pytest.raises(LLMRefusal, match="declined"):
+        _guard_refusal(response)
+
+
+def test_a_safety_stop_mid_answer_is_a_refusal():
+    from google.genai import types
+
+    from app.ai.gemini import _guard_refusal
+
+    response = _gemini_response(
+        candidates=[types.Candidate(finish_reason=types.FinishReason.SAFETY)]
+    )
+
+    with pytest.raises(LLMRefusal):
+        _guard_refusal(response)
+
+
+def test_a_normal_stop_is_not_a_refusal():
+    from google.genai import types
+
+    from app.ai.gemini import _guard_refusal
+
+    response = _gemini_response(
+        candidates=[types.Candidate(finish_reason=types.FinishReason.STOP)]
+    )
+
+    _guard_refusal(response)  # must not raise
+
+
+def test_thinking_tokens_are_counted_as_output():
+    """Gemini reports them separately, but they are billed as output."""
+    from google.genai import types
+
+    from app.ai.gemini import GeminiClient
+
+    client = GeminiClient(api_key="test-key")
+    response = _gemini_response(
+        usage_metadata=types.GenerateContentResponseUsageMetadata(
+            prompt_token_count=1000, candidates_token_count=200, thoughts_token_count=800
+        )
+    )
+
+    result = client._to_response(response, text="hi", started=0.0)
+
+    assert result.input_tokens == 1000
+    assert result.output_tokens == 1000  # 200 answer + 800 thinking
+    assert result.cost_usd > 0
+    assert result.provider == "gemini"
+
+
+def test_a_wrong_model_id_says_how_to_fix_it():
+    """A 404 here almost always means a stale model name, not a broken key."""
+    from google.genai import errors
+
+    from app.ai.gemini import _translate
+
+    translated = _translate(
+        errors.ClientError(404, {"error": {"message": "not found"}}), "gemini-9-ultra"
+    )
+
+    assert isinstance(translated, LLMError)
+    assert "GEMINI_MODEL" in str(translated)

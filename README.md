@@ -15,7 +15,7 @@ Test Managers automate web application testing **without writing code**.
 
 **Backend** Python 3.13 · FastAPI · PostgreSQL · SQLAlchemy · Alembic · Redis · Celery · JWT · Poetry
 **Automation** Playwright · Pytest · Allure · HTML reports
-**AI** Claude API · OpenAI API · LangChain
+**AI** Claude · Gemini · OpenAI (one interface, swap with one line in `.env`)
 **Frontend** Next.js 16 · TypeScript · Tailwind v4 · ShadCN-style UI · Zustand
 **Extension** Manifest V3 · TypeScript *(Phase 9)*
 **Infra** Docker · Docker Compose
@@ -113,14 +113,31 @@ no error is shown. This is deliberate: recordings are turned into Playwright
 code by ordinary Python, not by AI, so the part that actually runs never depends
 on a network call succeeding.
 
-To switch AI on, fill in one line in `.env`:
+To switch AI on, fill in the key for whichever provider you have:
 
 ```ini
-LLM_PROVIDER=claude
-ANTHROPIC_API_KEY=sk-ant-...     # get one at console.anthropic.com
+LLM_PROVIDER=gemini              # claude | openai | gemini
+GEMINI_API_KEY=AIza...           # aistudio.google.com/apikey
+# ANTHROPIC_API_KEY=sk-ant-...   # console.anthropic.com
+# OPENAI_API_KEY=sk-...          # platform.openai.com
 ```
 
-Restart the API. That is the whole setup.
+Restart the API — `.env` is read at startup and `--reload` does not watch it.
+
+Then check it actually works before wondering why nothing changed:
+
+```bash
+cd backend
+poetry run python scripts/check_ai.py
+```
+
+It reports the model in use, lists the models your key can reach, and sends one
+small structured-output request. Everything downstream depends on that last
+part, so it is worth proving directly.
+
+> **If you get a 404 on the model**, your key cannot use the default. The check
+> script prints the ids that *are* available — put one in `GEMINI_MODEL`.
+> Model names change often; that is why it is a setting and not a constant.
 
 | | Without a key | With a key |
 |---|---|---|
@@ -169,7 +186,7 @@ AutoQA/
 │       ├── models/           #   what the database tables look like
 │       ├── schemas/          #   what a request and response must contain
 │       ├── codegen/          #   recording -> Playwright code (no AI)
-│       ├── ai/               #   Claude / OpenAI, prompts, code polish
+│       ├── ai/               #   Claude / Gemini / OpenAI, prompts, polish
 │       ├── core/             #   config, database connection, passwords, JWT
 │       └── static/           #   recorder.js, injected into the browser
 │

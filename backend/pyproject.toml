@@ -58,6 +58,7 @@ lxml = ">=5.3"
 # --- HTTP client (Jira / Azure DevOps) ---
 httpx = ">=0.28"
 tenacity = ">=9.0"                 # retry with backoff
+google-genai = "^2.16.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = ">=0.8"
