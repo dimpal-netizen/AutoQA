@@ -34,6 +34,44 @@ class CodeEnhancement(BaseModel):
     )
 
 
+class CaseStep(BaseModel):
+    """One step of an invented test case.
+
+    Note what is *not* here: code. The model chooses an action from a fixed
+    vocabulary and points at a locator that already exists on a page object.
+    Anything else is rejected, so a hallucinated element becomes a dropped
+    step rather than a test that crashes.
+    """
+
+    action: str = Field(
+        description=(
+            "One of: goto, fill, click, check, uncheck, select, press, "
+            "expect_visible, expect_hidden, expect_text, expect_url, "
+            "expect_not_url"
+        )
+    )
+    target: str | None = Field(
+        default=None,
+        description='Locator as "PageClassName.property_name". Omit for goto and expect_url.',
+    )
+    value: str | None = Field(
+        default=None, description="Text to type, option to select, key to press, or URL"
+    )
+    description: str = Field(description="What this step does, in plain English")
+
+
+class GeneratedCase(BaseModel):
+    name: str = Field(description="Short sentence describing what this verifies")
+    category: str = Field(description="One of: positive, negative, edge, security")
+    priority: str = Field(description="One of: critical, high, medium, low")
+    description: str = Field(description="Why this test matters, one or two sentences")
+    steps: list[CaseStep] = Field(description="The steps, in order")
+
+
+class GeneratedCases(BaseModel):
+    cases: list[GeneratedCase] = Field(default_factory=list)
+
+
 class FailureAnalysis(BaseModel):
     """Workflow 3 output: why a test failed and what to do about it."""
 

@@ -135,6 +135,37 @@ class CaseStatus(str, Enum):
     DEPRECATED = "deprecated"
 
 
+class CaseCategory(str, Enum):
+    """What kind of check a test case is.
+
+    The recorded flow is one happy path. Everything else here is a question a
+    QA engineer would ask about that flow — what if the password is wrong,
+    what if the field is empty, what if someone pastes a SQL fragment into it.
+    """
+
+    RECORDED = "recorded"    # the path you actually walked; the regression test
+    POSITIVE = "positive"    # should succeed
+    NEGATIVE = "negative"    # should be rejected, cleanly
+    EDGE = "edge"            # boundaries: empty, very long, unicode, whitespace
+    SECURITY = "security"    # input validation and auth handling
+
+
+CATEGORY_LABEL: dict[CaseCategory, str] = {
+    CaseCategory.RECORDED: "Recorded",
+    CaseCategory.POSITIVE: "Positive",
+    CaseCategory.NEGATIVE: "Negative",
+    CaseCategory.EDGE: "Edge case",
+    CaseCategory.SECURITY: "Security",
+}
+
+
+class CasePriority(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class FileType(str, Enum):
     """Kind of generated file. Drives where it lands in the suite directory."""
 

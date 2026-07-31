@@ -16,6 +16,7 @@ import { RELIABLE_RANK, SELECTOR_RANK, type TestSuiteDetail } from "@/lib/types"
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
 import { RunPanel } from "@/components/run-panel";
+import { GenerateCases } from "@/components/generate-cases";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import {
@@ -144,14 +145,31 @@ function SuiteDetail({ id }: { id: number }) {
         </Alert>
       )}
 
-      <h2 className="mt-10 text-lg font-semibold">
-        Test cases{suite.cases.length > 1 && ` (${suite.cases.length})`}
-      </h2>
-      <p className="mb-4 mt-1 text-[13px] text-muted-foreground">
-        What each test does, in order. No code needed to review it.
-      </p>
+      <div className="mt-10 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">
+            Test cases
+            <span className="tabular ml-2 text-base font-normal text-muted-foreground">
+              {suite.cases.length}
+            </span>
+          </h2>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            What each test does, in order. No code needed to review it.
+          </p>
+        </div>
+      </div>
 
-      <TestCaseList cases={suite.cases} />
+      <div className="mt-4 rounded-lg border border-dashed border-border bg-muted/30 p-4">
+        <GenerateCases
+          suiteId={suite.id}
+          hasGenerated={suite.cases.some((c) => c.category !== "recorded")}
+          onGenerated={setSuite}
+        />
+      </div>
+
+      <div className="mt-6">
+        <TestCaseList cases={suite.cases} />
+      </div>
     </div>
   );
 }

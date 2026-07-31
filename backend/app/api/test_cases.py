@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, status
 from app.api.deps import CurrentUser, DbSession, require_role
 from app.models.enums import UserRole
 from app.schemas.test_case import (
+    GenerateCasesRequest,
+    GenerateCasesResult,
     GenerateRequest,
     TestSuiteDetail,
     TestSuiteRead,
@@ -30,6 +32,36 @@ def generate_from_recording(
     """
     suite = CodegenService(db).generate_from_recording(recording_id, user, name=data.name)
     return TestSuiteDetail.model_validate(suite)
+
+
+@router.post(
+    "/suites/{suite_id}/generate-cases",
+    response_model=GenerateCasesResult,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+def generate_cases(
+    suite_id: int, data: GenerateCasesRequest, db: DbSession, user: CurrentUser
+) -> GenerateCasesResult:
+    """Invent positive, negative, edge and security cases around the recording.
+
+    Unlike code generation this genuinely needs an AI provider — inventing
+    "what if the email is 320 characters" from a successful login is judgement,
+    not a lookup. With no key configured it returns 422 saying so.
+
+    The model returns steps, never code: each step names an action from a fixed
+    vocabulary and an element that already exists, and the same deterministic
+    converter writes the Python.
+    """
+    suite, outcome = CodegenService(db).generate_cases(suite_id, user, count=data.count)
+
+    return GenerateCasesResult(
+        suite=TestSuiteDetail.model_validate(suite),
+        generated=len(outcome.cases),
+        rejected=outcome.rejected,
+        model=outcome.model,
+        tokens=outcome.tokens,
+        cost_usd=outcome.cost_usd,
+    )
 
 
 @router.get("/suites", response_model=list[TestSuiteRead])

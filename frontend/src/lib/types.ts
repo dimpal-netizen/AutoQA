@@ -127,6 +127,9 @@ export interface TestStep {
 
 export interface TestCase {
   id: number;
+  category: CaseCategory;
+  priority: CasePriority;
+  generated_by: string;
   suite_id: number;
   project_id: number;
   name: string;
@@ -331,4 +334,67 @@ export function formatDuration(ms: number | null): string {
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${String(Math.round(seconds % 60)).padStart(2, "0")}s`;
+}
+
+// ---------------------------------------------------------------------------
+// Test case categories
+// ---------------------------------------------------------------------------
+export type CaseCategory =
+  | "recorded"
+  | "positive"
+  | "negative"
+  | "edge"
+  | "security";
+
+export type CasePriority = "critical" | "high" | "medium" | "low";
+
+export const CATEGORY_LABEL: Record<CaseCategory, string> = {
+  recorded: "Recorded",
+  positive: "Positive",
+  negative: "Negative",
+  edge: "Edge case",
+  security: "Security",
+};
+
+/** One line each, shown under the group heading. A category name alone does
+ *  not tell a manual QA engineer what the group is for. */
+export const CATEGORY_BLURB: Record<CaseCategory, string> = {
+  recorded: "The flow you actually walked. This is your regression test.",
+  positive: "Other paths that should succeed.",
+  negative: "Input the app should reject, cleanly.",
+  edge: "Boundaries: empty, very long, whitespace, unicode.",
+  security: "Input validation and auth handling.",
+};
+
+export const CATEGORY_TONE: Record<CaseCategory, Tone> = {
+  recorded: "primary",
+  positive: "success",
+  negative: "danger",
+  edge: "warning",
+  security: "neutral",
+};
+
+/** Display order. Recorded first because it is the one that was real. */
+export const CATEGORY_ORDER: CaseCategory[] = [
+  "recorded",
+  "positive",
+  "negative",
+  "edge",
+  "security",
+];
+
+export const PRIORITY_TONE: Record<CasePriority, Tone> = {
+  critical: "danger",
+  high: "warning",
+  medium: "neutral",
+  low: "neutral",
+};
+
+export interface GenerateCasesResult {
+  suite: TestSuiteDetail;
+  generated: number;
+  rejected: string[];
+  model: string;
+  tokens: number;
+  cost_usd: number;
 }

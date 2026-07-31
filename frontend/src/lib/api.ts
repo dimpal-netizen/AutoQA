@@ -7,6 +7,7 @@
 import { useAuthStore } from "@/stores/auth-store";
 import type {
   Browser,
+  GenerateCasesResult,
   Project,
   ProjectCreate,
   RecordingSession,
@@ -189,6 +190,13 @@ export const api = {
 
     /** Every file as {path: content} — what Phase 5 writes to disk to run. */
     bundle: (id: number) => request<Record<string, string>>(`/suites/${id}/bundle`),
+
+    /** Invent positive, negative, edge and security cases. Needs an AI key. */
+    generateCases: (id: number, count = 12) =>
+      request<GenerateCasesResult>(`/suites/${id}/generate-cases`, {
+        method: "POST",
+        body: JSON.stringify({ count }),
+      }),
 
     /** Rebuild from the recording, replacing the current output. */
     regenerate: (recordingId: number, name?: string) =>

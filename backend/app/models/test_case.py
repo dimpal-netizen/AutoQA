@@ -23,7 +23,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, TimestampMixin
-from app.models.enums import ActionType, CaseSource, CaseStatus, FileType
+from app.models.enums import (
+    ActionType,
+    CaseCategory,
+    CasePriority,
+    CaseSource,
+    CaseStatus,
+    FileType,
+)
 
 if TYPE_CHECKING:
     from app.models.project import Project
@@ -97,6 +104,20 @@ class TestCase(Base, TimestampMixin):
     source: Mapped[CaseSource] = mapped_column(
         _enum(CaseSource, "case_source"), default=CaseSource.RECORDING, nullable=False
     )
+    category: Mapped[CaseCategory] = mapped_column(
+        _enum(CaseCategory, "case_category"),
+        default=CaseCategory.RECORDED,
+        nullable=False,
+        index=True,
+    )
+    priority: Mapped[CasePriority] = mapped_column(
+        _enum(CasePriority, "case_priority"), default=CasePriority.MEDIUM, nullable=False
+    )
+    # What produced this case: the deterministic converter, or a model. Kept so
+    # a suite can say honestly which of its tests were invented rather than
+    # recorded.
+    generated_by: Mapped[str] = mapped_column(String(64), default="recording", nullable=False)
+
     status: Mapped[CaseStatus] = mapped_column(
         _enum(CaseStatus, "case_status"), default=CaseStatus.DRAFT, nullable=False, index=True
     )

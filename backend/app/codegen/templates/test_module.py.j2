@@ -10,6 +10,10 @@ durable.
 {% endif %}
 """
 
+{% if ir.needs_regex %}
+import re
+
+{% endif %}
 from playwright.sync_api import Page, expect
 
 {% for variable, class_name in page_vars %}

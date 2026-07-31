@@ -73,11 +73,7 @@ function Recordings() {
       <PageHeader
         title="Recordings"
         description="Every browser session you have captured. Each one becomes a runnable test the moment you stop recording."
-      >
-        <Link href="/demo">
-          <Button variant="outline">Practice page</Button>
-        </Link>
-      </PageHeader>
+      />
 
       {error && <Alert className="mb-4">{error}</Alert>}
 

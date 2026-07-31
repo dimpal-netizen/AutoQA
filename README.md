@@ -146,7 +146,8 @@ part, so it is worth proving directly.
 | Step list in the UI | ✅ | ✅ |
 | Names like `sign_in_button` | ❌ `button_2` | ✅ |
 | Readable step descriptions | ❌ `Click "Sign in"` | ✅ `Submit the sign-in form` |
-| Failure analysis *(Phase 5+)* | ❌ | ✅ |
+| Test cases: negative, edge, security | ❌ | ✅ |
+| Failure analysis *(Phase 7)* | ❌ | ✅ |
 
 Roughly a fraction of a cent per recording. Every call records its own token
 count and dollar cost, so spend is never a mystery.
@@ -246,11 +247,11 @@ Three rules keep it maintainable:
 | 3 | Recording → Playwright code, written to `backend/generated/` | ✅ Done |
 | 4 | AI layer — better names and descriptions on generated code | ✅ Done |
 | 5 | **Test execution** — Run button, cross-browser, screenshots, video | ✅ Done |
-| 6 | AI test cases — positive, negative, edge and security *(needs an API key)* | ⬜ Next |
-| 6b | AI failure analysis (Workflow 3) | ⬜ |
-| 7 | HTML / Allure reports + bug reports | ⬜ |
-| 8 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
-| 9 | Chrome extension (Manifest V3) | ⬜ |
+| 6 | AI test cases — positive, negative, edge and security | ✅ Done |
+| 7 | AI failure analysis (Workflow 3) | ⬜ Next |
+| 8 | HTML / Allure reports + bug reports | ⬜ |
+| 9 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
+| 10 | Chrome extension (Manifest V3) | ⬜ |
 
 Each phase extends both the backend and the UI, so the app stays runnable throughout.
 

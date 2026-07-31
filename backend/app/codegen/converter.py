@@ -112,6 +112,10 @@ class TestIR:
     pages: list[PageSpec] = field(default_factory=list)
     steps: list[StepSpec] = field(default_factory=list)
     fragile_count: int = 0
+    # Set when a step asserts on the URL: those use re.compile, so the module
+    # needs `import re`. A flag rather than scanning the rendered code, which
+    # would couple the template to string matching.
+    needs_regex: bool = False
 
     @property
     def file_path(self) -> str:

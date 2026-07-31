@@ -4,7 +4,36 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import ActionType, CaseSource, CaseStatus, FileType
+from app.models.enums import (
+    ActionType,
+    CaseCategory,
+    CasePriority,
+    CaseSource,
+    CaseStatus,
+    FileType,
+)
+
+
+class GenerateCasesRequest(BaseModel):
+    """How many cases to invent around the recorded flow."""
+
+    count: int = Field(default=12, ge=1, le=25)
+
+
+class GenerateCasesResult(BaseModel):
+    """The suite, plus what the model cost and what it got wrong.
+
+    `rejected` is deliberately visible rather than swallowed: a suggestion that
+    referenced an element which does not exist is useful signal about the
+    recording, not an embarrassment to hide.
+    """
+
+    suite: "TestSuiteDetail"
+    generated: int
+    rejected: list[str] = []
+    model: str = ""
+    tokens: int = 0
+    cost_usd: float = 0.0
 
 
 class GenerateRequest(BaseModel):
@@ -36,6 +65,9 @@ class TestCaseRead(BaseModel):
     file_path: str
     source: CaseSource
     status: CaseStatus
+    category: CaseCategory
+    priority: CasePriority
+    generated_by: str
     tags: list[str]
     is_enabled: bool
     version: int

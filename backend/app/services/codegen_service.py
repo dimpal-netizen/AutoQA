@@ -7,12 +7,19 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.ai.case_generator import DEFAULT_COUNT, GenerationOutcome, generate_cases
 from app.ai.enhancer import enhance
-from app.codegen.converter import build_ir
+from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
 from app.codegen.writer import remove_suite_directory, suite_directory, write_suite
 from app.core.config import settings
-from app.models.enums import CaseSource, CaseStatus, RecordingStatus
+from app.models.enums import (
+    CaseCategory,
+    CasePriority,
+    CaseSource,
+    CaseStatus,
+    RecordingStatus,
+)
 from app.models.test_case import TestSuite
 from app.models.user import User
 from app.repositories.recording_repo import RecordingRepository
@@ -160,6 +167,9 @@ class CodegenService:
             code=test_file.content,
             source=CaseSource.RECORDING,
             status=CaseStatus.DRAFT,
+            category=CaseCategory.RECORDED,
+            priority=CasePriority.HIGH,
+            generated_by=GENERATOR,
             tags=["recorded"],
             is_enabled=True,
             version=1,
@@ -220,6 +230,135 @@ class CodegenService:
 
         self.db.commit()
         return self.suites.get_full(suite.id)  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # AI test case generation
+    # ------------------------------------------------------------------
+    def generate_cases(
+        self, suite_id: int, user: User, *, count: int = DEFAULT_COUNT
+    ) -> tuple[TestSuite, GenerationOutcome]:
+        """Add positive, negative, edge and security cases around the recording.
+
+        Replaces any previously generated cases rather than appending, so
+        pressing the button twice gives a fresh set instead of thirty
+        near-duplicates. The recorded case is never touched.
+        """
+        suite = self.get_suite(suite_id, user)
+
+        recorded_ir = self._recorded_ir(suite)
+        if recorded_ir is None:
+            raise ValidationError(
+                "This suite has no recording to generate test cases from."
+            )
+
+        outcome = generate_cases(recorded_ir, count=count)
+        if outcome.skipped:
+            raise ValidationError(outcome.skipped)
+        if not outcome.cases:
+            raise ValidationError(
+                "The model returned no usable test cases. "
+                + (f"Rejected: {outcome.rejected[0]}" if outcome.rejected else "")
+            )
+
+        # Out with the previous generation, in with this one.
+        for case in list(suite.cases):
+            if case.category is not CaseCategory.RECORDED:
+                self.cases.delete(case)
+        self.db.flush()
+
+        browser_info = suite.recording.browser_info if suite.recording else {}
+        for synthesised in outcome.cases:
+            self._store_case(suite, synthesised, browser_info, outcome.model)
+
+        self.db.commit()
+        suite = self.suites.get_full(suite.id)  # type: ignore[assignment]
+        self._rewrite_folder(suite)
+        return suite, outcome
+
+    def _recorded_ir(self, suite: TestSuite) -> TestIR | None:
+        """Rebuild the IR for the recording behind this suite.
+
+        Rebuilt rather than stored: the IR is derived data, and keeping a
+        serialised copy in the database would be one more thing to migrate
+        every time the converter changes.
+        """
+        if suite.recording_id is None:
+            return None
+
+        actions = self.recordings.list_actions(suite.recording_id, limit=10_000)
+        if not actions:
+            return None
+
+        return build_ir(
+            [
+                {
+                    "action_type": a.action_type.value,
+                    "url": a.url,
+                    "frame_path": a.frame_path,
+                    "selectors": a.selectors,
+                    "element": a.element,
+                    "payload": a.payload,
+                    "is_ignored": a.is_ignored,
+                }
+                for a in actions
+            ],
+            suite_name=suite.name,
+            start_url=suite.recording.start_url,
+        )
+
+    def _store_case(
+        self, suite: TestSuite, synthesised, browser_info: dict, model: str
+    ) -> None:
+        rendered = render(synthesised.ir, browser_info=browser_info)
+        module = next(f for f in rendered if f.path == synthesised.ir.file_path)
+
+        case = self.cases.create(
+            suite_id=suite.id,
+            project_id=suite.project_id,
+            name=synthesised.name,
+            description=synthesised.description,
+            function_name=synthesised.ir.function_name,
+            file_path=synthesised.ir.file_path,
+            code=module.content,
+            source=CaseSource.RECORDING,
+            status=CaseStatus.DRAFT,
+            category=synthesised.category,
+            priority=synthesised.priority,
+            generated_by=model or "ai",
+            tags=[synthesised.category.value],
+            is_enabled=True,
+            version=1,
+        )
+
+        for step in synthesised.ir.steps:
+            self.cases.add_step(
+                test_case_id=case.id,
+                sequence=step.sequence,
+                action=step.action,
+                description=step.description,
+                locator=(
+                    f"{step.page_var}.{step.locator_name}"
+                    if step.page_var and step.locator_name
+                    else None
+                ),
+                input_data=step.input_data,
+                expected_result=step.expected_result,
+                selector_strategy=step.strategy,
+            )
+
+    def _rewrite_folder(self, suite: TestSuite) -> None:
+        """Refresh the folder on disk so every case has a file to open."""
+        if not suite.output_dir:
+            return
+
+        bundle = {f.path: f.content for f in suite.files}
+        for case in suite.cases:
+            bundle[case.file_path] = case.code
+
+        try:
+            write_suite(Path(suite.output_dir), bundle)
+        except OSError:
+            logger.exception("Could not refresh %s", suite.output_dir)
 
     # ------------------------------------------------------------------
     # Reading
