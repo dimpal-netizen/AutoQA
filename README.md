@@ -152,6 +152,11 @@ poetry run alembic upgrade head
 poetry run alembic downgrade -1
 ```
 
+## Not built yet (on purpose)
+
+Deferred until the core works — add them when they're actually needed:
+GitHub Actions CI, a Makefile, Dockerfiles for the API and worker.
+
 ## Useful URLs
 
 | URL | What |
