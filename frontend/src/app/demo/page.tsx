@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { RecorderBar } from "@/components/recorder-bar";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { Alert, Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,10 +37,9 @@ export default function DemoPage() {
       </header>
 
       <Alert variant="info" className="mb-6">
-        Paste into the DevTools console:{" "}
-        <code className="font-mono text-xs">
-          await import(&quot;http://localhost:3000/recorder.js&quot;)
-        </code>
+        Use the controls at the bottom of the screen: pick a project, press{" "}
+        <strong>Start recording</strong>, interact below, then <strong>Stop</strong>.
+        Pause when you need to set something up without it being recorded.
       </Alert>
 
       {/* click, input, check, key_press ---------------------------------- */}
@@ -233,10 +233,15 @@ export default function DemoPage() {
 
       {/* Tall spacer so there is something to scroll. */}
       <div className="h-[80vh]" aria-hidden />
-      <p id="shipping" className="pb-10 text-sm text-muted-foreground">
+      <p id="shipping" className="text-sm text-muted-foreground">
         Scroll down to here — the recorder captures one scroll action per gesture,
         not one per pixel.
       </p>
+
+      {/* Clearance so the fixed control bar never covers the last control. */}
+      <div className="h-28" aria-hidden />
+
+      <RecorderBar />
     </main>
   );
 }

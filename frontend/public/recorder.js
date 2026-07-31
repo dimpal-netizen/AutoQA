@@ -1,27 +1,26 @@
 /* AutoQA browser recorder — a stand-in for the Phase 9 Chrome extension.
  *
- * Paste into the DevTools console of any page:
- *     await import("http://localhost:3000/recorder.js")
+ * Loading this file defines window.AutoQARecorder but does NOT start recording.
+ * Drive it from the UI (see components/recorder-bar.tsx) or from the console:
  *
- * It captures real interactions, builds ranked selectors exactly the way the
- * extension will, and uploads them to the backend in batches. The point is to
- * prove the selector engine works on real HTML before committing to it.
+ *     await import("http://localhost:3000/recorder.js");
+ *     await AutoQARecorder.start();          // then interact, then:
+ *     await AutoQARecorder.stop();
+ *
+ * API: start(options) · pause() · resume() · stop() · getState() · subscribe(fn)
  *
  * Not covered here (the real extension will handle these): iframes, shadow DOM,
- * and surviving a full page navigation — a console script dies on reload.
+ * and surviving a full page navigation — a page script dies on reload.
  */
 (() => {
+  if (window.AutoQARecorder) return; // already loaded
+
   const API = window.__AUTOQA_API__ || "http://localhost:8000/api/v1";
   const AUTH_KEY = "autoqa-auth";
   const BATCH_MS = 2000;
   const HOVER_DWELL_MS = 700;
   const SCROLL_QUIET_MS = 400;
   const PANEL_ID = "__autoqa_recorder_panel__";
-
-  if (window.__autoqaRecorder) {
-    console.warn("[AutoQA] Recorder already running. Stop it first.");
-    return;
-  }
 
   // ==== selector engine ===================================================
   // Ranking must match backend/app/models/enums.py SELECTOR_RANK.
@@ -70,9 +69,9 @@
   };
 
   function roleOf(el) {
-    const explicit = el.getAttribute("role");
+    const explicit = el.getAttribute?.("role");
     if (explicit) return explicit.trim().split(/\s+/)[0];
-    const fn = IMPLICIT_ROLE[el.tagName.toLowerCase()];
+    const fn = IMPLICIT_ROLE[el.tagName?.toLowerCase()];
     return fn ? fn(el) : null;
   }
 
@@ -81,7 +80,7 @@
       const forLabel = document.querySelector(`label[for="${cssEscape(el.id)}"]`);
       if (forLabel?.textContent?.trim()) return forLabel.textContent.trim();
     }
-    const wrapping = el.closest("label");
+    const wrapping = el.closest?.("label");
     if (wrapping) {
       // Strip the control's own text so "Remember me" doesn't become "Remember me on".
       const clone = wrapping.cloneNode(true);
@@ -89,7 +88,7 @@
       const text = clone.textContent?.trim();
       if (text) return text;
     }
-    const labelledBy = el.getAttribute("aria-labelledby");
+    const labelledBy = el.getAttribute?.("aria-labelledby");
     if (labelledBy) {
       const target = document.getElementById(labelledBy);
       if (target?.textContent?.trim()) return target.textContent.trim();
@@ -97,19 +96,18 @@
     return null;
   }
 
+  function visibleText(el) {
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    return text && text.length <= 120 ? text : null;
+  }
+
   function accessibleName(el) {
-    const ariaLabel = el.getAttribute("aria-label");
+    const ariaLabel = el.getAttribute?.("aria-label");
     if (ariaLabel?.trim()) return ariaLabel.trim();
     const label = labelText(el);
     if (label) return label;
     if (el.tagName === "IMG") return el.getAttribute("alt")?.trim() || null;
-    const text = visibleText(el);
-    return text || null;
-  }
-
-  function visibleText(el) {
-    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-    return text && text.length <= 120 ? text : null;
+    return visibleText(el);
   }
 
   function cssPath(el) {
@@ -154,12 +152,16 @@
       const parent = node.parentElement;
       if (!parent) break;
       const siblings = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
-      const index = siblings.indexOf(node) + 1;
-      parts.unshift(`${node.tagName.toLowerCase()}[${index}]`);
+      parts.unshift(`${node.tagName.toLowerCase()}[${siblings.indexOf(node) + 1}]`);
       node = parent;
     }
     return `//body/${parts.join("/")}`;
   }
+
+  const RANK = {
+    test_id: 1, role_name: 2, label: 3, placeholder: 4,
+    text: 5, css_id: 6, css: 7, xpath: 8, nth_child: 9,
+  };
 
   /** Ranked candidates for one element, best first. */
   function buildSelectors(el) {
@@ -170,10 +172,10 @@
     };
 
     const testId =
-      el.getAttribute("data-testid") ||
-      el.getAttribute("data-test-id") ||
-      el.getAttribute("data-test") ||
-      el.getAttribute("data-cy");
+      el.getAttribute?.("data-testid") ||
+      el.getAttribute?.("data-test-id") ||
+      el.getAttribute?.("data-test") ||
+      el.getAttribute?.("data-cy");
     if (testId) {
       push("test_id", testId, countMatches(`[data-testid="${cssEscape(testId)}"]`), 99);
     }
@@ -185,14 +187,10 @@
     const label = labelText(el);
     if (label) push("label", label, 1, 90);
 
-    const placeholder = el.getAttribute("placeholder");
+    const placeholder = el.getAttribute?.("placeholder");
     if (placeholder) {
-      push(
-        "placeholder",
-        placeholder,
-        countMatches(`[placeholder="${cssEscape(placeholder)}"]`),
-        84
-      );
+      push("placeholder", placeholder,
+        countMatches(`[placeholder="${cssEscape(placeholder)}"]`), 84);
     }
 
     const text = visibleText(el);
@@ -209,10 +207,6 @@
     push("nth_child", nthChildPath(el), 1, 15);
 
     // The backend re-sorts anyway; sorting here keeps the panel readable.
-    const RANK = {
-      test_id: 1, role_name: 2, label: 3, placeholder: 4,
-      text: 5, css_id: 6, css: 7, xpath: 8, nth_child: 9,
-    };
     return out.sort((a, b) => RANK[a.strategy] - RANK[b.strategy] || b.score - a.score);
   }
 
@@ -231,63 +225,111 @@
       text: visibleText(el)?.slice(0, 2000) || null,
       attributes,
       bounding_box: box
-        ? { x: +box.x.toFixed(1), y: +box.y.toFixed(1), width: +box.width.toFixed(1), height: +box.height.toFixed(1) }
+        ? { x: +box.x.toFixed(1), y: +box.y.toFixed(1),
+            width: +box.width.toFixed(1), height: +box.height.toFixed(1) }
         : null,
     };
   }
 
-  // ==== recorder state ====================================================
-  const state = {
-    token: null,
-    projectId: null,
-    sessionId: null,
-    sequence: 0,
-    startedAt: 0,
-    pending: [],
-    uploaded: 0,
-    assertMode: false,
-    stopped: false,
-    lastInput: new Map(),
-    // What we last recorded per field. Tab/Enter flush the buffer, and the
-    // browser then fires `change` for the same edit — without this the field
-    // would be recorded twice.
-    recordedValues: new WeakMap(),
-    hoverTimer: null,
-    lastHovered: null,
-    scrollTimer: null,
-    lastClick: { el: null, at: 0 },
-  };
+  // ==== state =============================================================
+  const IDLE = "idle", RECORDING = "recording", PAUSED = "paused", STOPPING = "stopping";
 
-  const insidePanel = (el) => !!el?.closest?.(`#${PANEL_ID}`);
+  let state = null;
+  const listeners = new Set();
+
+  function freshState() {
+    return {
+      status: IDLE,
+      token: null,
+      projectId: null,
+      projectName: null,
+      sessionId: null,
+      sessionName: null,
+      sequence: 0,
+      startedAt: 0,
+      pausedAt: 0,
+      pausedMs: 0,     // subtracted from timestamps so a pause is not a giant wait
+      pending: [],
+      uploaded: 0,
+      assertMode: false,
+      showPanel: true,
+      error: null,
+      lastAction: null,
+      lastInput: new Map(),
+      // What we last recorded per field. Tab/Enter flush the buffer, and the
+      // browser then fires `change` for the same edit — without this the field
+      // would be recorded twice.
+      recordedValues: new WeakMap(),
+      hoverTimer: null,
+      lastHovered: null,
+      scrollTimer: null,
+      lastClick: { el: null, at: 0 },
+      dragSource: null,
+      uploadTimer: null,
+      urlTimer: null,
+    };
+  }
+
+  function snapshot() {
+    if (!state) return { status: IDLE, captured: 0, uploaded: 0 };
+    return {
+      status: state.status,
+      captured: state.sequence,
+      uploaded: state.uploaded,
+      pending: state.pending.length,
+      sessionId: state.sessionId,
+      sessionName: state.sessionName,
+      projectId: state.projectId,
+      projectName: state.projectName,
+      assertMode: state.assertMode,
+      lastAction: state.lastAction,
+      error: state.error,
+    };
+  }
+
+  function notify() {
+    const snap = snapshot();
+    listeners.forEach((fn) => {
+      try {
+        fn(snap);
+      } catch (error) {
+        console.error("[AutoQA] listener failed:", error);
+      }
+    });
+    paint();
+  }
+
+  const insidePanel = (el) =>
+    !!el?.closest?.(`#${PANEL_ID}, [data-autoqa-ignore]`);
+
+  const capturing = () => state && state.status === RECORDING;
 
   function record(actionType, el, payload = {}) {
-    if (state.stopped) return;
+    if (!capturing()) return;
     if (el && insidePanel(el)) return;
 
-    const needsSelector = ![
-      "navigate", "scroll",
-    ].includes(actionType);
-
     const selectors = el ? buildSelectors(el) : [];
-    if (needsSelector && actionType !== "key_press" && selectors.length === 0) return;
+    const pageLevel = ["navigate", "scroll"].includes(actionType);
+    if (!pageLevel && actionType !== "key_press" && selectors.length === 0) return;
 
     state.pending.push({
       sequence: state.sequence++,
       action_type: actionType,
-      timestamp_ms: Date.now() - state.startedAt,
+      timestamp_ms: Date.now() - state.startedAt - state.pausedMs,
       url: location.href,
       frame_path: [],
       selectors,
       element: el ? describeElement(el) : null,
       payload,
     });
-    paint();
+    state.lastAction = `${actionType} → ${selectors[0]?.strategy ?? "page"}`;
+    notify();
   }
 
   // ==== event capture =====================================================
   function onClick(event) {
     const el = event.target;
-    if (insidePanel(el)) return;
+    if (!capturing() || insidePanel(el)) return;
 
     if (state.assertMode) {
       event.preventDefault();
@@ -309,20 +351,22 @@
       if (previous?.action_type === "click") {
         previous.action_type = "double_click";
         state.lastClick = { el: null, at: 0 };
-        paint();
+        state.lastAction = "double_click";
+        notify();
         return;
       }
     }
     state.lastClick = { el, at: now };
 
     const type = (el.getAttribute?.("type") || "").toLowerCase();
-    if (el.tagName === "INPUT" && (type === "checkbox" || type === "radio")) return; // change handles it
+    if (el.tagName === "INPUT" && (type === "checkbox" || type === "radio")) return;
     record("click", el);
   }
 
   function onInput(event) {
     const el = event.target;
-    if (insidePanel(el) || !["INPUT", "TEXTAREA"].includes(el.tagName)) return;
+    if (!capturing() || insidePanel(el)) return;
+    if (!["INPUT", "TEXTAREA"].includes(el.tagName)) return;
     const type = (el.getAttribute("type") || "text").toLowerCase();
     if (["checkbox", "radio", "file"].includes(type)) return;
     // Buffer keystrokes — one fill() per field, not one per character.
@@ -337,6 +381,7 @@
   }
 
   function flushInput(except) {
+    if (!state) return;
     for (const [el, value] of state.lastInput) {
       if (el === except) continue;
       state.lastInput.delete(el);
@@ -346,17 +391,15 @@
 
   function onChange(event) {
     const el = event.target;
-    if (insidePanel(el)) return;
+    if (!capturing() || insidePanel(el)) return;
     const type = (el.getAttribute?.("type") || "").toLowerCase();
 
     if (el.tagName === "SELECT") {
-      const values = Array.from(el.selectedOptions).map((o) => o.value);
-      record("select", el, { values });
+      record("select", el, { values: Array.from(el.selectedOptions).map((o) => o.value) });
     } else if (type === "checkbox" || type === "radio") {
       record(el.checked ? "check" : "uncheck", el);
     } else if (type === "file") {
-      const files = Array.from(el.files || []).map((f) => f.name);
-      record("upload", el, { files });
+      record("upload", el, { files: Array.from(el.files || []).map((f) => f.name) });
     } else if (["INPUT", "TEXTAREA"].includes(el.tagName)) {
       state.lastInput.delete(el);
       recordInput(el, el.value);
@@ -364,16 +407,11 @@
   }
 
   function onKeyDown(event) {
-    if (insidePanel(event.target)) return;
+    if (!capturing() || insidePanel(event.target)) return;
 
     if (event.altKey && event.key.toLowerCase() === "a") {
       event.preventDefault();
       setAssertMode(!state.assertMode);
-      return;
-    }
-    if (event.altKey && event.key.toLowerCase() === "s") {
-      event.preventDefault();
-      stop();
       return;
     }
 
@@ -392,7 +430,7 @@
 
   function onMouseOver(event) {
     const el = event.target;
-    if (insidePanel(el)) return;
+    if (!capturing() || insidePanel(el)) return;
     clearTimeout(state.hoverTimer);
 
     // Only elements that plausibly react to hover, and only after a dwell —
@@ -409,21 +447,24 @@
   }
 
   function onDragStart(event) {
-    state.dragSource = event.target;
+    if (capturing()) state.dragSource = event.target;
   }
 
   function onDrop(event) {
+    if (!capturing()) return;
     const source = state.dragSource;
     const target = event.target;
     state.dragSource = null;
     if (!source || insidePanel(source) || insidePanel(target)) return;
 
     const targetSelectors = buildSelectors(target);
-    if (!targetSelectors.length) return;
-    record("drag_drop", source, { target_selectors: targetSelectors });
+    if (targetSelectors.length) {
+      record("drag_drop", source, { target_selectors: targetSelectors });
+    }
   }
 
   function onScroll() {
+    if (!capturing()) return;
     clearTimeout(state.scrollTimer);
     // One action per scroll gesture, recorded when it settles.
     state.scrollTimer = setTimeout(() => {
@@ -435,100 +476,6 @@
     record("navigate", null, { url: location.href });
   }
 
-  // Single-page apps change the URL without a load event.
-  let lastUrl = location.href;
-  const urlWatcher = setInterval(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      record("navigate", null, { url: location.href });
-    }
-  }, 400);
-
-  // ==== upload ============================================================
-  async function api(path, body, method = "POST") {
-    const response = await fetch(`${API}${path}`, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`${response.status} ${path}: ${text}`);
-    return text ? JSON.parse(text) : {};
-  }
-
-  async function flush() {
-    if (state.stopped || !state.pending.length || !state.sessionId) return;
-    const batch = state.pending.splice(0, state.pending.length);
-    try {
-      const result = await api(`/recordings/${state.sessionId}/actions`, { actions: batch });
-      state.uploaded = result.action_count;
-      paint();
-    } catch (error) {
-      // Put them back and retry on the next tick — upload is idempotent, so a
-      // partially-applied batch cannot duplicate.
-      state.pending.unshift(...batch);
-      console.warn("[AutoQA] upload failed, will retry:", error.message);
-    }
-  }
-
-  const uploadTimer = setInterval(flush, BATCH_MS);
-
-  // ==== panel =============================================================
-  function paint() {
-    const panel = document.getElementById(PANEL_ID);
-    if (!panel) return;
-    panel.querySelector("[data-count]").textContent = String(state.sequence);
-    panel.querySelector("[data-uploaded]").textContent = String(state.uploaded);
-    const last = state.pending[state.pending.length - 1];
-    panel.querySelector("[data-last]").textContent = last
-      ? `${last.action_type} → ${last.selectors[0]?.strategy ?? "page"}`
-      : "…";
-    const assertBtn = panel.querySelector("[data-assert]");
-    assertBtn.textContent = state.assertMode ? "Assert: CLICK TARGET" : "Assert (Alt+A)";
-    assertBtn.style.background = state.assertMode ? "#f59e0b" : "#334155";
-  }
-
-  function setAssertMode(on) {
-    state.assertMode = on;
-    document.body.style.cursor = on ? "crosshair" : "";
-    paint();
-  }
-
-  function buildPanel() {
-    const panel = document.createElement("div");
-    panel.id = PANEL_ID;
-    panel.style.cssText = `
-      position:fixed;bottom:16px;right:16px;z-index:2147483647;
-      font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
-      background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:10px;
-      padding:12px 14px;min-width:230px;box-shadow:0 8px 24px rgba(0,0,0,.4)`;
-    panel.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="width:8px;height:8px;border-radius:50%;background:#ef4444;
-                     animation:autoqaPulse 1.2s infinite"></span>
-        <strong style="color:#f8fafc">AutoQA recording</strong>
-      </div>
-      <div>captured <b data-count style="color:#38bdf8">0</b> ·
-           uploaded <b data-uploaded style="color:#4ade80">0</b></div>
-      <div style="color:#94a3b8;margin:4px 0 10px" data-last>…</div>
-      <div style="display:flex;gap:6px">
-        <button data-assert style="flex:1;background:#334155;color:#e2e8f0;border:0;
-                border-radius:6px;padding:6px;cursor:pointer;font:inherit">Assert (Alt+A)</button>
-        <button data-stop style="background:#dc2626;color:#fff;border:0;border-radius:6px;
-                padding:6px 10px;cursor:pointer;font:inherit">Stop</button>
-      </div>
-      <style>@keyframes autoqaPulse{50%{opacity:.25}}</style>`;
-    panel.querySelector("[data-stop]").addEventListener("click", stop);
-    panel.querySelector("[data-assert]").addEventListener("click", () =>
-      setAssertMode(!state.assertMode)
-    );
-    document.body.appendChild(panel);
-  }
-
-  // ==== lifecycle =========================================================
   // `true` = capture phase, so we see events even if the page stops propagation.
   const LISTENERS = [
     ["click", onClick, true],
@@ -542,76 +489,152 @@
     ["popstate", onPopState, true],
   ];
 
-  async function stop() {
-    if (state.stopped) return;
-    state.stopped = true;
+  const attach = () =>
+    LISTENERS.forEach(([t, fn, c]) => document.addEventListener(t, fn, c));
+  const detach = () =>
+    LISTENERS.forEach(([t, fn, c]) => document.removeEventListener(t, fn, c));
 
-    clearInterval(uploadTimer);
-    clearInterval(urlWatcher);
-    clearTimeout(state.hoverTimer);
-    clearTimeout(state.scrollTimer);
-    LISTENERS.forEach(([type, fn, capture]) =>
-      document.removeEventListener(type, fn, capture)
-    );
-    document.body.style.cursor = "";
-
-    state.stopped = false;      // let the final flush through
-    flushInput(null);
-    await flush();
-    state.stopped = true;
-
-    try {
-      const session = await api(`/recordings/${state.sessionId}/stop`, {
-        duration_ms: Date.now() - state.startedAt,
-      });
-      console.log(
-        `%c[AutoQA] Recorded ${session.action_count} actions in ${session.duration_ms}ms`,
-        "color:#4ade80;font-weight:bold"
-      );
-      console.log(`View it: http://localhost:3000/recordings/${state.sessionId}`);
-    } catch (error) {
-      console.error("[AutoQA] stop failed:", error.message);
+  // ==== upload ============================================================
+  async function api(path, body, method = "POST") {
+    const response = await fetch(`${API}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(state?.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      let detail = text;
+      try {
+        detail = JSON.parse(text).detail ?? text;
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
+    return text ? JSON.parse(text) : {};
+  }
 
-    document.getElementById(PANEL_ID)?.remove();
-    delete window.__autoqaRecorder;
+  async function flush() {
+    if (!state?.sessionId || !state.pending.length) return;
+    const batch = state.pending.splice(0, state.pending.length);
+    try {
+      const result = await api(`/recordings/${state.sessionId}/actions`, { actions: batch });
+      state.uploaded = result.action_count;
+      state.error = null;
+      notify();
+    } catch (error) {
+      // Put them back and retry on the next tick — upload is idempotent, so a
+      // partially-applied batch cannot duplicate.
+      state.pending.unshift(...batch);
+      state.error = `Upload failed, retrying: ${error.message}`;
+      notify();
+    }
+  }
+
+  // ==== built-in panel (console use; the React bar passes panel:false) =====
+  function paint() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel || !state) return;
+    panel.querySelector("[data-count]").textContent = String(state.sequence);
+    panel.querySelector("[data-uploaded]").textContent = String(state.uploaded);
+    panel.querySelector("[data-last]").textContent = state.lastAction ?? "…";
+    panel.querySelector("[data-status]").textContent = state.status;
+
+    const assertBtn = panel.querySelector("[data-assert]");
+    assertBtn.textContent = state.assertMode ? "Click a target" : "Assert (Alt+A)";
+    assertBtn.style.background = state.assertMode ? "#f59e0b" : "#334155";
+
+    const pauseBtn = panel.querySelector("[data-pause]");
+    pauseBtn.textContent = state.status === PAUSED ? "Resume" : "Pause";
+  }
+
+  function buildPanel() {
+    const panel = document.createElement("div");
+    panel.id = PANEL_ID;
+    panel.style.cssText = `
+      position:fixed;bottom:16px;right:16px;z-index:2147483647;
+      font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+      background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:10px;
+      padding:12px 14px;min-width:240px;box-shadow:0 8px 24px rgba(0,0,0,.4)`;
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="width:8px;height:8px;border-radius:50%;background:#ef4444;
+                     animation:autoqaPulse 1.2s infinite"></span>
+        <strong style="color:#f8fafc">AutoQA</strong>
+        <span data-status style="color:#94a3b8">recording</span>
+      </div>
+      <div>captured <b data-count style="color:#38bdf8">0</b> ·
+           uploaded <b data-uploaded style="color:#4ade80">0</b></div>
+      <div style="color:#94a3b8;margin:4px 0 10px" data-last>…</div>
+      <div style="display:flex;gap:6px">
+        <button data-assert style="flex:1;background:#334155;color:#e2e8f0;border:0;
+                border-radius:6px;padding:6px;cursor:pointer;font:inherit">Assert (Alt+A)</button>
+        <button data-pause style="background:#475569;color:#fff;border:0;border-radius:6px;
+                padding:6px 10px;cursor:pointer;font:inherit">Pause</button>
+        <button data-stop style="background:#dc2626;color:#fff;border:0;border-radius:6px;
+                padding:6px 10px;cursor:pointer;font:inherit">Stop</button>
+      </div>
+      <style>@keyframes autoqaPulse{50%{opacity:.25}}</style>`;
+    panel.querySelector("[data-stop]").addEventListener("click", () => stop());
+    panel.querySelector("[data-pause]").addEventListener("click", () =>
+      state?.status === PAUSED ? resume() : pause()
+    );
+    panel.querySelector("[data-assert]").addEventListener("click", () =>
+      setAssertMode(!state.assertMode)
+    );
+    document.body.appendChild(panel);
+  }
+
+  function setAssertMode(on) {
+    if (!state) return;
+    state.assertMode = on;
+    document.body.style.cursor = on ? "crosshair" : "";
+    notify();
   }
 
   function readToken() {
     try {
       const raw = localStorage.getItem(AUTH_KEY);
-      return raw ? JSON.parse(raw)?.state?.accessToken ?? null : null;
+      return raw ? (JSON.parse(raw)?.state?.accessToken ?? null) : null;
     } catch {
       return null;
     }
   }
 
-  async function start() {
-    state.token = window.__AUTOQA_TOKEN__ || readToken();
+  // ==== public API ========================================================
+  async function start(options = {}) {
+    if (state && state.status !== IDLE) {
+      throw new Error("Already recording");
+    }
+    state = freshState();
+    state.showPanel = options.panel !== false;
+    state.token = options.token || window.__AUTOQA_TOKEN__ || readToken();
+
     if (!state.token) {
-      console.error(
-        "[AutoQA] No access token. Sign in at http://localhost:3000 first, or set " +
-          "window.__AUTOQA_TOKEN__ = '<token>' before importing on a third-party site."
-      );
-      return;
+      state = null;
+      throw new Error("Not signed in — open http://localhost:3000 and log in first");
     }
 
     const projects = await api("/projects", undefined, "GET");
     if (!projects.length) {
-      console.error("[AutoQA] No projects yet — create one at http://localhost:3000/projects");
-      return;
+      state = null;
+      throw new Error("No projects yet — create one first");
     }
-    state.projectId = window.__AUTOQA_PROJECT_ID__ || projects[0].id;
-    const project = projects.find((p) => p.id === state.projectId) || projects[0];
 
-    const name =
-      window.__AUTOQA_NAME__ ||
-      `Console recording ${new Date().toLocaleTimeString()}`;
+    const project =
+      projects.find((p) => p.id === options.projectId) ?? projects[0];
+    state.projectId = project.id;
+    state.projectName = project.name;
+    state.sessionName =
+      options.name?.trim() || `Recording ${new Date().toLocaleTimeString()}`;
 
-    const session = await api(`/projects/${state.projectId}/recordings`, {
-      name,
+    const session = await api(`/projects/${project.id}/recordings`, {
+      name: state.sessionName,
       start_url: location.href,
-      extension_version: "console-0.1.0",
+      extension_version: "web-0.2.0",
       browser_info: {
         user_agent: navigator.userAgent,
         viewport: { width: innerWidth, height: innerHeight },
@@ -622,21 +645,105 @@
 
     state.sessionId = session.id;
     state.startedAt = Date.now();
+    state.status = RECORDING;
+
     record("navigate", null, { url: location.href });
 
-    LISTENERS.forEach(([type, fn, capture]) =>
-      document.addEventListener(type, fn, capture)
-    );
-    buildPanel();
-    paint();
+    attach();
+    state.uploadTimer = setInterval(flush, BATCH_MS);
 
-    console.log(
-      `%c[AutoQA] Recording #${session.id} into "${project.name}"`,
-      "color:#38bdf8;font-weight:bold"
-    );
-    console.log("Interact with the page. Alt+A asserts an element, Alt+S stops.");
+    // Single-page apps change the URL without a load event.
+    let lastUrl = location.href;
+    state.urlTimer = setInterval(() => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        record("navigate", null, { url: location.href });
+      }
+    }, 400);
+
+    if (state.showPanel) buildPanel();
+    notify();
+    return snapshot();
   }
 
-  window.__autoqaRecorder = { stop, state };
-  start().catch((error) => console.error("[AutoQA]", error));
+  function pause() {
+    if (!state || state.status !== RECORDING) return snapshot();
+    flushInput(null);
+    detach();
+    clearTimeout(state.hoverTimer);
+    clearTimeout(state.scrollTimer);
+    state.pausedAt = Date.now();
+    state.status = PAUSED;
+    setAssertMode(false);
+    notify();
+    return snapshot();
+  }
+
+  function resume() {
+    if (!state || state.status !== PAUSED) return snapshot();
+    // Discount the paused span so generated tests do not inherit a long wait.
+    state.pausedMs += Date.now() - state.pausedAt;
+    state.pausedAt = 0;
+    state.status = RECORDING;
+    attach();
+    notify();
+    return snapshot();
+  }
+
+  async function stop() {
+    if (!state || state.status === IDLE || state.status === STOPPING) {
+      return snapshot();
+    }
+
+    const wasPaused = state.status === PAUSED;
+    if (!wasPaused) flushInput(null);
+    detach();
+    clearInterval(state.uploadTimer);
+    clearInterval(state.urlTimer);
+    clearTimeout(state.hoverTimer);
+    clearTimeout(state.scrollTimer);
+    document.body.style.cursor = "";
+    state.status = STOPPING;
+    notify();
+
+    await flush();
+
+    let session = null;
+    try {
+      if (wasPaused) state.pausedMs += Date.now() - state.pausedAt;
+      session = await api(`/recordings/${state.sessionId}/stop`, {
+        duration_ms: Date.now() - state.startedAt - state.pausedMs,
+      });
+    } catch (error) {
+      state.error = `Could not stop cleanly: ${error.message}`;
+      notify();
+    }
+
+    document.getElementById(PANEL_ID)?.remove();
+
+    const result = {
+      ...snapshot(),
+      status: IDLE,
+      sessionId: state.sessionId,
+      captured: session?.action_count ?? state.sequence,
+      durationMs: session?.duration_ms ?? null,
+    };
+    state = null;
+    notify();
+    return result;
+  }
+
+  window.AutoQARecorder = {
+    start,
+    pause,
+    resume,
+    stop,
+    setAssertMode: (on) => setAssertMode(on),
+    getState: snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      listener(snapshot());
+      return () => listeners.delete(listener);
+    },
+  };
 })();
