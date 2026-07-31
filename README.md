@@ -249,9 +249,10 @@ Three rules keep it maintainable:
 | 5 | **Test execution** — Run button, cross-browser, screenshots, video | ✅ Done |
 | 6 | AI test cases — positive, negative, edge and security | ✅ Done |
 | 7 | AI failure analysis (Workflow 3) | ✅ Done |
-| 8 | HTML / Allure reports + bug reports | ⬜ Next |
-| 9 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
-| 10 | Chrome extension (Manifest V3) | ⬜ |
+| 8 | AI bug reports drafted from failures | ✅ Done |
+| 9 | HTML / Allure reports | ⬜ Next |
+| 10 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
+| 11 | Chrome extension (Manifest V3) | ⬜ |
 
 Each phase extends both the backend and the UI, so the app stays runnable throughout.
 

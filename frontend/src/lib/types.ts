@@ -461,3 +461,60 @@ export interface Analysis {
   cost_usd: number;
   created_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Bug reports
+// ---------------------------------------------------------------------------
+export type BugStatus = "draft" | "open" | "resolved" | "wont_fix";
+
+export const BUG_STATUS_TONE: Record<BugStatus, Tone> = {
+  draft: "neutral",
+  open: "warning",
+  resolved: "success",
+  wont_fix: "neutral",
+};
+
+export interface BugReport {
+  id: number;
+  project_id: number;
+  result_id: number | null;
+  analysis_id: number | null;
+  title: string;
+  description: string;
+  steps_to_reproduce: string[];
+  expected: string;
+  actual: string;
+  environment: Record<string, unknown>;
+  severity: Severity;
+  priority: Severity;
+  status: BugStatus;
+  created_at: string;
+}
+
+/** The whole report as plain text, for pasting into a tracker. */
+export function bugAsText(bug: BugReport): string {
+  const steps = bug.steps_to_reproduce
+    .map((step, i) => `${i + 1}. ${step}`)
+    .join("\n");
+  const env = Object.entries(bug.environment)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => `- ${key}: ${value}`)
+    .join("\n");
+
+  return [
+    bug.title,
+    "",
+    bug.description,
+    "",
+    "Steps to reproduce:",
+    steps,
+    "",
+    `Expected: ${bug.expected}`,
+    `Actual: ${bug.actual}`,
+    "",
+    "Environment:",
+    env,
+    "",
+    `Severity: ${bug.severity} · Priority: ${bug.priority}`,
+  ].join("\n");
+}

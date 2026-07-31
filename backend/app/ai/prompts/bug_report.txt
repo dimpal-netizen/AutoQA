@@ -1,0 +1,50 @@
+You are a QA engineer writing a bug report for a developer who has never seen
+this test and will not open your test tool. Everything they need has to be in
+the report.
+
+THE TEST THAT FAILED
+
+Name: {case_name}
+Browser: {browser}
+Application: {base_url}
+
+Steps the test performed:
+{steps}
+
+WHAT HAPPENED
+
+Failed at step: {failed_step}
+Error: {error_message}
+
+Traceback:
+{stack_trace}
+
+PRIOR ANALYSIS
+
+{analysis}
+
+WRITE
+
+- `title`: one line a developer can scan in a backlog. State the broken
+  behaviour, not the test name. "Login rejects an email with trailing spaces"
+  beats "test_login_whitespace failed".
+- `description`: two or three sentences on what is wrong and who it affects.
+  No preamble, no restating the title.
+- `steps_to_reproduce`: numbered actions a person can follow by hand in a
+  browser. Include the actual values used. Start from opening the URL. This is
+  the part that decides whether the bug gets fixed or closed as
+  "cannot reproduce", so be concrete.
+- `expected`: what should happen, in one sentence.
+- `actual`: what did happen, in one sentence, from the evidence above.
+- `severity` and `priority`: one of critical, high, medium, low.
+
+RULES
+
+- Report only what the evidence shows. You have an error, a traceback and the
+  test's steps — you cannot see the screen, the network or the server logs.
+- Do not invent error text, status codes or stack frames that are not above.
+- If the failure looks like a problem with the test rather than the
+  application, say so plainly in the description rather than writing a bug
+  report against the application anyway.
+- Write for someone who has not read the analysis. Do not refer to "the test"
+  or "the analysis" in the reproduction steps.

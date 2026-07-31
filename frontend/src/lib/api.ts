@@ -8,6 +8,8 @@ import { useAuthStore } from "@/stores/auth-store";
 import type {
   Analysis,
   Browser,
+  BugReport,
+  BugStatus,
   GenerateCasesResult,
   Project,
   ProjectCreate,
@@ -249,6 +251,21 @@ export const api = {
     /** Whatever has already been worked out, or null. */
     get: (resultId: number) =>
       request<Analysis | null>(`/results/${resultId}/analysis`),
+  },
+
+  bugs: {
+    /** Write a report a developer can act on without opening AutoQA. */
+    draft: (resultId: number) =>
+      request<BugReport>(`/results/${resultId}/bug-report`, { method: "POST" }),
+
+    forResult: (resultId: number) =>
+      request<BugReport | null>(`/results/${resultId}/bug-report`),
+
+    setStatus: (bugId: number, status: BugStatus) =>
+      request<BugReport>(`/bug-reports/${bugId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }),
   },
 };
 

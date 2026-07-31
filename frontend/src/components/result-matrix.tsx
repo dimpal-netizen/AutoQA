@@ -13,6 +13,7 @@ import { ChevronDown, ChevronRight, Image as ImageIcon, Video } from "lucide-rea
 import { fetchArtifact } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { FailureAnalysis } from "@/components/failure-analysis";
+import { BugReport } from "@/components/bug-report";
 import {
   BROWSER_LABEL,
   RESULT_BADGE,
@@ -147,6 +148,8 @@ function FailureDetail({ results }: { results: TestResult[] }) {
           )}
 
           <FailureAnalysis resultId={result.id} />
+
+          <BugReport resultId={result.id} />
 
           {result.artifacts.length > 0 && <Evidence artifacts={result.artifacts} />}
 

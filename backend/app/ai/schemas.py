@@ -72,6 +72,20 @@ class GeneratedCases(BaseModel):
     cases: list[GeneratedCase] = Field(default_factory=list)
 
 
+class DraftedBug(BaseModel):
+    """A bug report as the model writes it, before validation."""
+
+    title: str = Field(description="One scannable line stating the broken behaviour")
+    description: str = Field(description="Two or three sentences on what is wrong")
+    steps_to_reproduce: list[str] = Field(
+        description="Numbered actions a person can follow by hand, with real values"
+    )
+    expected: str = Field(description="What should happen, one sentence")
+    actual: str = Field(description="What did happen, one sentence")
+    severity: str = Field(description="One of: critical, high, medium, low")
+    priority: str = Field(description="One of: critical, high, medium, low")
+
+
 class FailureAnalysis(BaseModel):
     """Workflow 3 output: why a test failed and what to do about it."""
 

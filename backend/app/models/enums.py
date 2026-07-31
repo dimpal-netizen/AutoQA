@@ -236,6 +236,20 @@ class FailureCategory(str, Enum):
     FLAKY = "flaky"                       # passes and fails on the same code
 
 
+class BugStatus(str, Enum):
+    """A drafted report is not a raised one.
+
+    DRAFT means AutoQA wrote it and nobody has looked yet. That distinction
+    matters: an AI-written ticket sitting in a tracker unreviewed is how a
+    team learns to ignore the tracker.
+    """
+
+    DRAFT = "draft"
+    OPEN = "open"
+    RESOLVED = "resolved"
+    WONT_FIX = "wont_fix"
+
+
 class ArtifactType(str, Enum):
     """Evidence saved from a run. Files live on disk; only paths go in the database."""
 

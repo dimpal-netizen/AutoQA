@@ -12,6 +12,7 @@ from app.models.enums import (
     SELECTOR_RANK,
     ActionType,
     ArtifactType,
+    BugStatus,
     FailureCategory,
     Browser,
     RecordingStatus,
@@ -22,6 +23,7 @@ from app.models.enums import (
     UserRole,
 )
 from app.models.ai_analysis import AIAnalysis
+from app.models.bug_report import BugReport
 from app.models.project import Project
 from app.models.recording import RecordedAction, RecordingSession
 from app.models.test_case import GeneratedFile, TestCase, TestStep, TestSuite
@@ -36,6 +38,8 @@ __all__ = [
     "ActionType",
     "ArtifactType",
     "Base",
+    "BugReport",
+    "BugStatus",
     "Browser",
     "ExecutionArtifact",
     "FailureCategory",

@@ -89,8 +89,12 @@ class AnalysisService:
             raise ValidationError("Nothing failed in this run.")
 
         analyses: list[AIAnalysis] = []
+        already = 0
+        reasons: list[str] = []
+
         for result in failures:
             if self.analyses.latest_for_result(result.id) is not None:
+                already += 1
                 continue  # already explained; re-analysing is an explicit action
             try:
                 analyses.append(self.analyse_result(result.id, user))
@@ -98,12 +102,19 @@ class AnalysisService:
                 # One failure the model would not explain must not cost the
                 # explanations of the others.
                 logger.info("Result %s: not analysed - %s", result.id, exc)
+                reasons.append(str(exc))
 
-        if not analyses:
+        if analyses:
+            return analyses
+
+        # Nothing came back, and *why* decides what the user does next. Saying
+        # "already analysed" when every call was rate limited sends them
+        # looking for analyses that do not exist.
+        if reasons:
             raise ValidationError(
-                "Every failure in this run has already been analysed."
+                f"Could not analyse {len(reasons)} failure(s): {reasons[0]}"
             )
-        return analyses
+        raise ValidationError("Every failure in this run has already been analysed.")
 
     # ------------------------------------------------------------------
     def get_for_result(self, result_id: int, user: User) -> AIAnalysis | None:
