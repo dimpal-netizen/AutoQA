@@ -5,7 +5,14 @@
  */
 
 import { useAuthStore } from "@/stores/auth-store";
-import type { Project, ProjectCreate, TokenPair, User } from "@/lib/types";
+import type {
+  Project,
+  ProjectCreate,
+  RecordingSession,
+  RecordingSessionDetail,
+  TokenPair,
+  User,
+} from "@/lib/types";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
@@ -133,5 +140,17 @@ export const api = {
 
     remove: (id: number) =>
       request<void>(`/projects/${id}`, { method: "DELETE" }),
+  },
+
+  recordings: {
+    list: (projectId?: number) =>
+      request<RecordingSession[]>(
+        projectId ? `/recordings?project_id=${projectId}` : "/recordings",
+      ),
+
+    get: (id: number) => request<RecordingSessionDetail>(`/recordings/${id}`),
+
+    remove: (id: number) =>
+      request<void>(`/recordings/${id}`, { method: "DELETE" }),
   },
 };

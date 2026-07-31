@@ -40,6 +40,100 @@ export interface ProjectCreate {
   default_browsers?: Browser[];
 }
 
+// --- recordings -----------------------------------------------------------
+
+export type RecordingStatus = "recording" | "completed" | "discarded";
+
+export type ActionType =
+  | "click" | "double_click" | "input" | "select" | "check" | "uncheck"
+  | "hover" | "drag_drop" | "navigate" | "key_press" | "upload"
+  | "scroll" | "assert";
+
+export type SelectorStrategy =
+  | "test_id" | "role_name" | "label" | "placeholder"
+  | "text" | "css_id" | "css" | "xpath" | "nth_child";
+
+export interface Selector {
+  strategy: SelectorStrategy;
+  value: string;
+  unique: boolean;
+  score: number;
+}
+
+export interface ElementInfo {
+  tag: string;
+  input_type: string | null;
+  role: string | null;
+  accessible_name: string | null;
+  text: string | null;
+  attributes: Record<string, string>;
+}
+
+export interface RecordedAction {
+  id: number;
+  sequence: number;
+  action_type: ActionType;
+  timestamp_ms: number;
+  url: string;
+  frame_path: string[];
+  selectors: Selector[];
+  element: ElementInfo | null;
+  payload: Record<string, unknown>;
+  is_ignored: boolean;
+  note: string | null;
+}
+
+export interface RecordingSession {
+  id: number;
+  project_id: number;
+  created_by_id: number | null;
+  name: string;
+  start_url: string;
+  status: RecordingStatus;
+  browser_info: Record<string, unknown>;
+  extension_version: string | null;
+  action_count: number;
+  duration_ms: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecordingSessionDetail extends RecordingSession {
+  actions: RecordedAction[];
+}
+
+/** Mirrors SELECTOR_RANK in backend/app/models/enums.py. Lower is better. */
+export const SELECTOR_RANK: Record<SelectorStrategy, number> = {
+  test_id: 1, role_name: 2, label: 3, placeholder: 4,
+  text: 5, css_id: 6, css: 7, xpath: 8, nth_child: 9,
+};
+
+/** Ranks above this are too brittle to trust — the UI flags them. */
+export const RELIABLE_RANK = SELECTOR_RANK.css_id;
+
+/** How the Phase 3 generator will express each strategy in Playwright. */
+export function playwrightFor(selector: Selector): string {
+  const v = selector.value;
+  switch (selector.strategy) {
+    case "test_id":
+      return `page.get_by_test_id("${v}")`;
+    case "role_name": {
+      const [role, ...rest] = v.split("|");
+      return `page.get_by_role("${role}", name="${rest.join("|")}")`;
+    }
+    case "label":
+      return `page.get_by_label("${v}")`;
+    case "placeholder":
+      return `page.get_by_placeholder("${v}")`;
+    case "text":
+      return `page.get_by_text("${v}", exact=True)`;
+    case "xpath":
+      return `page.locator("xpath=${v}")`;
+    default:
+      return `page.locator("${v}")`;
+  }
+}
+
 /** Roles are hierarchical — test_manager can do anything qa_engineer can.
  *  Mirrors ROLE_LEVEL in backend/app/models/enums.py. */
 export const ROLE_LEVEL: Record<UserRole, number> = {
