@@ -1,0 +1,125 @@
+"""Queries for runs, results, and artifacts."""
+
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from app.models.enums import Browser, ResultStatus, RunStatus
+from app.models.test_run import ExecutionArtifact, TestResult, TestRun
+from app.repositories.base import BaseRepository
+
+
+class TestRunRepository(BaseRepository[TestRun]):
+    def __init__(self, db: Session) -> None:
+        super().__init__(db, TestRun)
+
+    def get_full(self, run_id: int) -> TestRun | None:
+        """A run with its results and their artifacts, in one query each.
+
+        Loaded eagerly because the run detail page always needs all of it, and
+        lazy loading here is the classic N+1: one query per result per artifact.
+        """
+        statement = (
+            select(TestRun)
+            .where(TestRun.id == run_id)
+            .options(
+                selectinload(TestRun.results).selectinload(TestResult.artifacts),
+                selectinload(TestRun.suite),
+            )
+        )
+        return self.db.execute(statement).scalar_one_or_none()
+
+    def list_for_projects(
+        self,
+        project_ids: list[int],
+        *,
+        suite_id: int | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> list[TestRun]:
+        if not project_ids:
+            return []
+
+        statement = select(TestRun).where(TestRun.project_id.in_(project_ids))
+        if suite_id is not None:
+            statement = statement.where(TestRun.suite_id == suite_id)
+
+        statement = statement.order_by(TestRun.id.desc()).offset(skip).limit(limit)
+        return list(self.db.execute(statement).scalars().all())
+
+    def list_active(self) -> list[TestRun]:
+        """Runs that claim to be in progress.
+
+        Used at startup to fail runs orphaned by a restart — otherwise they sit
+        at "running" forever and the UI spins on something that died.
+        """
+        statement = select(TestRun).where(
+            TestRun.status.in_([RunStatus.QUEUED, RunStatus.RUNNING])
+        )
+        return list(self.db.execute(statement).scalars().all())
+
+
+class TestResultRepository(BaseRepository[TestResult]):
+    def __init__(self, db: Session) -> None:
+        super().__init__(db, TestResult)
+
+    def get_full(self, result_id: int) -> TestResult | None:
+        statement = (
+            select(TestResult)
+            .where(TestResult.id == result_id)
+            .options(selectinload(TestResult.artifacts), selectinload(TestResult.run))
+        )
+        return self.db.execute(statement).scalar_one_or_none()
+
+    def upsert(
+        self, *, run_id: int, browser: Browser, test_case_id: int | None, **values
+    ) -> TestResult:
+        """One row per (run, case, browser), created or updated.
+
+        Written as an upsert so a re-run of a single browser replaces its rows
+        instead of violating the unique constraint or duplicating history.
+        """
+        statement = select(TestResult).where(
+            TestResult.run_id == run_id,
+            TestResult.browser == browser,
+            TestResult.test_case_id == test_case_id,
+        )
+        existing = self.db.execute(statement).scalar_one_or_none()
+
+        if existing is None:
+            return self.create(
+                run_id=run_id, browser=browser, test_case_id=test_case_id, **values
+            )
+
+        for key, value in values.items():
+            setattr(existing, key, value)
+        return existing
+
+    def list_for_run(self, run_id: int) -> list[TestResult]:
+        statement = (
+            select(TestResult)
+            .where(TestResult.run_id == run_id)
+            .options(selectinload(TestResult.artifacts))
+            .order_by(TestResult.case_name, TestResult.browser)
+        )
+        return list(self.db.execute(statement).scalars().all())
+
+    def list_failures(self, run_id: int) -> list[TestResult]:
+        """Failures and errors — what Phase 7's analysis will be pointed at."""
+        statement = select(TestResult).where(
+            TestResult.run_id == run_id,
+            TestResult.status.in_([ResultStatus.FAILED, ResultStatus.ERROR]),
+        )
+        return list(self.db.execute(statement).scalars().all())
+
+
+class ArtifactRepository(BaseRepository[ExecutionArtifact]):
+    def __init__(self, db: Session) -> None:
+        super().__init__(db, ExecutionArtifact)
+
+    def list_for_result(self, result_id: int) -> list[ExecutionArtifact]:
+        statement = select(ExecutionArtifact).where(
+            ExecutionArtifact.result_id == result_id
+        )
+        return list(self.db.execute(statement).scalars().all())

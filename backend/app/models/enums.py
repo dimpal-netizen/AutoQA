@@ -145,3 +145,50 @@ class FileType(str, Enum):
     FIXTURE = "fixture"
     UTIL = "util"
     HELPER = "helper"
+
+
+class RunStatus(str, Enum):
+    """A whole execution.
+
+    PASSED and FAILED are both finished states; ERROR means the run itself
+    broke (pytest would not start, the browser is missing) rather than a test
+    failing, which is a different problem with a different fix.
+    """
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    ERROR = "error"
+
+
+FINISHED_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.PASSED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.ERROR}
+)
+
+
+class ResultStatus(str, Enum):
+    """One test, in one browser.
+
+    FLAKY is deliberately distinct from PASSED: a test that only passed on
+    retry is not trustworthy, and hiding that behind a green tick is how a
+    suite quietly stops meaning anything.
+    """
+
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    ERROR = "error"
+    FLAKY = "flaky"
+
+
+class ArtifactType(str, Enum):
+    """Evidence saved from a run. Files live on disk; only paths go in the database."""
+
+    SCREENSHOT = "screenshot"
+    VIDEO = "video"
+    LOG = "log"
+    TRACE = "trace"
+    HTML_REPORT = "html_report"
+    ALLURE_REPORT = "allure_report"

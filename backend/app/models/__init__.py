@@ -11,14 +11,18 @@ from app.models.enums import (
     ROLE_LEVEL,
     SELECTOR_RANK,
     ActionType,
+    ArtifactType,
     Browser,
     RecordingStatus,
+    ResultStatus,
+    RunStatus,
     SelectorStrategy,
     UserRole,
 )
 from app.models.project import Project
 from app.models.recording import RecordedAction, RecordingSession
 from app.models.test_case import GeneratedFile, TestCase, TestStep, TestSuite
+from app.models.test_run import ExecutionArtifact, TestResult, TestRun
 from app.models.user import User
 
 __all__ = [
@@ -26,15 +30,21 @@ __all__ = [
     "ROLE_LEVEL",
     "SELECTOR_RANK",
     "ActionType",
+    "ArtifactType",
     "Base",
     "Browser",
+    "ExecutionArtifact",
     "GeneratedFile",
     "Project",
     "RecordedAction",
     "RecordingSession",
     "RecordingStatus",
+    "ResultStatus",
+    "RunStatus",
     "SelectorStrategy",
     "TestCase",
+    "TestResult",
+    "TestRun",
     "TestStep",
     "TestSuite",
     "User",

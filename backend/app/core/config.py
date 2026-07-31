@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     STORAGE_PATH: str = "./storage"
     WORKSPACE_PATH: str = "./workspaces"
     TEST_TIMEOUT_SECONDS: int = 600
+    # Wall-clock ceiling for one browser's pytest process. A generated test can
+    # hang on a page that never loads, and without this the run never finishes.
+    RUN_TIMEOUT_SECONDS: int = 900
+    # Delete each run's workspace afterwards. Turn off to inspect exactly what
+    # was executed when a run behaves strangely.
+    CLEAN_WORKSPACES: bool = True
+    # How many browsers may run at once. Each is a browser plus a Python
+    # process, so this is a memory ceiling as much as a speed setting.
+    MAX_PARALLEL_BROWSERS: int = 3
     # Comma-separated. Read it through `default_browsers`, not directly:
     # pydantic-settings tries to JSON-parse list-typed fields, which chokes on "a,b".
     DEFAULT_BROWSERS: str = "chromium,firefox,webkit"

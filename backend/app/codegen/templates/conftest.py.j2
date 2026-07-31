@@ -24,12 +24,15 @@ def base_url() -> str:
 
 @pytest.fixture(scope="session")
 def browser_context_args(browser_context_args: dict) -> dict:
-    """Record video and set a stable viewport for every test."""
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    """A stable viewport for every test, so screenshots are comparable.
+
+    Video is NOT configured here. pytest.ini already passes
+    --video=retain-on-failure, and setting record_video_dir as well records
+    every failure twice - once named after the test, once not.
+    """
     return {
         **browser_context_args,
         "viewport": {"width": {{ viewport_width }}, "height": {{ viewport_height }}},
-        "record_video_dir": str(ARTIFACTS / "video"),
         "ignore_https_errors": True,
     }
 

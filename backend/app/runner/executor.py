@@ -1,0 +1,309 @@
+"""Run a generated suite in a subprocess.
+
+Why a subprocess and not an import: the code being run is generated, it opens
+real browsers, and it can hang or crash. In-process that takes the API down
+with it. Out of process the worst case is a killed child and a recorded error.
+
+Everything about *how* tests run lives in this file. Swapping to a Docker
+container per run later means changing `_command()` and nothing above it.
+
+One safety rule, enforced here rather than trusted: files are only ever written
+inside the run's own workspace, and the workspace is deleted afterwards.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from app.core.config import settings
+from app.models.enums import ArtifactType, Browser
+from app.runner.parser import ParsedResult, parse_junit
+
+logger = logging.getLogger(__name__)
+
+JUNIT_NAME = "results.xml"
+ARTIFACT_DIR = "artifacts"
+
+# Extension -> what kind of evidence it is. Anything unrecognised is kept as a
+# log rather than dropped; an unexplained file is more useful than no file.
+ARTIFACT_TYPES: dict[str, ArtifactType] = {
+    ".png": ArtifactType.SCREENSHOT,
+    ".jpg": ArtifactType.SCREENSHOT,
+    ".jpeg": ArtifactType.SCREENSHOT,
+    ".webm": ArtifactType.VIDEO,
+    ".mp4": ArtifactType.VIDEO,
+    ".zip": ArtifactType.TRACE,
+}
+
+
+@dataclass
+class CollectedArtifact:
+    type: ArtifactType
+    # Relative to settings.storage_dir, so the database stays portable.
+    relative_path: str
+    size: int
+    # Which test it belongs to, worked out from the filename. None means it is
+    # a run-level artifact rather than one test's evidence.
+    function_name: str | None = None
+
+
+@dataclass
+class ExecutionOutcome:
+    """Everything one browser's run produced."""
+
+    browser: Browser
+    results: list[ParsedResult] = field(default_factory=list)
+    artifacts: list[CollectedArtifact] = field(default_factory=list)
+    exit_code: int | None = None
+    duration_ms: int = 0
+    output: str = ""
+    error: str | None = None
+
+    @property
+    def started(self) -> bool:
+        """Whether pytest ran at all, as opposed to failing to launch."""
+        return self.error is None
+
+
+def run_suite(
+    bundle: dict[str, str],
+    *,
+    run_id: int,
+    browser: Browser,
+    headless: bool = True,
+    base_url: str | None = None,
+    timeout_s: int | None = None,
+) -> ExecutionOutcome:
+    """Write `bundle` to a fresh workspace, run pytest, collect the evidence.
+
+    Never raises: a run that cannot start is a recorded outcome with `error`
+    set, because the caller has a database row to finish either way.
+    """
+    timeout_s = timeout_s or settings.RUN_TIMEOUT_SECONDS
+    workspace = _workspace(run_id, browser)
+    outcome = ExecutionOutcome(browser=browser)
+    started = time.monotonic()
+
+    try:
+        _materialise(bundle, workspace)
+    except OSError as exc:
+        outcome.error = f"Could not prepare the workspace: {exc}"
+        logger.exception("Run %s (%s): workspace failed", run_id, browser.value)
+        return outcome
+
+    try:
+        completed = subprocess.run(
+            _command(browser, headless=headless),
+            cwd=workspace,
+            env=_environment(base_url),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            # No shell: the suite name reaches this path from user input, and a
+            # shell would make that a command injection.
+            shell=False,
+        )
+        outcome.exit_code = completed.returncode
+        outcome.output = _tail(completed.stdout, completed.stderr)
+    except subprocess.TimeoutExpired as exc:
+        outcome.error = f"Timed out after {timeout_s}s"
+        outcome.output = _tail(exc.stdout, exc.stderr)
+        logger.warning("Run %s (%s): timed out", run_id, browser.value)
+    except FileNotFoundError:
+        outcome.error = "Python interpreter not found - cannot start pytest"
+        logger.exception("Run %s (%s): interpreter missing", run_id, browser.value)
+    except OSError as exc:
+        outcome.error = f"Could not start pytest: {exc}"
+        logger.exception("Run %s (%s): pytest would not start", run_id, browser.value)
+
+    outcome.duration_ms = int((time.monotonic() - started) * 1000)
+    outcome.results = parse_junit(workspace / JUNIT_NAME)
+
+    # Collect before cleaning up, or the evidence goes with the workspace.
+    # The parsed results are passed in so each file can be tied to the test that
+    # produced it — a screenshot nobody can attribute is not evidence.
+    try:
+        outcome.artifacts = _collect(
+            workspace, run_id, browser, [r.function_name for r in outcome.results]
+        )
+    except OSError:
+        logger.exception("Run %s (%s): could not save artifacts", run_id, browser.value)
+
+    if not outcome.results and not outcome.error:
+        outcome.error = _diagnose(outcome, browser)
+
+    _cleanup(workspace)
+    return outcome
+
+
+# ---------------------------------------------------------------------------
+# The pieces
+# ---------------------------------------------------------------------------
+def _workspace(run_id: int, browser: Browser) -> Path:
+    """A fresh directory per (run, browser).
+
+    Per browser, not per run: three browsers write screenshots and video with
+    the same filenames, so a shared directory would have them overwriting each
+    other's evidence.
+    """
+    path = settings.workspace_dir / f"run_{run_id}" / browser.value
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _materialise(bundle: dict[str, str], workspace: Path) -> None:
+    """Write the suite into the workspace, refusing anything outside it."""
+    for relative, content in bundle.items():
+        destination = (workspace / relative).resolve()
+        if not destination.is_relative_to(workspace.resolve()):
+            # A path like ../../.ssh/authorized_keys. Generated paths are built
+            # by us, but this is cheap and the consequence of being wrong is not.
+            logger.error("Refusing to write outside the workspace: %s", relative)
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8", newline="\n")
+
+
+def _command(browser: Browser, *, headless: bool) -> list[str]:
+    """The pytest invocation.
+
+    `sys.executable` rather than a bare "pytest": the API may be started from
+    any working directory, and this guarantees the interpreter that has
+    Playwright installed is the one that runs.
+    """
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        f"--browser={browser.value}",
+        f"--junitxml={JUNIT_NAME}",
+        f"--output={ARTIFACT_DIR}",
+        # A run of generated code should never sit waiting for a debugger or
+        # write caches into the user's project.
+        "-p",
+        "no:cacheprovider",
+        "--tb=short",
+    ]
+    if not headless:
+        command.append("--headed")
+    return command
+
+
+def _environment(base_url: str | None) -> dict[str, str]:
+    env = os.environ.copy()
+    if base_url:
+        # The generated conftest reads this, so the same suite can be pointed
+        # at staging without regenerating anything.
+        env["BASE_URL"] = base_url
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+def _collect(
+    workspace: Path, run_id: int, browser: Browser, functions: list[str]
+) -> list[CollectedArtifact]:
+    """Move screenshots, video and traces out of the workspace into storage."""
+    source = workspace / ARTIFACT_DIR
+    if not source.exists():
+        return []
+
+    target = settings.storage_dir / "runs" / str(run_id) / browser.value
+    target.mkdir(parents=True, exist_ok=True)
+
+    collected: list[CollectedArtifact] = []
+    for file in sorted(source.rglob("*")):
+        if not file.is_file():
+            continue
+
+        kind = ARTIFACT_TYPES.get(file.suffix.lower(), ArtifactType.LOG)
+        # Flatten, keeping the parent folder in the name: Playwright nests
+        # video under a per-test directory whose name is the only clue about
+        # which test it belongs to.
+        stem = f"{file.parent.name}_{file.name}" if file.parent != source else file.name
+        destination = target / stem
+
+        try:
+            shutil.move(str(file), destination)
+        except OSError:
+            logger.exception("Could not move artifact %s", file)
+            continue
+
+        collected.append(
+            CollectedArtifact(
+                type=kind,
+                relative_path=str(destination.relative_to(settings.storage_dir)).replace(
+                    "\\", "/"
+                ),
+                size=destination.stat().st_size,
+                function_name=_owner(stem, functions),
+            )
+        )
+    return collected
+
+
+def _owner(filename: str, functions: list[str]) -> str | None:
+    """Which test an artifact belongs to.
+
+    Matched against the functions that actually ran rather than parsed out of
+    the filename, because the filename is not ours to predict:
+    pytest-playwright slugifies the whole node id with dashes
+    (`tests-test-demo-py-test-signs-in-chromium`), our conftest uses the bare
+    node name, and neither is stable across versions. Comparing against known
+    names survives both.
+    """
+    if not functions:
+        return None
+
+    haystack = filename.replace("-", "_").replace(".", "_").lower()
+    # Longest first: `test_login` must not win over `test_login_fails` when both
+    # ran and the file belongs to the longer one.
+    for function in sorted(functions, key=len, reverse=True):
+        if function.lower() in haystack:
+            return function
+    return None
+
+
+def _tail(stdout: str | bytes | None, stderr: str | bytes | None, limit: int = 8000) -> str:
+    """The end of the output — where pytest puts the summary."""
+
+    def text(value) -> str:
+        if value is None:
+            return ""
+        return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+
+    combined = "\n".join(part for part in (text(stdout), text(stderr)) if part)
+    return combined[-limit:]
+
+
+def _diagnose(outcome: ExecutionOutcome, browser: Browser) -> str | None:
+    """Explain an empty run in terms the user can act on."""
+    output = outcome.output.lower()
+
+    if "executable doesn't exist" in output or "playwright install" in output:
+        return (
+            f"{browser.value} is not installed. Run: "
+            f"poetry run playwright install {browser.value}"
+        )
+    if "no tests ran" in output or "collected 0 items" in output:
+        return "No tests were found in the generated suite."
+    if "error" in output and outcome.exit_code not in (0, 1):
+        return f"pytest exited with code {outcome.exit_code} without producing a report."
+    return None
+
+
+def _cleanup(workspace: Path) -> None:
+    """Delete the workspace. A failure here is logged, never raised."""
+    if not settings.CLEAN_WORKSPACES:
+        logger.info("Keeping workspace %s (CLEAN_WORKSPACES is off)", workspace)
+        return
+    shutil.rmtree(workspace, ignore_errors=True)

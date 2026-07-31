@@ -14,10 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, health, projects, recordings, test_cases
+from app.api import auth, health, projects, recordings, runs, test_cases
 from app.core.config import settings
 from app.services import browser_recorder
 from app.services.exceptions import ServiceError
+from app.services.execution_service import ExecutionService
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -34,6 +35,12 @@ async def lifespan(app: FastAPI):
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     settings.workspace_dir.mkdir(parents=True, exist_ok=True)
     logger.info("%s starting (environment=%s)", settings.APP_NAME, settings.ENVIRONMENT)
+
+    # A run lives in a thread, so a restart leaves it stuck at "running" and the
+    # UI spins forever on something that is already dead.
+    orphaned = ExecutionService.reap_orphans()
+    if orphaned:
+        logger.warning("Marked %d run(s) as interrupted by a restart", orphaned)
     yield
     # Never leave an orphan Chromium process behind on reload or shutdown.
     await browser_recorder.close_all()
@@ -82,9 +89,9 @@ def create_app() -> FastAPI:
     app.include_router(projects.router, prefix=settings.API_V1_PREFIX)
     app.include_router(recordings.router, prefix=settings.API_V1_PREFIX)
     app.include_router(test_cases.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(runs.router, prefix=settings.API_V1_PREFIX)
 
-    # Later phases add: runs, analysis, reports, bugs, integrations, agent,
-    # websocket.
+    # Later phases add: analysis, reports, bugs, integrations, agent, websocket.
 
     return app
 
