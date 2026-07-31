@@ -76,6 +76,74 @@ def test_best_selector_ignores_input_order() -> None:
     assert best_selector(raw).strategy is SelectorStrategy.TEST_ID
 
 
+def test_a_unique_selector_beats_a_better_ranked_ambiguous_one() -> None:
+    """Regression: this exact data made a real recording fail every run.
+
+    Playwright is strict — a locator matching two elements raises rather than
+    guessing. So a plain #email that matches one element is worth more than a
+    placeholder that matches two, however much nicer the placeholder reads.
+    """
+    raw = [
+        {"strategy": "placeholder", "value": "Email", "score": 84, "unique": False},
+        {"strategy": "css_id", "value": "#email", "score": 70, "unique": True},
+    ]
+    chosen = best_selector(raw)
+
+    assert chosen.strategy is SelectorStrategy.CSS_ID
+    assert ".first" not in locator_expression(chosen)
+
+
+def test_ranking_still_decides_between_equally_unique_selectors() -> None:
+    """Uniqueness is a tie-breaker on top of ranking, not a replacement."""
+    raw = [
+        {"strategy": "xpath", "value": "//div[1]/input", "score": 10, "unique": True},
+        {"strategy": "test_id", "value": "email", "score": 90, "unique": True},
+    ]
+    assert best_selector(raw).strategy is SelectorStrategy.TEST_ID
+
+
+def test_step_wording_stays_human_when_the_code_uses_an_id() -> None:
+    """Choosing #email for reliability must not make the step say `Click "#email"`.
+
+    The description and the locator answer different questions, so they read
+    different candidates: most recognisable name vs. most reliable selector.
+    """
+    ir = build_ir(
+        [
+            {
+                "action_type": "input",
+                "url": "https://example.com/login",
+                "selectors": [
+                    {"strategy": "placeholder", "value": "Email", "score": 84,
+                     "unique": False},
+                    {"strategy": "css_id", "value": "#email", "score": 70, "unique": True},
+                ],
+                "element": {"tag": "input"},
+                "payload": {"value": "a@b.com"},
+            }
+        ],
+        suite_name="Login",
+        start_url="https://example.com/login",
+    )
+
+    step = ir.steps[-1]
+    assert 'Type into "Email"' == step.description
+    assert "#email" in ir.pages[0].locators[0].expression
+
+
+def test_an_unavoidably_ambiguous_selector_falls_back_to_first() -> None:
+    """When nothing is unique, running on the first match beats always failing."""
+    raw = [
+        {"strategy": "text", "value": "Delete", "score": 50, "unique": False},
+        {"strategy": "css", "value": "button.delete", "score": 40, "unique": False},
+    ]
+    chosen = best_selector(raw)
+
+    assert chosen.strategy is SelectorStrategy.TEXT  # ranking still applies
+    assert locator_expression(chosen).endswith(".first")
+    assert chosen.is_fragile  # and the UI flags it
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [

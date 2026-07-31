@@ -42,11 +42,24 @@ class Selector:
 
 
 def best_selector(raw_selectors: list[dict[str, Any]]) -> Selector | None:
-    """Pick the most reliable candidate. Re-sorts rather than trusting order."""
+    """Pick the most reliable candidate. Re-sorts rather than trusting order.
+
+    Uniqueness outranks everything, including strategy. A selector that matched
+    two elements when recorded is not "slightly worse" — Playwright runs in
+    strict mode, so it raises rather than guessing, and the test fails every
+    single time:
+
+        strict mode violation: get_by_placeholder("Email") resolved to 2 elements
+
+    A humble `#email` that matches exactly one element beats a beautiful
+    placeholder selector that matches two. Ranking is about surviving the next
+    UI change; uniqueness is about working at all, and working at all comes
+    first.
+    """
     if not raw_selectors:
         return None
     candidates = [Selector.from_dict(s) for s in raw_selectors]
-    return min(candidates, key=lambda s: (s.rank, -s.score))
+    return min(candidates, key=lambda s: (not s.unique, s.rank, -s.score))
 
 
 def py_str(value: str) -> str:
@@ -60,7 +73,19 @@ def py_str(value: str) -> str:
 
 
 def locator_expression(selector: Selector, root: str = "page") -> str:
-    """Render one selector as a Playwright call on `root`."""
+    """Render one selector as a Playwright call on `root`.
+
+    A selector that matched several elements gets `.first` appended. That only
+    happens when *every* recorded candidate was ambiguous — `best_selector`
+    prefers unique ones — and it is the difference between a test that picks
+    the first match and one that raises a strict mode violation on every run.
+    The page object flags it, so the ambiguity is visible rather than silently
+    papered over.
+    """
+    return _render(selector, root) + ("" if selector.unique else ".first")
+
+
+def _render(selector: Selector, root: str) -> str:
     match selector.strategy:
         case SelectorStrategy.TEST_ID:
             return f"{root}.get_by_test_id({py_str(selector.value)})"

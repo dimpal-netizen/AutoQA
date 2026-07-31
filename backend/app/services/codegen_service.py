@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from app.ai.enhancer import enhance
 from app.codegen.converter import build_ir
 from app.codegen.generator import GeneratedCodeError, render
-from app.codegen.writer import suite_directory, write_suite
+from app.codegen.writer import remove_suite_directory, suite_directory, write_suite
 from app.core.config import settings
 from app.models.enums import CaseSource, CaseStatus, RecordingStatus
 from app.models.test_case import TestSuite
@@ -197,12 +198,21 @@ class CodegenService:
         # Put the scripts on disk. This is the copy a QA Engineer opens in
         # VS Code to review and edit; the database copy is what gets executed
         # and regenerated.
-        target = suite_directory(
-            session.project_id, session.project.name, suite.id, suite_name
-        )
+        target = suite_directory(session.project.name, suite_name)
+        if self.suites.output_dir_taken(str(target), excluding=suite.id):
+            target = suite_directory(
+                session.project.name, suite_name, disambiguator=suite.id
+            )
+
+        previous = suite.output_dir
         try:
             write_suite(target, {spec.path: spec.content for spec in rendered})
             self.suites.update(suite, output_dir=str(target))
+
+            # A rename moves the folder. Remove the old one, or `generated/`
+            # accumulates a directory for every name the suite has ever had.
+            if previous and previous != str(target):
+                remove_suite_directory(Path(previous))
         except OSError:
             # A read-only or full disk must not lose the generated suite —
             # it is still in the database and still runnable.

@@ -41,6 +41,18 @@ class TestSuiteRepository(BaseRepository[TestSuite]):
         stmt = select(TestSuite).where(TestSuite.recording_id == recording_id)
         return self.db.scalars(stmt).first()
 
+    def output_dir_taken(self, path: str, *, excluding: int) -> bool:
+        """Is another suite already writing to this folder?
+
+        Folder names come from project and suite names, which nothing forces to
+        be unique. Without this check two suites called "Login flow" would
+        quietly overwrite each other's scripts on disk.
+        """
+        stmt = select(TestSuite.id).where(
+            TestSuite.output_dir == path, TestSuite.id != excluding
+        )
+        return self.db.scalars(stmt).first() is not None
+
     def delete_generated(self, suite: TestSuite) -> None:
         """Wipe cases and files before regenerating, keeping the suite row."""
         for case in list(suite.cases):

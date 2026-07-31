@@ -242,16 +242,17 @@ def test_runtime_output_never_lands_inside_the_backend_package():
     kill itself. The symptom was baffling ("pytest produced no report") and the
     cause invisible, so it is worth pinning.
     """
-    from app.core.config import BACKEND_DIR, settings
+    from app.core.config import BACKEND_DIR, Settings
 
-    for label, path in (
-        ("workspace_dir", settings.workspace_dir),
-        ("storage_dir", settings.storage_dir),
-        ("generated_dir", settings.generated_dir),
-    ):
-        assert not path.is_relative_to(BACKEND_DIR), (
-            f"{label} is {path}, inside {BACKEND_DIR}. Writing .py files there "
-            f"triggers the uvicorn reloader mid-run."
+    # The configured defaults, not settings.* - conftest points those at a temp
+    # directory, which would make this pass without checking anything.
+    for name in ("WORKSPACE_PATH", "STORAGE_PATH", "GENERATED_PATH"):
+        default = Path(Settings.model_fields[name].default)
+        resolved = default if default.is_absolute() else (BACKEND_DIR / default).resolve()
+
+        assert not resolved.is_relative_to(BACKEND_DIR), (
+            f"{name} defaults to {resolved}, inside {BACKEND_DIR}. Writing .py "
+            f"files there triggers the uvicorn reloader mid-run."
         )
 
 

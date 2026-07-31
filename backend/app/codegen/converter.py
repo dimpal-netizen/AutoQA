@@ -46,6 +46,10 @@ class LocatorSpec:
     strategy: str
     fragile: bool
     fallbacks: list[str] = field(default_factory=list)
+    # Every recorded candidate matched more than one element, so the expression
+    # ends in `.first`. Worth saying out loud: the test will run, but it may be
+    # driving the wrong element.
+    ambiguous: bool = False
 
 
 @dataclass
@@ -77,6 +81,7 @@ class PageSpec:
                 strategy=locator.strategy,
                 fragile=locator.fragile,
                 fallbacks=locator.fallbacks,
+                ambiguous=locator.ambiguous,
             )
         )
         return name
@@ -334,11 +339,12 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             strategy=selector.strategy.value,
             fragile=selector.is_fragile,
             fallbacks=fallbacks,
+            ambiguous=not selector.unique,
         )
     )
 
     target = f"{page_var}.{name}"
-    label = _readable_target(selector, element)
+    label = _readable_target(selector, element, action.get("selectors") or [])
     code: list[str] = []
     description = ""
     input_data: str | None = None
@@ -396,6 +402,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
                     expression=locator_expression(drop_selector, root),
                     strategy=drop_selector.strategy.value,
                     fragile=drop_selector.is_fragile,
+                    ambiguous=not drop_selector.unique,
                 )
             )
             code = [f"{target}.drag_to({page_var}.{drop_name})"]
@@ -434,13 +441,40 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
     )
 
 
-def _readable_target(selector: Selector, element: dict[str, Any] | None) -> str:
-    """How a person would refer to the element in a sentence."""
+# Selectors whose value is text a human would recognise, most natural first.
+_HUMAN_STRATEGIES = ("label", "placeholder", "role_name", "text", "test_id")
+
+
+def _readable_target(
+    selector: Selector,
+    element: dict[str, Any] | None,
+    candidates: list[dict[str, Any]] | None = None,
+) -> str:
+    """How a person would refer to the element in a sentence.
+
+    Deliberately independent of which selector the code uses. Those answer
+    different questions: the code wants the most *reliable* way to find the
+    element, the description wants the most *recognisable* name for it. Tying
+    them together means fixing an unreliable selector turns a step that read
+    `Type into "Email"` into `Type into "#email"`, which is a worse description
+    of the very same click.
+    """
     if element:
         for key in ("accessible_name", "text"):
             value = element.get(key)
             if value:
                 return f'"{str(value)[:60]}"'
+
+    for strategy in _HUMAN_STRATEGIES:
+        for raw in candidates or []:
+            if raw.get("strategy") != strategy:
+                continue
+            value = str(raw.get("value", ""))
+            if strategy == "role_name":
+                _, _, value = value.partition("|")
+            if value:
+                return f'"{value[:60]}"'
+
     if selector.strategy.value == "role_name":
         _, _, name = selector.value.partition("|")
         if name:

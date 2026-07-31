@@ -109,14 +109,51 @@ def test_directory_names_are_safe(raw: str, expected: str) -> None:
     assert safe_segment(raw, "fallback") == expected
 
 
-def test_suite_directory_is_readable_and_unique() -> None:
-    first = suite_directory(1, "Shop Checkout", 7, "Login flow")
-    second = suite_directory(1, "Shop Checkout", 8, "Login flow")
+def test_suite_directory_reads_like_a_path_a_person_would_type() -> None:
+    """This is pasted into VS Code, so no database ids in the common case."""
+    path = suite_directory("Shop Checkout", "Login flow")
 
-    assert first.name == "007-login-flow"
-    assert first.parent.name == "001-shop-checkout"
-    # Same name, different suite: the id keeps them apart.
-    assert first != second
+    assert path.name == "login-flow"
+    assert path.parent.name == "shop-checkout"
+
+
+def test_a_clashing_suite_name_is_disambiguated() -> None:
+    """Two suites called the same thing must not overwrite each other."""
+    plain = suite_directory("Shop Checkout", "Login flow")
+    disambiguated = suite_directory("Shop Checkout", "Login flow", disambiguator=8)
+
+    assert disambiguated.name == "login-flow-8"
+    assert disambiguated != plain
+    assert disambiguated.parent == plain.parent
+
+
+def test_removing_a_suite_folder_refuses_paths_outside_generated(tmp_path: Path) -> None:
+    """A stale database row must not become an arbitrary rmtree."""
+    from app.codegen.writer import remove_suite_directory
+
+    outside = tmp_path / "precious"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("do not delete me")
+
+    remove_suite_directory(outside)
+
+    assert (outside / "keep.txt").exists()
+
+
+def test_removing_a_suite_folder_deletes_it_and_an_emptied_project(tmp_path: Path) -> None:
+    from app.codegen.writer import remove_suite_directory
+    from app.core.config import settings
+
+    root = settings.generated_dir
+    suite = root / "shop" / "old-name"
+    suite.mkdir(parents=True, exist_ok=True)
+    (suite / "conftest.py").write_text("x = 1")
+
+    remove_suite_directory(suite)
+
+    assert not suite.exists()
+    # The project folder held nothing else, so it goes too.
+    assert not (root / "shop").exists()
 
 
 def test_content_is_written_with_unix_newlines(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ import { RELIABLE_RANK, SELECTOR_RANK, type TestSuiteDetail } from "@/lib/types"
 import { AppHeader } from "@/components/app-header";
 import { RequireAuth } from "@/components/auth-provider";
 import { RunPanel } from "@/components/run-panel";
+import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import {
   Alert,
@@ -87,7 +88,7 @@ function SuiteDetail({ id }: { id: number }) {
     return <main className="mx-auto max-w-4xl p-6 text-sm text-muted-foreground">Loading…</main>;
   }
 
-  const steps = suite.cases[0]?.steps ?? [];
+  const steps = suite.cases.flatMap((c) => c.steps);
   const fragile = steps.filter(
     (s) => s.selector_strategy && SELECTOR_RANK[s.selector_strategy] > RELIABLE_RANK,
   );
@@ -145,57 +146,14 @@ function SuiteDetail({ id }: { id: number }) {
         </Alert>
       )}
 
-      <h2 className="mt-8 text-lg font-semibold">Steps</h2>
+      <h2 className="mt-8 text-lg font-semibold">
+        Test cases{suite.cases.length > 1 && ` (${suite.cases.length})`}
+      </h2>
       <p className="mb-3 mt-1 text-sm text-muted-foreground">
-        What the test does, in order. No code needed to review it.
+        What each test does, in order. No code needed to review it.
       </p>
 
-      <div className="flex flex-col gap-2">
-        {steps.length === 0 && (
-          <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              No steps recorded.
-            </CardContent>
-          </Card>
-        )}
-        {steps.map((step) => {
-          const isFragile =
-            step.selector_strategy && SELECTOR_RANK[step.selector_strategy] > RELIABLE_RANK;
-          return (
-            <Card key={step.id}>
-              <CardContent className="flex items-start gap-3 py-3">
-                <span className="w-6 shrink-0 pt-0.5 font-mono text-xs text-muted-foreground">
-                  {step.sequence}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm">{step.description}</p>
-                  {step.expected_result && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Expected: {step.expected_result}
-                    </p>
-                  )}
-                </div>
-                {step.selector_strategy && (
-                  <span
-                    className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-xs ${
-                      isFragile
-                        ? "border-destructive/40 bg-destructive/10 text-destructive"
-                        : "border-success/40 bg-success/10 text-success"
-                    }`}
-                    title={
-                      isFragile
-                        ? "Brittle - likely to break when the UI changes"
-                        : "Reliable selector"
-                    }
-                  >
-                    {step.selector_strategy}
-                  </span>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      <TestCaseList cases={suite.cases} />
     </main>
   );
 }

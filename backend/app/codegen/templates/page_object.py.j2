@@ -21,6 +21,12 @@ class {{ page.class_name }}:
     @property
     def {{ locator.name }}(self) -> Locator:
         """Located by {{ locator.strategy }}.{% if locator.fragile %} FRAGILE - likely to break on a UI change.{% endif %}
+{% if locator.ambiguous %}
+
+        AMBIGUOUS: every recorded way of finding this matched more than one
+        element, so `.first` is used. The test runs, but it may be driving the
+        wrong one. Give this element a unique id or data-testid to be sure.
+{% endif %}
 {% if locator.fallbacks %}
 
         Recorded alternatives if this one stops matching:

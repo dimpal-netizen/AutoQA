@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 from pathlib import Path
 
 from app.core.config import settings
@@ -26,11 +27,46 @@ def safe_segment(text: str, fallback: str) -> str:
     return (cleaned[:60] or fallback).lower()
 
 
-def suite_directory(project_id: int, project_name: str, suite_id: int, suite_name: str) -> Path:
-    """Stable, readable location for one suite's files."""
-    project_dir = f"{project_id:03d}-{safe_segment(project_name, 'project')}"
-    suite_dir = f"{suite_id:03d}-{safe_segment(suite_name, 'suite')}"
-    return settings.generated_dir / project_dir / suite_dir
+def suite_directory(project_name: str, suite_name: str, *, disambiguator: int | None = None) -> Path:
+    """Where one suite's files live: generated/<project>/<suite>.
+
+    Named after the project and the suite rather than their database ids,
+    because this is a path a person types into VS Code. `generated/shop/login`
+    is somewhere you can find; `generated/106-shop/042-login` is a folder you
+    scroll past.
+
+    `disambiguator` is the suite id, appended only when another suite has
+    already claimed the readable name. The caller decides that, because only it
+    can see the other suites.
+    """
+    suite_dir = safe_segment(suite_name, "suite")
+    if disambiguator is not None:
+        suite_dir = f"{suite_dir}-{disambiguator}"
+    return settings.generated_dir / safe_segment(project_name, "project") / suite_dir
+
+
+def remove_suite_directory(path: Path) -> None:
+    """Delete a suite folder that is no longer the right home for a suite.
+
+    Called when a rename moves a suite: without it, renaming leaves the old
+    folder behind for ever, and `generated/` slowly fills with the history of
+    every name a suite has ever had.
+    """
+    resolved = Path(path).resolve()
+    root = settings.generated_dir.resolve()
+
+    # Only ever delete inside generated/, and never generated/ itself. A stale
+    # database row must not be able to turn into `rmtree("/")`.
+    if not resolved.is_relative_to(root) or resolved == root:
+        logger.error("Refusing to remove %s: outside the generated folder", resolved)
+        return
+
+    shutil.rmtree(resolved, ignore_errors=True)
+
+    # Drop the project folder too if that was its last suite.
+    parent = resolved.parent
+    if parent != root and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
 
 
 def write_suite(target: Path, files: dict[str, str]) -> list[str]:
