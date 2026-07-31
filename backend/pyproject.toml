@@ -1,0 +1,107 @@
+[tool.poetry]
+name = "testpilot-backend"
+version = "0.1.0"
+description = "TestPilot AI — AI-powered autonomous test automation platform"
+authors = ["TestPilot AI"]
+readme = "../README.md"
+# We are building an application, not a distributable library, so Poetry only
+# needs to manage the virtualenv — it should not try to package app/.
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.13"
+
+# --- Web framework ---
+fastapi = ">=0.115"
+uvicorn = { extras = ["standard"], version = ">=0.32" }
+python-multipart = ">=0.0.12"      # file uploads (artifacts, attachments)
+
+# --- Database ---
+sqlalchemy = ">=2.0"
+psycopg = { extras = ["binary"], version = ">=3.2" }
+alembic = ">=1.14"
+
+# --- Config & validation ---
+pydantic = ">=2.9"
+pydantic-settings = ">=2.6"
+
+# --- Background jobs & real-time ---
+celery = { extras = ["redis"], version = ">=5.4" }
+redis = ">=5.2"
+
+# --- Security ---
+pyjwt = ">=2.10"                   # JWT encode/decode
+bcrypt = ">=4.2"                   # password hashing
+cryptography = ">=44.0"            # Fernet, for encrypting Jira/ADO credentials
+
+# --- Code generation ---
+jinja2 = ">=3.1"                   # templates that emit Playwright code
+
+# --- Test execution (runtime deps: Celery workers run pytest) ---
+pytest = ">=8.3"
+pytest-playwright = ">=0.6"
+playwright = ">=1.49"
+allure-pytest = ">=2.13"
+
+# --- AI (Phase 4) ---
+anthropic = ">=0.40"
+openai = ">=1.57"
+langchain = ">=0.3"
+langchain-anthropic = ">=0.3"
+langchain-openai = ">=0.2"
+
+# --- Autonomous agent (Phase 7) ---
+beautifulsoup4 = ">=4.12"
+lxml = ">=5.3"
+
+# --- HTTP client (Jira / Azure DevOps) ---
+httpx = ">=0.28"
+tenacity = ">=9.0"                 # retry with backoff
+
+[tool.poetry.group.dev.dependencies]
+ruff = ">=0.8"
+pytest-cov = ">=6.0"
+pytest-asyncio = ">=0.24"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+
+# ---------------------------------------------------------------------------
+# Ruff — linter + formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = ["alembic/versions", "workspaces", "storage"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import ordering)
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "C4",   # flake8-comprehensions
+]
+ignore = [
+    "B008",  # function call in argument default — this is how FastAPI Depends() works
+    "E501",  # line length is handled by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/models/*.py" = ["F401"]   # models are imported for their side effect (table registration)
+
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --strict-markers"
+markers = [
+    "integration: needs a live Postgres/Redis (deselect with '-m \"not integration\"')",
+]
