@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 const NAV = [
   { href: "/projects", label: "Projects" },
   { href: "/recordings", label: "Recordings" },
+  { href: "/suites", label: "Tests" },
 ];
 
 export function AppHeader() {

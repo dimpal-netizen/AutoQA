@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { CircleDot, Trash2 } from "lucide-react";
+import { CircleDot, FileCode2, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RecordingSession } from "@/lib/types";
 import { AppHeader } from "@/components/app-header";
@@ -109,6 +109,15 @@ function Recordings() {
                 </Link>
 
                 <div className="flex shrink-0 items-center gap-4 text-sm">
+                  {session.suite_id && (
+                    <Link
+                      href={`/suites/${session.suite_id}`}
+                      className="flex items-center gap-1 text-xs text-foreground underline underline-offset-4"
+                    >
+                      <FileCode2 className="size-3.5" />
+                      View tests
+                    </Link>
+                  )}
                   <span className="text-muted-foreground">
                     {session.action_count} actions
                   </span>

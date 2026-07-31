@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.codegen.converter import build_ir
 from app.codegen.generator import GeneratedCodeError, render
+from app.codegen.writer import suite_directory, write_suite
 from app.core.config import settings
 from app.models.enums import CaseSource, CaseStatus, RecordingStatus
 from app.models.test_case import TestSuite
@@ -175,6 +176,20 @@ class CodegenService:
                 version=1,
                 meta={},
             )
+
+        # Put the scripts on disk. This is the copy a QA Engineer opens in
+        # VS Code to review and edit; the database copy is what gets executed
+        # and regenerated.
+        target = suite_directory(
+            session.project_id, session.project.name, suite.id, suite_name
+        )
+        try:
+            write_suite(target, {spec.path: spec.content for spec in rendered})
+            self.suites.update(suite, output_dir=str(target))
+        except OSError:
+            # A read-only or full disk must not lose the generated suite —
+            # it is still in the database and still runnable.
+            logger.exception("Could not write suite %s to %s", suite.id, target)
 
         self.db.commit()
         return self.suites.get_full(suite.id)  # type: ignore[return-value]

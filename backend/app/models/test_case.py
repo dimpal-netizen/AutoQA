@@ -58,6 +58,9 @@ class TestSuite(Base, TimestampMixin):
     # Which generator produced this — "deterministic_v1" today, an AI model
     # id from Phase 4. Kept so output can be traced back and compared.
     generator: Mapped[str] = mapped_column(String(64), default="deterministic_v1", nullable=False)
+    # Folder the scripts were written to, for opening in VS Code. Stored rather
+    # than recomputed so the path stays valid if the setting later changes.
+    output_dir: Mapped[str | None] = mapped_column(String(1024))
 
     project: Mapped["Project"] = relationship()
     recording: Mapped["RecordingSession | None"] = relationship()

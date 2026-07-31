@@ -10,6 +10,8 @@ import type {
   ProjectCreate,
   RecordingSession,
   RecordingSessionDetail,
+  TestSuite,
+  TestSuiteDetail,
   TokenPair,
   User,
 } from "@/lib/types";
@@ -163,5 +165,26 @@ export const api = {
 
     remove: (id: number) =>
       request<void>(`/recordings/${id}`, { method: "DELETE" }),
+  },
+
+  suites: {
+    list: (projectId?: number) =>
+      request<TestSuite[]>(
+        projectId ? `/suites?project_id=${projectId}` : "/suites",
+      ),
+
+    get: (id: number) => request<TestSuiteDetail>(`/suites/${id}`),
+
+    /** Every file as {path: content} — what Phase 5 writes to disk to run. */
+    bundle: (id: number) => request<Record<string, string>>(`/suites/${id}/bundle`),
+
+    /** Rebuild from the recording, replacing the current output. */
+    regenerate: (recordingId: number, name?: string) =>
+      request<TestSuiteDetail>(`/recordings/${recordingId}/generate`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+
+    remove: (id: number) => request<void>(`/suites/${id}`, { method: "DELETE" }),
   },
 };

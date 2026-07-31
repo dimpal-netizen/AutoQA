@@ -71,6 +71,8 @@ class TestSuiteRead(BaseModel):
     description: str | None
     source: CaseSource
     generator: str
+    # Where the scripts were written, for opening in VS Code.
+    output_dir: str | None
     created_at: datetime
     updated_at: datetime
 

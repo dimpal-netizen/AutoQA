@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # Generate a test suite the moment a recording stops. Deterministic and
     # fast, so there is no reason to make the user ask for it.
     AUTO_GENERATE_ON_STOP: bool = True
+    # Where generated scripts are written for the user to open in VS Code.
+    # The web app shows the path; reviewing and editing happens in the editor.
+    GENERATED_PATH: str = "./generated"
 
     # --- Test execution (Phase 5) ---
     STORAGE_PATH: str = "./storage"
@@ -120,6 +123,11 @@ class Settings(BaseSettings):
     def workspace_dir(self) -> Path:
         """Absolute path for per-run test workspaces."""
         return self._resolve(self.WORKSPACE_PATH)
+
+    @property
+    def generated_dir(self) -> Path:
+        """Absolute path where generated scripts land for editing in VS Code."""
+        return self._resolve(self.GENERATED_PATH)
 
     @property
     def is_production(self) -> bool:

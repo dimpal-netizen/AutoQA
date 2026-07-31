@@ -98,10 +98,77 @@ export interface RecordingSession {
   updated_at: string;
   /** True while a launched browser window is still open for this session. */
   browser_open?: boolean;
+  /** Set once code has been generated — happens automatically on stop. */
+  suite_id?: number | null;
 }
 
 export interface RecordingSessionDetail extends RecordingSession {
   actions: RecordedAction[];
+}
+
+// --- generated test suites ------------------------------------------------
+
+export type CaseSource = "recording" | "agent" | "manual";
+export type CaseStatus = "draft" | "approved" | "deprecated";
+export type FileType =
+  | "test" | "page_object" | "conftest" | "config"
+  | "fixture" | "util" | "helper";
+
+export interface TestStep {
+  id: number;
+  sequence: number;
+  action: ActionType;
+  description: string;
+  locator: string | null;
+  input_data: string | null;
+  expected_result: string | null;
+  selector_strategy: SelectorStrategy | null;
+}
+
+export interface TestCase {
+  id: number;
+  suite_id: number;
+  project_id: number;
+  name: string;
+  description: string | null;
+  function_name: string;
+  file_path: string;
+  source: CaseSource;
+  status: CaseStatus;
+  tags: string[];
+  is_enabled: boolean;
+  version: number;
+  created_at: string;
+  code: string;
+  steps: TestStep[];
+}
+
+export interface GeneratedFile {
+  id: number;
+  file_type: FileType;
+  path: string;
+  language: string;
+  version: number;
+  content: string;
+}
+
+export interface TestSuite {
+  id: number;
+  project_id: number;
+  recording_id: number | null;
+  name: string;
+  description: string | null;
+  source: CaseSource;
+  generator: string;
+  /** Folder the scripts were written to, for opening in VS Code. */
+  output_dir: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TestSuiteDetail extends TestSuite {
+  cases: TestCase[];
+  files: GeneratedFile[];
 }
 
 /** Mirrors SELECTOR_RANK in backend/app/models/enums.py. Lower is better. */

@@ -53,3 +53,6 @@ extension/*.zip
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Generated test scripts (opened in VS Code, not source)
+backend/generated/
