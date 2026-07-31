@@ -85,6 +85,24 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     @property
+    def cors_origin_regex(self) -> str | None:
+        """In development, accept the app on any local address and port.
+
+        CORS matches the Origin header as an exact string, so a list containing
+        only "http://localhost:3000" rejects the very same app opened at
+        127.0.0.1, [::1], or a LAN IP — which surfaces in the browser as an
+        unhelpful "Failed to fetch". Production still uses the explicit list.
+        """
+        if self.is_production:
+            return None
+        return (
+            r"http://(localhost|127\.0\.0\.1|\[::1\]"
+            r"|192\.168\.\d{1,3}\.\d{1,3}"
+            r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+            r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?"
+        )
+
+    @property
     def default_browsers(self) -> list[str]:
         return [b.strip() for b in self.DEFAULT_BROWSERS.split(",") if b.strip()]
 

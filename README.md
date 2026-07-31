@@ -69,8 +69,21 @@ poetry install
 poetry run alembic upgrade head
 
 # 5. Run the API
-poetry run uvicorn app.main:app --reload
+poetry run uvicorn app.main:app --reload --host 0.0.0.0
 ```
+
+> **`--host 0.0.0.0` is worth using.** Uvicorn defaults to `127.0.0.1`, which
+> works for `localhost` but not for your LAN IP — handy if you want to open the
+> app from a phone or another machine. On Windows neither `0.0.0.0` (IPv4-only)
+> nor `::` (IPv6-only) binds both stacks, so pick the one matching how you
+> browse; `localhost` works either way.
+
+### "Failed to fetch" in the browser
+
+Almost always CORS, not the network. The API allows any local origin in
+development (`localhost`, `127.0.0.1`, `[::1]`, and private LAN ranges, on any
+port). If you see it anyway, check the browser console for the blocked origin
+and add it to `CORS_ORIGINS` in `.env`.
 
 Open <http://localhost:8000/docs> for the interactive API docs.
 
