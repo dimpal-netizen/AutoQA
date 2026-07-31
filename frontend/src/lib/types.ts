@@ -263,6 +263,8 @@ export interface TestResult {
   browser: Browser;
   status: ResultStatus;
   duration_ms: number | null;
+  /** The test pytest is inside right now, while the run is active. */
+  current_test: string | null;
   error_message: string | null;
   stack_trace: string | null;
   failed_step: number | null;
@@ -284,6 +286,8 @@ export interface TestRun {
   failed: number;
   skipped: number;
   duration_ms: number | null;
+  /** The test pytest is inside right now, while the run is active. */
+  current_test: string | null;
   error_message: string | null;
   started_at: string | null;
   finished_at: string | null;

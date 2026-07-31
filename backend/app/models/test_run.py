@@ -75,6 +75,10 @@ class TestRun(Base, TimestampMixin):
     skipped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     duration_ms: Mapped[int | None] = mapped_column(Integer)
+    # The test pytest is inside right now, for the "Running: ..." line. Cleared
+    # when the run ends. A live field on the run rather than a status on the
+    # result, because a test that has started has no result yet.
+    current_test: Mapped[str | None] = mapped_column(String(255))
     workspace_path: Mapped[str | None] = mapped_column(String(1024))
     error_message: Mapped[str | None] = mapped_column(Text)
 

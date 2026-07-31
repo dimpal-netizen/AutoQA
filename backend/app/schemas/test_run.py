@@ -51,6 +51,7 @@ class ResultRead(BaseModel):
     browser: Browser
     status: ResultStatus
     duration_ms: int | None = None
+    current_test: str | None = None
     error_message: str | None = None
     stack_trace: str | None = None
     failed_step: int | None = None
@@ -76,6 +77,7 @@ class RunRead(BaseModel):
     failed: int
     skipped: int
     duration_ms: int | None = None
+    current_test: str | None = None
     error_message: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None

@@ -39,6 +39,7 @@ from app.repositories.test_run_repo import (
     TestResultRepository,
     TestRunRepository,
 )
+from app.runner import registry
 from app.runner.executor import ExecutionOutcome, run_suite
 from app.services.codegen_service import CodegenService
 from app.services.exceptions import NotFound, ValidationError
@@ -178,6 +179,7 @@ class ExecutionService:
                         base_url=base_url,
                         slow_mo_ms=run.slow_mo_ms,
                         on_progress=self._progress_reporter(run_id, browser, cases),
+                        on_started=self._start_reporter(run_id, cases),
                     ),
                     browsers,
                 )
@@ -187,6 +189,7 @@ class ExecutionService:
             self._record(run, outcome, cases)
 
         self._finish(run, outcomes)
+        registry.clear(run_id)
 
     def _progress_reporter(self, run_id: int, browser: Browser, cases: dict[str, object]):
         """A callback that records each test the moment pytest reports it.
@@ -212,6 +215,20 @@ class ExecutionService:
                 )
 
         return report
+
+    def _start_reporter(self, run_id: int, cases: dict[str, object]):
+        """Record the test pytest has just started, for the live "Running" line."""
+
+        def started(function_name: str) -> None:
+            case = cases.get(function_name)
+            name = getattr(case, "name", function_name)
+            with session_scope() as db:
+                repo = TestRunRepository(db)
+                run = repo.get(run_id)
+                if run is not None and run.status is RunStatus.RUNNING:
+                    repo.update(run, current_test=name)
+
+        return started
 
     def _prepare(self, run: TestRun) -> tuple[dict[str, str] | None, dict[str, object]]:
         """The files to run, and a lookup from function name back to the case."""
@@ -257,9 +274,15 @@ class ExecutionService:
             self.db.flush()  # need the id to attach artifacts
             by_function[parsed.function_name] = result.id
 
-        if not outcome.results:
+        if not outcome.results and not outcome.cancelled:
             # pytest produced nothing. Record a row per case anyway, or the run
             # shows zero results and the user cannot tell what happened.
+            #
+            # Not when cancelled, though: killing pytest means no JUnit report,
+            # and manufacturing an error for every test that never ran reports
+            # eleven failures the user caused by pressing Stop. The rows the
+            # progress reporter already wrote are the truth - the rest simply
+            # did not happen.
             self._record_blank(run, outcome, cases)
 
         for artifact in outcome.artifacts:
@@ -299,7 +322,9 @@ class ExecutionService:
         failed = len(results) - passed - skipped
 
         errors = [o.error for o in outcomes if o.error]
-        if failed and all(r.status is ResultStatus.ERROR for r in results):
+        if any(o.cancelled for o in outcomes) or registry.is_cancelled(run.id):
+            status = RunStatus.CANCELLED
+        elif failed and all(r.status is ResultStatus.ERROR for r in results):
             # Nothing actually ran. That is a broken setup, not a failing test,
             # and conflating the two sends people debugging the wrong thing.
             status = RunStatus.ERROR
@@ -317,8 +342,15 @@ class ExecutionService:
             failed=failed,
             skipped=skipped,
             duration_ms=max((o.duration_ms for o in outcomes), default=0),
+            current_test=None,
             finished_at=finished,
-            error_message="; ".join(dict.fromkeys(errors))[:1000] or None,
+            # A cancelled run already explains itself; do not overwrite that
+            # with an empty error just because nothing else went wrong.
+            error_message=(
+                run.error_message
+                if status is RunStatus.CANCELLED
+                else "; ".join(dict.fromkeys(errors))[:1000] or None
+            ),
         )
         self.db.commit()
 
@@ -396,19 +428,28 @@ class ExecutionService:
     def cancel(self, run_id: int, user: User) -> TestRun:
         """Stop waiting on a run.
 
-        Honest about what it does: the pytest process is left to finish or time
-        out on its own, and its results are ignored. Killing a browser
-        mid-navigation leaves worse debris than letting it end.
+        Kills the pytest process and every browser under it, then marks the
+        run cancelled. Results already recorded are kept — knowing four of
+        thirteen passed before you stopped is worth more than discarding them.
         """
         run = self.get(run_id, user)
         if run.status in FINISHED_RUN_STATUSES:
             raise ValidationError(f"This run already {run.status.value}.")
 
+        # Actually stop it. Marking the row and walking away left pytest
+        # running and the browsers open, still working on a run nobody wanted.
+        stopped = registry.cancel(run_id)
+
         self.runs.update(
             run,
             status=RunStatus.CANCELLED,
             finished_at=datetime.now(UTC),
-            error_message="Cancelled by the user.",
+            current_test=None,
+            error_message=(
+                f"Stopped by the user after {run.passed + run.failed} test(s)."
+                if stopped
+                else "Cancelled by the user before it started."
+            ),
         )
         self.db.commit()
         return run

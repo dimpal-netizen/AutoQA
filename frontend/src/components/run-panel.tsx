@@ -42,6 +42,7 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
   const [slowMo, setSlowMo] = useState(WATCH_SPEEDS[1].ms);
   const [run, setRun] = useState<TestRunDetail | null>(null);
   const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TestRun[]>([]);
 
@@ -106,6 +107,7 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
         headless,
         slow_mo_ms: slowMo,
       });
+      setStopping(false);
       setRun({ ...started, results: [] });
       void loadHistory();
     } catch (err) {
@@ -117,11 +119,14 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
 
   async function cancel() {
     if (!runId) return;
+    setStopping(true);
     try {
       await api.runs.cancel(runId);
       setRun(await api.runs.get(runId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not cancel");
+      setError(err instanceof Error ? err.message : "Could not stop the run");
+    } finally {
+      setStopping(false);
     }
   }
 
@@ -205,9 +210,9 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
 
           <div className="ml-auto flex items-center gap-2">
             {active ? (
-              <Button variant="outline" size="sm" onClick={cancel}>
-                <Square className="size-3.5" />
-                Stop
+              <Button variant="destructive" size="sm" onClick={cancel} disabled={stopping}>
+                <Square className="size-3.5 fill-current" />
+                {stopping ? "Stopping…" : "Stop"}
               </Button>
             ) : null}
             <Button
@@ -289,8 +294,15 @@ function RunSummary({ run }: { run: TestRunDetail }) {
       </Badge>
 
       {active ? (
-        <span className="tabular text-sm text-muted-foreground">
-          {done} of {expected} finished…
+        <span className="flex min-w-0 items-baseline gap-2 text-sm">
+          <span className="tabular shrink-0 text-muted-foreground">
+            {done} of {expected}
+          </span>
+          {run.current_test && (
+            <span className="min-w-0 truncate text-foreground" title={run.current_test}>
+              {run.current_test}
+            </span>
+          )}
         </span>
       ) : (
         <span className="tabular flex items-center gap-3 text-sm">

@@ -26,6 +26,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.models.enums import ArtifactType, Browser, ResultStatus
+from app.runner import registry
 from app.runner.parser import ParsedResult, parse_junit
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ class ExecutionOutcome:
     duration_ms: int = 0
     output: str = ""
     error: str | None = None
+    cancelled: bool = False
 
     @property
     def started(self) -> bool:
@@ -84,6 +86,7 @@ def run_suite(
     timeout_s: int | None = None,
     slow_mo_ms: int = 0,
     on_progress: Callable[[str, ResultStatus], None] | None = None,
+    on_started: Callable[[str], None] | None = None,
 ) -> ExecutionOutcome:
     """Write `bundle` to a fresh workspace, run pytest, collect the evidence.
 
@@ -114,7 +117,9 @@ def run_suite(
             cwd=workspace,
             env=_environment(base_url),
             timeout_s=timeout_s,
+            run_id=run_id,
             on_progress=on_progress,
+            on_started=on_started,
         )
         outcome.output = _tail(output, None)
         if timed_out:
@@ -140,7 +145,11 @@ def run_suite(
     except OSError:
         logger.exception("Run %s (%s): could not save artifacts", run_id, browser.value)
 
-    if not outcome.results and not outcome.error:
+    if registry.is_cancelled(run_id):
+        # Stopping on purpose is not a failure, and must not be diagnosed as one.
+        outcome.cancelled = True
+        outcome.error = None
+    elif not outcome.results and not outcome.error:
         outcome.error = _diagnose(outcome, browser)
 
     _cleanup(workspace)
@@ -183,6 +192,11 @@ _RESULT_LINE = re.compile(
     r"(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
 )
 
+# pytest -v writes "tests/test_x.py::test_name " and only appends the status
+# when the test ends. Watching the *unfinished* tail is therefore the only way
+# to know what is running right now rather than what has just finished.
+_STARTED_TAIL = re.compile(r"::(?P<name>[A-Za-z_]\w*)(?:\[[^\]]*\])?\s*$")
+
 _LIVE_STATUS: dict[str, ResultStatus] = {
     "PASSED": ResultStatus.PASSED,
     "XPASS": ResultStatus.PASSED,
@@ -199,13 +213,18 @@ def _stream(
     cwd: Path,
     env: dict[str, str],
     timeout_s: int,
+    run_id: int,
     on_progress: Callable[[str, ResultStatus], None] | None,
+    on_started: Callable[[str], None] | None = None,
 ) -> tuple[int | None, str, bool]:
-    """Run pytest, reporting each test as it finishes.
+    """Run pytest, reporting each test as it starts and as it finishes.
 
-    Line-buffered rather than `subprocess.run`, because the whole point is to
-    see progress before the process ends. stderr is folded into stdout so the
-    ordering between them survives.
+    Reads raw chunks rather than iterating lines. Line iteration only yields
+    when a newline arrives, and pytest writes none until a test *ends* — so it
+    can say what just finished but never what is running. The unfinished tail
+    of the buffer is exactly the test in flight.
+
+    stderr is folded into stdout so the ordering between them survives.
     """
     process = subprocess.Popen(
         command,
@@ -213,45 +232,73 @@ def _stream(
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
+        # Binary and unbuffered: decoding happens here, against a partial
+        # buffer that may split mid-character.
+        bufsize=0,
         # No shell: the suite name reaches this path from user input, and a
         # shell would make that a command injection.
         shell=False,
     )
+    registry.register(run_id, process)
 
     deadline = time.monotonic() + timeout_s
-    lines: list[str] = []
+    collected: list[str] = []
+    pending = ""
+    announced: str | None = None
     timed_out = False
 
-    try:
-        for line in process.stdout or ():
-            lines.append(line)
+    def safely(callback, *args) -> None:
+        try:
+            callback(*args)
+        except Exception:
+            # A reporting failure must not kill the run it reports on.
+            logger.exception("Progress callback failed")
 
-            if on_progress:
+    try:
+        while True:
+            chunk = process.stdout.read(512) if process.stdout else b""
+            if not chunk:
+                break
+
+            pending += chunk.decode("utf-8", "replace")
+            *complete, pending = pending.split("\n")
+
+            for line in complete:
+                collected.append(line + "\n")
+                if not on_progress:
+                    continue
                 match = _RESULT_LINE.search(line)
                 status = _LIVE_STATUS.get(match.group("status")) if match else None
                 if status is not None:
-                    try:
-                        on_progress(match.group("name"), status)
-                    except Exception:
-                        # A reporting failure must not kill the run it reports on.
-                        logger.exception("Progress callback failed")
+                    announced = None
+                    safely(on_progress, match.group("name"), status)
+
+            # What is left has no newline yet, so pytest is still inside it.
+            if on_started:
+                started = _STARTED_TAIL.search(pending)
+                if started and started.group("name") != announced:
+                    announced = started.group("name")
+                    safely(on_started, announced)
 
             if time.monotonic() > deadline:
                 timed_out = True
                 break
+    except Exception:
+        logger.exception("Run %s: reading pytest output failed", run_id)
     finally:
+        if pending:
+            collected.append(pending)
         if timed_out:
-            process.kill()
+            registry.terminate(process)
         try:
             process.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            process.kill()
+            registry.terminate(process)
         if process.stdout is not None:
             process.stdout.close()
+        registry.unregister(run_id, process)
 
-    return process.returncode, "".join(lines), timed_out
+    return process.returncode, "".join(collected), timed_out
 
 
 def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[str]:
