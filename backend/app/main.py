@@ -8,11 +8,13 @@ Then open http://localhost:8000/docs
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app.api import health
+from app.api import auth, health, projects
 from app.core.config import settings
+from app.services.exceptions import ServiceError
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -50,12 +52,23 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Services raise ServiceError; this turns it into a proper HTTP response so
+    # no service ever has to import fastapi.
+    @app.exception_handler(ServiceError)
+    async def handle_service_error(_: Request, exc: ServiceError) -> JSONResponse:
+        headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
+        return JSONResponse(
+            status_code=exc.status_code, content={"detail": exc.message}, headers=headers
+        )
+
     # Health lives at the root so probes don't depend on the API version.
     app.include_router(health.router)
 
-    # Feature routers land here as each phase is built:
-    #   app.include_router(auth.router,     prefix=settings.API_V1_PREFIX)
-    #   app.include_router(projects.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(projects.router, prefix=settings.API_V1_PREFIX)
+
+    # Later phases add: recordings, test_cases, runs, analysis, reports, bugs,
+    # integrations, agent, websocket.
 
     return app
 
