@@ -26,15 +26,15 @@ class Settings(BaseSettings):
     )
 
     # --- Application ---
-    APP_NAME: str = "TestPilot AI"
+    APP_NAME: str = "AutoQA"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
     API_V1_PREFIX: str = "/api/v1"
 
     # --- Database ---
-    POSTGRES_USER: str = "testpilot"
-    POSTGRES_PASSWORD: str = "testpilot"
-    POSTGRES_DB: str = "testpilot"
+    POSTGRES_USER: str = "autoqa"
+    POSTGRES_PASSWORD: str = "autoqa"
+    POSTGRES_DB: str = "autoqa"
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
 

@@ -1,26 +1,26 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: testpilot-postgres
+    container_name: autoqa-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-testpilot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testpilot}
-      POSTGRES_DB: ${POSTGRES_DB:-testpilot}
+      POSTGRES_USER: ${POSTGRES_USER:-autoqa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autoqa}
+      POSTGRES_DB: ${POSTGRES_DB:-autoqa}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       # Without the explicit -U/-d this checks the "root" user and always fails.
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testpilot} -d ${POSTGRES_DB:-testpilot}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autoqa} -d ${POSTGRES_DB:-autoqa}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:7-alpine
-    container_name: testpilot-redis
+    container_name: autoqa-redis
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"

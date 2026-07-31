@@ -24,7 +24,7 @@ env/
 htmlcov/
 coverage.xml
 
-# ---- TestPilot runtime data ----
+# ---- AutoQA runtime data ----
 backend/storage/
 backend/workspaces/
 backend/allure-results/

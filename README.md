@@ -1,4 +1,4 @@
-# TestPilot AI
+# AutoQA
 
 AI-powered autonomous test automation platform. Lets Manual QA Engineers, QA Engineers, and
 Test Managers automate web application testing **without writing code**.
@@ -16,9 +16,9 @@ Test Managers automate web application testing **without writing code**.
 **Backend** Python 3.13 · FastAPI · PostgreSQL · SQLAlchemy · Alembic · Redis · Celery · JWT · Poetry
 **Automation** Playwright · Pytest · Allure · HTML reports
 **AI** Claude API · OpenAI API · LangChain
-**Frontend** Next.js 15 · TypeScript · Tailwind · ShadCN UI · Zustand *(Phase 8)*
+**Frontend** Next.js 16 · TypeScript · Tailwind v4 · ShadCN-style UI · Zustand
 **Extension** Manifest V3 · TypeScript *(Phase 9)*
-**Infra** Docker · Docker Compose · GitHub Actions
+**Infra** Docker · Docker Compose
 
 ---
 
@@ -64,6 +64,18 @@ Check it's healthy:
 curl http://localhost:8000/health         # liveness
 curl http://localhost:8000/health/ready   # also checks Postgres + Redis
 ```
+
+### Run the web app
+
+```bash
+cd frontend
+cp .env.local.example .env.local   # PowerShell: Copy-Item .env.local.example .env.local
+npm install
+npm run dev
+```
+
+Open <http://localhost:3000>. Register an account — **the first account created becomes
+the admin** — then create a project.
 
 ### Background workers (from Phase 3 onward)
 
@@ -125,15 +137,16 @@ Three rules keep it maintainable:
 | Phase | What it delivers | Status |
 |---|---|---|
 | 0 | Project setup, Docker, config, health check | ✅ Done |
-| 1 | Auth, users, roles, projects | ⬜ |
+| 1 | Auth, users, roles, projects — backend **and** frontend | ✅ Done |
 | 2 | Recording storage (+ freeze the recording JSON format) | ⬜ |
 | 3 | Recording → Playwright code generation | ⬜ |
 | 4 | AI layer + failure analysis (Workflow 3) | ⬜ |
 | 5 | Test execution + live WebSocket updates | ⬜ |
 | 6 | HTML / Allure reports + bug reports | ⬜ |
 | 7 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
-| 8 | Frontend (Next.js 15) | ⬜ |
-| 9 | Chrome extension (Manifest V3) | ⬜ |
+| 8 | Chrome extension (Manifest V3) | ⬜ |
+
+Each phase extends both the backend and the UI, so the app stays runnable throughout.
 
 ---
 

@@ -1,3 +1,3 @@
-"""TestPilot AI backend."""
+"""AutoQA backend."""
 
 __version__ = "0.1.0"

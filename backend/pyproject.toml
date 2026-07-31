@@ -1,8 +1,8 @@
 [tool.poetry]
-name = "testpilot-backend"
+name = "autoqa-backend"
 version = "0.1.0"
-description = "TestPilot AI — AI-powered autonomous test automation platform"
-authors = ["TestPilot AI"]
+description = "AutoQA — AI-powered autonomous test automation platform"
+authors = ["AutoQA"]
 readme = "../README.md"
 # We are building an application, not a distributable library, so Poetry only
 # needs to manage the virtualenv — it should not try to package app/.
