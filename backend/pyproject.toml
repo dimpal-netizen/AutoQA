@@ -103,6 +103,7 @@ ignore = [
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "integration: needs a live Postgres/Redis (deselect with '-m \"not integration\"')",
 ]

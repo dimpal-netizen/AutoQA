@@ -13,14 +13,71 @@ from app.schemas.recording import (
     ActionBatchResult,
     RecordedActionRead,
     RecordedActionUpdate,
+    RecordingLaunch,
     RecordingSessionCreate,
     RecordingSessionDetail,
+    RecordingSessionLive,
     RecordingSessionRead,
     RecordingSessionStop,
 )
+from app.services import browser_recorder
 from app.services.recording_service import RecordingService
 
 router = APIRouter(tags=["recordings"])
+
+
+# --- launch a real browser ----------------------------------------------
+@router.post(
+    "/projects/{project_id}/recordings/launch",
+    response_model=RecordingSessionLive,
+    status_code=status.HTTP_201_CREATED,
+)
+async def launch_recording(
+    project_id: int, data: RecordingLaunch, db: DbSession, user: CurrentUser
+) -> RecordingSessionLive:
+    """Open a URL in a browser with the recorder injected, and start recording.
+
+    This is how you record a site we do not own: the page cannot inject a
+    recorder across origins, so Playwright does it from outside.
+    """
+    service = RecordingService(db)
+    session = service.start(
+        project_id,
+        RecordingSessionCreate(
+            name=data.name or f"Recording of {data.url.host}",
+            start_url=data.url,
+            extension_version="playwright-0.1.0",
+        ),
+        user,
+    )
+
+    await browser_recorder.launch(
+        session_id=session.id,
+        project_id=session.project_id,
+        project_name=session.project.name,
+        session_name=session.name,
+        url=str(data.url),
+        headless=data.headless,
+    )
+
+    db.refresh(session)
+    return RecordingSessionLive.model_validate(session).model_copy(
+        update={"browser_open": True}
+    )
+
+
+@router.post("/recordings/{session_id}/close", response_model=RecordingSessionRead)
+async def close_recording(
+    session_id: int, db: DbSession, user: CurrentUser
+) -> RecordingSessionRead:
+    """Stop a launched browser from our web app rather than from its own panel."""
+    service = RecordingService(db)
+    service.get(session_id, user)  # permission check
+
+    await browser_recorder.close(session_id)
+
+    db.expire_all()
+    return RecordingSessionRead.model_validate(service.get(session_id, user))
 
 
 # --- extension-facing ---------------------------------------------------
@@ -65,16 +122,22 @@ def discard_recording(
 
 
 # --- app-facing ---------------------------------------------------------
-@router.get("/recordings", response_model=list[RecordingSessionRead])
+@router.get("/recordings", response_model=list[RecordingSessionLive])
 def list_recordings(
     db: DbSession,
     user: CurrentUser,
     project_id: int | None = None,
     skip: int = 0,
     limit: int = 100,
-) -> list[RecordingSessionRead]:
+) -> list[RecordingSessionLive]:
     sessions = RecordingService(db).list_for_user(user, project_id, skip=skip, limit=limit)
-    return [RecordingSessionRead.model_validate(s) for s in sessions]
+    live = set(browser_recorder.running_session_ids())
+    return [
+        RecordingSessionLive.model_validate(s).model_copy(
+            update={"browser_open": s.id in live}
+        )
+        for s in sessions
+    ]
 
 
 @router.get("/recordings/{session_id}", response_model=RecordingSessionDetail)

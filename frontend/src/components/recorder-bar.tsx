@@ -43,7 +43,11 @@ declare global {
   }
 }
 
-const RECORDER_SRC = "/recorder.js";
+// Served by the backend so Playwright and the web app share one copy — the
+// two injection paths must never drift apart.
+const RECORDER_SRC = (
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"
+).replace(/\/api\/v1\/?$/, "/static/recorder.js");
 
 /** Floating recorder controls.
  *

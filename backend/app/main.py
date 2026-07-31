@@ -7,14 +7,19 @@ Then open http://localhost:8000/docs
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, health, projects, recordings
 from app.core.config import settings
+from app.services import browser_recorder
 from app.services.exceptions import ServiceError
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -30,6 +35,8 @@ async def lifespan(app: FastAPI):
     settings.workspace_dir.mkdir(parents=True, exist_ok=True)
     logger.info("%s starting (environment=%s)", settings.APP_NAME, settings.ENVIRONMENT)
     yield
+    # Never leave an orphan Chromium process behind on reload or shutdown.
+    await browser_recorder.close_all()
     logger.info("%s shutting down", settings.APP_NAME)
 
 
@@ -60,6 +67,10 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code, content={"detail": exc.message}, headers=headers
         )
+
+    # recorder.js lives here so Playwright can inject it and the web app can
+    # load it — one copy, no drift between the two paths.
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # Health lives at the root so probes don't depend on the API version.
     app.include_router(health.router)

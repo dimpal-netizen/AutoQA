@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- Self-contained page for browser-recorder tests: no frontend server needed.
+     Deliberately mixed markup so the selector engine has to fall back:
+     the email field has a data-testid, the password only has a label. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AutoQA recorder test page</title>
+  </head>
+  <body>
+    <h1 data-testid="page-title">Sign in</h1>
+
+    <form id="login">
+      <label for="email">Email address</label>
+      <input id="email" data-testid="email-input" type="email" placeholder="you@example.com" />
+
+      <label for="password">Password</label>
+      <input id="password" type="password" />
+
+      <label>
+        <input type="checkbox" data-testid="remember-me" />
+        Remember me
+      </label>
+
+      <label for="country">Country</label>
+      <select id="country" data-testid="country-select">
+        <option value="IN">India</option>
+        <option value="US">United States</option>
+        <option value="GB">United Kingdom</option>
+      </select>
+
+      <button type="button" data-testid="login-submit">Sign in</button>
+    </form>
+
+    <div data-testid="confirmation" role="status">Signed in successfully.</div>
+
+    <script>
+      // Keep the page on one document so the test is not racing a navigation.
+      document.querySelector('[data-testid="login-submit"]').addEventListener(
+        "click",
+        (event) => event.preventDefault()
+      );
+    </script>
+  </body>
+</html>

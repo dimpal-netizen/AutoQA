@@ -96,6 +96,8 @@ export interface RecordingSession {
   duration_ms: number | null;
   created_at: string;
   updated_at: string;
+  /** True while a launched browser window is still open for this session. */
+  browser_open?: boolean;
 }
 
 export interface RecordingSessionDetail extends RecordingSession {

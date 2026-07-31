@@ -150,6 +150,17 @@ export const api = {
 
     get: (id: number) => request<RecordingSessionDetail>(`/recordings/${id}`),
 
+    /** Opens `url` in a real browser with the recorder injected. */
+    launch: (projectId: number, data: { url: string; name?: string }) =>
+      request<RecordingSession>(`/projects/${projectId}/recordings/launch`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    /** Closes a launched browser and finalises the recording. */
+    close: (id: number) =>
+      request<RecordingSession>(`/recordings/${id}/close`, { method: "POST" }),
+
     remove: (id: number) =>
       request<void>(`/recordings/${id}`, { method: "DELETE" }),
   },

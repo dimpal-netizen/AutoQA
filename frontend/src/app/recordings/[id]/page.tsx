@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
 import { api } from "@/lib/api";
@@ -35,18 +35,23 @@ function RecordingDetail({ id }: { id: number }) {
   const [session, setSession] = useState<RecordingSessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setSession(await api.recordings.get(id));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load recording");
-    }
-  }, [id]);
-
   useEffect(() => {
-    void load();
-  }, [load]);
+    // `cancelled` guards against the response landing after unmount.
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await api.recordings.get(id);
+        if (!cancelled) setSession(data);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load recording");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   if (error) {
     return (

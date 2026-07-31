@@ -1,19 +1,26 @@
-/* AutoQA browser recorder — a stand-in for the Phase 9 Chrome extension.
+/* AutoQA browser recorder.
  *
- * Loading this file defines window.AutoQARecorder but does NOT start recording.
- * Drive it from the UI (see components/recorder-bar.tsx) or from the console:
+ * Runs in two modes:
  *
- *     await import("http://localhost:3000/recorder.js");
- *     await AutoQARecorder.start();          // then interact, then:
- *     await AutoQARecorder.stop();
+ * BRIDGE — the backend launches a real browser with Playwright and injects
+ *   this file into every page. Actions go back through a Playwright binding
+ *   (window.__autoqaBridge), so there is no cross-origin request and no token
+ *   in the page. This is the mode that records an arbitrary URL, and because
+ *   Playwright re-injects on every navigation, it survives page loads.
+ *
+ * FETCH — loaded by our own web app on its own origin, talking to the API
+ *   directly. Used by the demo page.
  *
  * API: start(options) · pause() · resume() · stop() · getState() · subscribe(fn)
  *
- * Not covered here (the real extension will handle these): iframes, shadow DOM,
- * and surviving a full page navigation — a page script dies on reload.
+ * Still not covered: shadow DOM, and cross-origin iframes in fetch mode.
  */
 (() => {
   if (window.AutoQARecorder) return; // already loaded
+
+  // Set by the backend via add_init_script before this file runs.
+  const bridge = window.__autoqaBridge || null;
+  const injected = window.__autoqaConfig || null;
 
   const API = window.__AUTOQA_API__ || "http://localhost:8000/api/v1";
   const AUTH_KEY = "autoqa-auth";
@@ -521,7 +528,9 @@
     if (!state?.sessionId || !state.pending.length) return;
     const batch = state.pending.splice(0, state.pending.length);
     try {
-      const result = await api(`/recordings/${state.sessionId}/actions`, { actions: batch });
+      const result = bridge
+        ? await bridge({ type: "actions", actions: batch })
+        : await api(`/recordings/${state.sessionId}/actions`, { actions: batch });
       state.uploaded = result.action_count;
       state.error = null;
       notify();
@@ -611,42 +620,61 @@
     }
     state = freshState();
     state.showPanel = options.panel !== false;
-    state.token = options.token || window.__AUTOQA_TOKEN__ || readToken();
 
-    if (!state.token) {
-      state = null;
-      throw new Error("Not signed in — open http://localhost:3000 and log in first");
+    if (bridge) {
+      // The backend already created the session and authorised it; this page
+      // never sees a token and never talks to the API directly.
+      //
+      // Ask the backend where we are rather than trusting anything baked into
+      // the injected script: this file is re-injected on every navigation, so
+      // a static sequence number would restart at 0 on the second page and
+      // collide with actions already stored.
+      const hello = await bridge({ type: "hello" });
+      state.sessionId = hello.sessionId;
+      state.sessionName = hello.sessionName;
+      state.projectId = hello.projectId;
+      state.projectName = hello.projectName;
+      state.sequence = hello.nextSequence;
+      state.uploaded = hello.actionCount;
+      state.startedAt = Date.now() - hello.elapsedMs;
+    } else {
+      state.token = options.token || window.__AUTOQA_TOKEN__ || readToken();
+      if (!state.token) {
+        state = null;
+        throw new Error("Not signed in — open http://localhost:3000 and log in first");
+      }
+
+      const projects = await api("/projects", undefined, "GET");
+      if (!projects.length) {
+        state = null;
+        throw new Error("No projects yet — create one first");
+      }
+
+      const project = projects.find((p) => p.id === options.projectId) ?? projects[0];
+      state.projectId = project.id;
+      state.projectName = project.name;
+      state.sessionName =
+        options.name?.trim() || `Recording ${new Date().toLocaleTimeString()}`;
+
+      const session = await api(`/projects/${project.id}/recordings`, {
+        name: state.sessionName,
+        start_url: location.href,
+        extension_version: "web-0.2.0",
+        browser_info: {
+          user_agent: navigator.userAgent,
+          viewport: { width: innerWidth, height: innerHeight },
+          device_pixel_ratio: devicePixelRatio,
+          platform: navigator.platform,
+        },
+      });
+      state.sessionId = session.id;
+      state.startedAt = Date.now();
     }
 
-    const projects = await api("/projects", undefined, "GET");
-    if (!projects.length) {
-      state = null;
-      throw new Error("No projects yet — create one first");
-    }
-
-    const project =
-      projects.find((p) => p.id === options.projectId) ?? projects[0];
-    state.projectId = project.id;
-    state.projectName = project.name;
-    state.sessionName =
-      options.name?.trim() || `Recording ${new Date().toLocaleTimeString()}`;
-
-    const session = await api(`/projects/${project.id}/recordings`, {
-      name: state.sessionName,
-      start_url: location.href,
-      extension_version: "web-0.2.0",
-      browser_info: {
-        user_agent: navigator.userAgent,
-        viewport: { width: innerWidth, height: innerHeight },
-        device_pixel_ratio: devicePixelRatio,
-        platform: navigator.platform,
-      },
-    });
-
-    state.sessionId = session.id;
-    state.startedAt = Date.now();
     state.status = RECORDING;
 
+    // On a fresh start this is the opening navigation. After a page load,
+    // Playwright re-injects this file, so it records where we landed.
     record("navigate", null, { url: location.href });
 
     attach();
@@ -711,9 +739,10 @@
     let session = null;
     try {
       if (wasPaused) state.pausedMs += Date.now() - state.pausedAt;
-      session = await api(`/recordings/${state.sessionId}/stop`, {
-        duration_ms: Date.now() - state.startedAt - state.pausedMs,
-      });
+      const durationMs = Date.now() - state.startedAt - state.pausedMs;
+      session = bridge
+        ? await bridge({ type: "stop", duration_ms: durationMs })
+        : await api(`/recordings/${state.sessionId}/stop`, { duration_ms: durationMs });
     } catch (error) {
       state.error = `Could not stop cleanly: ${error.message}`;
       notify();
@@ -746,4 +775,14 @@
       return () => listeners.delete(listener);
     },
   };
+
+  // In bridge mode there is no UI on the target site to press Start, and this
+  // file is re-injected on every navigation, so start as soon as the page has
+  // a <body> to attach the panel to.
+  if (bridge && injected) {
+    const begin = () =>
+      start().catch((error) => console.error("[AutoQA]", error));
+    if (document.body) begin();
+    else document.addEventListener("DOMContentLoaded", begin, { once: true });
+  }
 })();

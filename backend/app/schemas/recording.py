@@ -216,6 +216,16 @@ class RecordingSessionStop(BaseModel):
     duration_ms: int | None = Field(default=None, ge=0)
 
 
+class RecordingLaunch(BaseModel):
+    """Open a URL in a real browser and record it."""
+
+    url: HttpUrl
+    name: str | None = Field(default=None, max_length=255)
+    # Headless is only useful for automated tests — a human needs to see the
+    # window to interact with it.
+    headless: bool = False
+
+
 class RecordingSessionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -235,3 +245,9 @@ class RecordingSessionRead(BaseModel):
 
 class RecordingSessionDetail(RecordingSessionRead):
     actions: list[RecordedActionRead]
+
+
+class RecordingSessionLive(RecordingSessionRead):
+    """A session plus whether a browser window is currently open for it."""
+
+    browser_open: bool = False

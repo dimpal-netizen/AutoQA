@@ -7,8 +7,9 @@ import { api } from "@/lib/api";
 import type { RecordingSession } from "@/lib/types";
 import { AppHeader } from "@/components/app-header";
 import { RequireAuth } from "@/components/auth-provider";
+import { LaunchRecording } from "@/components/launch-recording";
 import { Button } from "@/components/ui/button";
-import { Alert, Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, Card, CardContent } from "@/components/ui/card";
 
 export default function RecordingsPage() {
   return (
@@ -36,8 +37,24 @@ function Recordings() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    // `cancelled` guards against the response landing after unmount.
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await api.recordings.list();
+        if (!cancelled) setSessions(data);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load recordings");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function remove(id: number) {
     try {
@@ -64,30 +81,7 @@ function Recordings() {
 
       {error && <Alert className="mb-4">{error}</Alert>}
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="text-base">How to record</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          <ol className="ml-4 list-decimal space-y-1">
-            <li>
-              Open the{" "}
-              <Link href="/demo" className="text-foreground underline underline-offset-4">
-                practice page
-              </Link>{" "}
-              (or any page on this origin).
-            </li>
-            <li>Open DevTools → Console.</li>
-            <li>
-              Paste{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                await import(&quot;http://localhost:3000/recorder.js&quot;)
-              </code>
-            </li>
-            <li>Click around, then press Stop on the red panel.</li>
-          </ol>
-        </CardContent>
-      </Card>
+      <LaunchRecording onChanged={load} />
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
