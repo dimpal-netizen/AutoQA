@@ -55,6 +55,47 @@
     }
   };
 
+  /* Uniqueness for the text-based strategies.
+   *
+   * These used to be hardcoded to 1 - claimed unique without ever looking -
+   * which is how a recording ends up asserting that `get_by_role("link",
+   * name="Home")` matches one element on a site with five of them. The test
+   * then dies on a strict mode violation the first time it runs, and the
+   * recording looked perfect right up until then.
+   *
+   * Playwright's real matcher walks the accessibility tree; this is an
+   * approximation of it. Being approximately right is the whole point: an
+   * over-count costs us a slightly worse selector, an under-count costs a
+   * broken test.
+   *
+   * Stops at two matches - "more than one" is the only question being asked -
+   * and caps the scan so a huge page cannot stall the recorder mid-click. */
+  const SCAN_LIMIT = 5000;
+
+  function countMatching(predicate) {
+    const all = document.querySelectorAll("*");
+    let seen = 0;
+    let found = 0;
+    for (const el of all) {
+      if (++seen > SCAN_LIMIT) break;
+      try {
+        if (predicate(el)) {
+          if (++found > 1) return found;  // two is enough to know
+        }
+      } catch {
+        /* one hostile element must not abort the count */
+      }
+    }
+    return found;
+  }
+
+  const countByRoleName = (role, name) =>
+    countMatching((el) => roleOf(el) === role && accessibleName(el) === name);
+
+  const countByText = (text) => countMatching((el) => visibleText(el) === text);
+
+  const countByLabel = (label) => countMatching((el) => labelText(el) === label);
+
   const IMPLICIT_ROLE = {
     a: (el) => (el.hasAttribute("href") ? "link" : null),
     button: () => "button",
@@ -189,10 +230,10 @@
 
     const role = roleOf(el);
     const name = accessibleName(el);
-    if (role && name) push("role_name", `${role}|${name}`, 1, 95);
+    if (role && name) push("role_name", `${role}|${name}`, countByRoleName(role, name), 95);
 
     const label = labelText(el);
-    if (label) push("label", label, 1, 90);
+    if (label) push("label", label, countByLabel(label), 90);
 
     const placeholder = el.getAttribute?.("placeholder");
     if (placeholder) {
@@ -201,7 +242,7 @@
     }
 
     const text = visibleText(el);
-    if (text && text.length <= 60) push("text", text, 1, 78);
+    if (text && text.length <= 60) push("text", text, countByText(text), 78);
 
     if (el.id && !isGeneratedId(el.id)) {
       push("css_id", `#${cssEscape(el.id)}`, countMatches(`#${cssEscape(el.id)}`), 70);
@@ -210,6 +251,8 @@
     const css = cssPath(el);
     if (css) push("css", css, countMatches(css), 55);
 
+    // These two are unique by construction - an absolute path addresses one
+    // node - so 1 here is a fact, not the assumption it was for the others.
     push("xpath", xPath(el), 1, 35);
     push("nth_child", nthChildPath(el), 1, 15);
 
@@ -769,6 +812,11 @@
     stop,
     setAssertMode: (on) => setAssertMode(on),
     getState: snapshot,
+    /* Which selectors this element would produce, and whether each is
+     * actually unique. A diagnostic hook: "why did it pick that selector"
+     * is otherwise unanswerable from outside, and uniqueness is measured
+     * here rather than guessed, so it is worth being able to check. */
+    selectorsFor: (el) => buildSelectors(el),
     subscribe(listener) {
       listeners.add(listener);
       listener(snapshot());

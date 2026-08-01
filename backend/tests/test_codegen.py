@@ -43,10 +43,14 @@ def generated(sample: dict) -> list[GeneratedFileSpec]:
     ("strategy", "value", "expected"),
     [
         ("test_id", "login-submit", "page.get_by_test_id('login-submit')"),
-        ("role_name", "button|Sign in", "page.get_by_role('button', name='Sign in')"),
+        (
+            "role_name",
+            "button|Sign in",
+            "page.get_by_role('button', name='Sign in', exact=True)",
+        ),
         ("role_name", "navigation", "page.get_by_role('navigation')"),
-        ("label", "Email address", "page.get_by_label('Email address')"),
-        ("placeholder", "you@x.com", "page.get_by_placeholder('you@x.com')"),
+        ("label", "Email address", "page.get_by_label('Email address', exact=True)"),
+        ("placeholder", "you@x.com", "page.get_by_placeholder('you@x.com', exact=True)"),
         ("text", "Sign in", "page.get_by_text('Sign in', exact=True)"),
         ("css_id", "#email", "page.locator('#email')"),
         ("css", "form input", "page.locator('form input')"),
@@ -74,6 +78,33 @@ def test_best_selector_ignores_input_order() -> None:
         {"strategy": "test_id", "value": "submit", "score": 1},
     ]
     assert best_selector(raw).strategy is SelectorStrategy.TEST_ID
+
+
+def test_text_locators_match_exactly_not_as_substrings() -> None:
+    """Regression: this is what made a real suite fail four tests at once.
+
+    Playwright matches these names as case-insensitive substrings by default.
+    The recorder saw one "Home" link and marked it unique; at run time
+    name="Home" also matched "Homes" and "Find a Home" — five elements, strict
+    mode violation, dead test.
+    """
+    for strategy, value in [
+        ("role_name", "link|Home"),
+        ("label", "Email"),
+        ("placeholder", "Search"),
+        ("text", "Submit"),
+    ]:
+        expression = locator_expression(
+            Selector(strategy=SelectorStrategy(strategy), value=value, unique=True)
+        )
+        assert "exact=True" in expression, f"{strategy} must match exactly"
+
+
+def test_a_role_without_a_name_needs_no_exact() -> None:
+    expression = locator_expression(
+        Selector(strategy=SelectorStrategy.ROLE_NAME, value="button", unique=True)
+    )
+    assert expression == "page.get_by_role('button')"
 
 
 def test_a_unique_selector_beats_a_better_ranked_ambiguous_one() -> None:

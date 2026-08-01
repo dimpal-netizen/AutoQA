@@ -86,6 +86,17 @@ def locator_expression(selector: Selector, root: str = "page") -> str:
 
 
 def _render(selector: Selector, root: str) -> str:
+    """
+    Note `exact=True` on every text-matching locator. Playwright matches these
+    names as case-insensitive SUBSTRINGS by default, which is a trap for a
+    recorder: at capture time `get_by_role("link", name="Home")` matched the
+    one link the user clicked, so it was recorded as unique — but on a site
+    with "Homes", "Home Loans" and "Find a Home" it resolves to five elements
+    at run time and the test dies on a strict mode violation.
+
+    We recorded one specific element with one specific accessible name. Exact
+    is what we actually meant.
+    """
     match selector.strategy:
         case SelectorStrategy.TEST_ID:
             return f"{root}.get_by_test_id({py_str(selector.value)})"
@@ -94,14 +105,16 @@ def _render(selector: Selector, root: str) -> str:
             # Stored as "role|accessible name".
             role, _, name = selector.value.partition("|")
             if name:
-                return f"{root}.get_by_role({py_str(role)}, name={py_str(name)})"
+                return (
+                    f"{root}.get_by_role({py_str(role)}, name={py_str(name)}, exact=True)"
+                )
             return f"{root}.get_by_role({py_str(role)})"
 
         case SelectorStrategy.LABEL:
-            return f"{root}.get_by_label({py_str(selector.value)})"
+            return f"{root}.get_by_label({py_str(selector.value)}, exact=True)"
 
         case SelectorStrategy.PLACEHOLDER:
-            return f"{root}.get_by_placeholder({py_str(selector.value)})"
+            return f"{root}.get_by_placeholder({py_str(selector.value)}, exact=True)"
 
         case SelectorStrategy.TEXT:
             return f"{root}.get_by_text({py_str(selector.value)}, exact=True)"
