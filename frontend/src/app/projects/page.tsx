@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { FolderKanban, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { BROWSER_LABEL, hasRole, type Browser, type Project } from "@/lib/types";
@@ -83,7 +84,7 @@ function ProjectsView() {
     <div className="animate-in">
       <PageHeader
         title="Projects"
-        description="Each project is one web application you want to test."
+        description="Pick a project to record and run its tests. Each project is one web application."
       >
         {canCreate && (
           <Button onClick={() => setShowForm((v) => !v)}>
@@ -131,7 +132,13 @@ function ProjectCard({
   onDelete: () => void;
 }) {
   return (
-    <Card className="group transition-all hover:border-border-strong hover:shadow-md">
+    <Card className="group relative transition-all hover:border-border-strong hover:shadow-md">
+      {/* The whole card opens the project; the delete button sits above it. */}
+      <Link
+        href={`/projects/${project.id}`}
+        className="absolute inset-0 rounded-lg"
+        aria-label={`Open ${project.name}`}
+      />
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -145,7 +152,7 @@ function ProjectCard({
             size="icon"
             aria-label={`Delete ${project.name}`}
             onClick={onDelete}
-            className="opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+            className="relative opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
           >
             <Trash2 />
           </Button>

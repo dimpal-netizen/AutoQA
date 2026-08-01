@@ -20,9 +20,17 @@ import {
  *
  *  The recorder cannot be injected across origins from this page, so the
  *  backend launches Chromium with Playwright and injects it from outside. */
-export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
+export function LaunchRecording({
+  onChanged,
+  project,
+}: {
+  onChanged: () => void;
+  /** When recording from inside a project, the project is context rather than
+   *  a choice — asking again is a question with one answer. */
+  project?: Project;
+}) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState<number | null>(null);
+  const [projectId, setProjectId] = useState<number | null>(project?.id ?? null);
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [live, setLive] = useState<RecordingSession | null>(null);
@@ -30,18 +38,30 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.projects
-      .list()
-      .then((list) => {
+    let cancelled = false;
+    void (async () => {
+      if (project) {
+        // Given a project there is nothing to fetch and nothing to pick; just
+        // pre-fill the URL, which is nearly always what you want to record.
+        if (!cancelled) setUrl((current) => current || project.base_url || "");
+        return;
+      }
+      try {
+        const list = await api.projects.list();
+        if (cancelled) return;
         setProjects(list);
         setProjectId((current) => current ?? list[0]?.id ?? null);
-        // Pre-fill with the project's own URL — usually what you want to record.
         setUrl((current) => current || (list[0]?.base_url ?? ""));
-      })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Could not load projects"),
-      );
-  }, []);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load projects");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
 
   // While a window is open, poll so the action count ticks up here too, and so
   // we notice the user closing the browser window directly.
@@ -147,22 +167,24 @@ export function LaunchRecording({ onChanged }: { onChanged: () => void }) {
             void start();
           }}
         >
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="launch-project">Project</Label>
-            <Select
-              id="launch-project"
-              value={projectId ?? ""}
-              onChange={(e) => setProjectId(Number(e.target.value))}
-              className="min-w-40"
-            >
-              {projects.length === 0 && <option value="">No projects</option>}
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
-          </div>
+          {!project && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="launch-project">Project</Label>
+              <Select
+                id="launch-project"
+                value={projectId ?? ""}
+                onChange={(e) => setProjectId(Number(e.target.value))}
+                className="min-w-40"
+              >
+                {projects.length === 0 && <option value="">No projects</option>}
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
 
           <div className="flex min-w-64 flex-1 flex-col gap-1.5">
             <Label htmlFor="launch-url">URL to record</Label>
