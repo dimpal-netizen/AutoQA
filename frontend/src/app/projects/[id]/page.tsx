@@ -10,7 +10,7 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Video } from "lucide-react";
+import { ArrowLeft, ExternalLink, Video } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Project, TestRun, TestSuite, TestSuiteDetail } from "@/lib/types";
 import { AppShell } from "@/components/app-shell";
@@ -97,32 +97,53 @@ function ProjectWorkspace({ id }: { id: number }) {
   if (!project) return <Alert>{error ?? "Project not found"}</Alert>;
 
   return (
-    <div className="animate-in flex flex-col gap-4">
-      <Link
-        href="/projects"
-        className="inline-flex w-fit items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" />
-        All projects
-      </Link>
+    <div className="animate-in flex flex-col gap-5">
+      {/* One banded header instead of two stacked ones.
+          The project title and the suite title were both set large and sat
+          directly on top of each other, so the eye could not tell which was
+          the subject of the page. The project is now the breadcrumb it always
+          was, inside a tinted panel that separates the identity of this page
+          from its contents. */}
+      <header className="relative overflow-hidden rounded-2xl border border-border bg-card px-6 py-6 shadow-xs sm:px-8">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(120deg, var(--primary-subtle) 0%, transparent 62%)",
+          }}
+        />
 
-      {/* Sized and weighted like every other page title, and given room below —
-          it used to sit at text-xl directly against the suite header, so the
-          two read as one confused block. */}
-      <header className="flex flex-wrap items-center gap-3 border-b border-border pb-5">
-        <div className="min-w-0">
-          <h1 className="truncate text-[30px] font-extrabold leading-tight tracking-tight">
-            {project.name}
-          </h1>
-          <p className="mt-1 truncate text-sm text-muted-foreground">
-            {project.base_url}
-          </p>
+        <div className="relative flex flex-wrap items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <Link
+              href="/projects"
+              className="inline-flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-primary"
+            >
+              <ArrowLeft className="size-3.5" />
+              All projects
+            </Link>
+
+            <h1 className="mt-3 truncate text-[30px] font-extrabold leading-tight tracking-tight">
+              {project.name}
+            </h1>
+
+            <a
+              href={project.base_url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="mt-1.5 inline-flex max-w-full items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-primary"
+            >
+              <span className="truncate">{project.base_url}</span>
+              <ExternalLink className="size-3.5 shrink-0" />
+            </a>
+          </div>
+
+          <Button size="lg" onClick={() => setRecording((v) => !v)}>
+            <Video />
+            {recording ? "Close" : "Record a session"}
+          </Button>
         </div>
-
-        <Button className="ml-auto" onClick={() => setRecording((v) => !v)}>
-          <Video />
-          {recording ? "Close" : "Record a session"}
-        </Button>
       </header>
 
       {error && <Alert>{error}</Alert>}

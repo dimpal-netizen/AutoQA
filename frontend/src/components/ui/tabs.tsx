@@ -28,10 +28,17 @@ export function Tabs({
   onChange: (id: string) => void;
   className?: string;
 }) {
+  /* A segmented control rather than an underline. The underline version drew a
+     full-width rule across the page, which read as a section divider and cut
+     the tabs off from the panel they belong to. A pill group is self-contained
+     and matches the shape language everything else now uses. */
   return (
     <div
       role="tablist"
-      className={cn("flex items-center gap-1 border-b border-border", className)}
+      className={cn(
+        "inline-flex flex-wrap items-center gap-1 rounded-full border border-border bg-muted/60 p-1",
+        className,
+      )}
     >
       {tabs.map((tab) => {
         const selected = tab.id === active;
@@ -43,10 +50,10 @@ export function Tabs({
             type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
-              "relative flex items-center gap-2 px-3.5 py-2.5 text-sm font-medium transition-colors",
+              "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-all",
               "[&_svg]:size-4",
               selected
-                ? "text-foreground"
+                ? "bg-card text-primary shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -55,19 +62,14 @@ export function Tabs({
             {tab.count !== undefined && (
               <span
                 className={cn(
-                  "tabular rounded-full px-1.5 py-0.5 text-[11px] font-medium",
+                  "tabular rounded-full px-1.5 py-0.5 text-[11px] font-bold",
                   selected
                     ? "bg-primary-subtle text-primary"
-                    : "bg-muted text-muted-foreground",
+                    : "bg-card text-muted-foreground",
                 )}
               >
                 {tab.count}
               </span>
-            )}
-            {/* Sits on the container's border so the active tab joins the
-                panel below it rather than floating above a line. */}
-            {selected && (
-              <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-primary" />
             )}
           </button>
         );

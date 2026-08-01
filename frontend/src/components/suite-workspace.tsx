@@ -42,7 +42,6 @@ import { ScriptLocation } from "@/components/script-location";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/card";
-import { Stat, StatRow } from "@/components/ui/stat";
 import { Tabs } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -114,9 +113,11 @@ export function SuiteWorkspace({
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold">{suite.name}</h2>
+          <h2 className="truncate text-xl font-extrabold tracking-tight">
+            {suite.name}
+          </h2>
           {suite.description && (
-            <p className="mt-0.5 text-[13px] text-muted-foreground">
+            <p className="mt-1 text-[13px] text-muted-foreground">
               {suite.description}
             </p>
           )}
@@ -143,14 +144,17 @@ export function SuiteWorkspace({
         )}
       </div>
 
-      <StatRow>
-        <Stat
+      {/* One banded row of figures rather than four separate boxes. Four
+          equally-weighted cards is four things shouting at the same volume;
+          hairline dividers group them as one reading instead. */}
+      <div className="sheen grid grid-cols-2 divide-border rounded-xl border border-border bg-card sm:divide-x lg:grid-cols-4">
+        <Figure
           label="Test cases"
           value={suite.cases.length}
           hint={generated ? `1 recorded · ${generated} generated` : "from your recording"}
         />
-        <Stat label="Steps" value={steps.length} hint="across every case" />
-        <Stat
+        <Figure label="Steps" value={steps.length} hint="across every case" />
+        <Figure
           label="Last run"
           value={lastRun ? `${lastRun.passed}/${lastRun.total}` : "—"}
           tone={
@@ -166,13 +170,13 @@ export function SuiteWorkspace({
               : "not run yet"
           }
         />
-        <Stat
+        <Figure
           label="Fragile steps"
           value={fragile.length}
           tone={fragile.length ? "warning" : "success"}
           hint={fragile.length ? "may break on a UI change" : "all reliable selectors"}
         />
-      </StatRow>
+      </div>
 
       {error && <Alert>{error}</Alert>}
 
@@ -232,6 +236,43 @@ export function SuiteWorkspace({
         </div>
       </div>
     </section>
+  );
+}
+
+/** One figure in the banded row. Blue by default, like the reference's stat
+ *  strip — the status colours are kept for the two figures that carry a
+ *  verdict, so a colour here always means something. */
+function Figure({
+  label,
+  value,
+  hint,
+  tone = "default",
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+  tone?: "default" | "success" | "danger" | "warning" | "muted";
+}) {
+  const colour = {
+    default: "text-primary",
+    success: "text-success",
+    danger: "text-destructive",
+    warning: "text-warning",
+    muted: "text-muted-foreground",
+  }[tone];
+
+  return (
+    <div className="px-5 py-4">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className={cn("mt-1.5 text-3xl font-extrabold leading-none tracking-tight", colour)}>
+        {value}
+      </p>
+      {hint && (
+        <p className="mt-1.5 truncate text-xs text-muted-foreground">{hint}</p>
+      )}
+    </div>
   );
 }
 
