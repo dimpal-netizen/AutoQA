@@ -13,6 +13,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   FolderKanban,
+  LayoutDashboard,
   LogOut,
   Menu,
   Radar,
@@ -29,6 +30,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 // In the order the work happens: pick a project, then everything else lives
 // inside it. Recordings is a flat history across all projects.
 const NAV = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/recordings", label: "Recordings", icon: Video },
 ];
@@ -147,7 +149,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 function Wordmark() {
   return (
-    <Link href="/projects" className="flex items-center gap-2.5">
+    <Link href="/dashboard" className="flex items-center gap-2.5">
       <span className="brand-gradient lit flex size-8 items-center justify-center rounded-lg text-white">
         <Radar className="size-[17px]" />
       </span>

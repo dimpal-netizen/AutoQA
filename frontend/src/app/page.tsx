@@ -16,7 +16,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!hydrated) return;
-    router.replace(accessToken ? "/projects" : "/login");
+    router.replace(accessToken ? "/dashboard" : "/login");
   }, [hydrated, accessToken, router]);
 
   return <FullPageMessage>Loading AutoQA…</FullPageMessage>;

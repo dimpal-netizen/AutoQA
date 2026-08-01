@@ -49,7 +49,7 @@ export default function RegisterPage() {
           role,
         }),
       );
-      router.replace("/");
+      router.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create account");
     } finally {
