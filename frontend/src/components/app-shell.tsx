@@ -14,7 +14,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   FlaskConical,
   FolderKanban,
-  LayoutDashboard,
   LogOut,
   Menu,
   Radar,
@@ -26,14 +25,22 @@ import { ROLE_LABEL } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 
+// Three entries, in the order you use them. "Tests" is the workspace and the
+// place work actually happens; the other two are things you set up once.
 const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/projects", label: "Projects", icon: FolderKanban },
+  { href: "/", label: "Tests", icon: FlaskConical },
   { href: "/recordings", label: "Recordings", icon: Video },
-  { href: "/suites", label: "Tests", icon: FlaskConical },
+  { href: "/projects", label: "Projects", icon: FolderKanban },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  wide = false,
+}: {
+  children: React.ReactNode;
+  /** The workspace needs the room; a form page does not. */
+  wide?: boolean;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -54,7 +61,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <div className="lg:pl-[248px]">
-        <main className="mx-auto w-full max-w-6xl px-5 py-8 sm:px-8 lg:py-10">
+        <main
+          className={cn(
+            "mx-auto w-full px-5 py-8 sm:px-8 lg:py-10",
+            wide ? "max-w-[100rem]" : "max-w-6xl",
+          )}
+        >
           {children}
         </main>
       </div>

@@ -1,211 +1,241 @@
 "use client";
 
-/** Overview: what state your testing is in, and what to do next.
+/** The workspace: everything you do, on one screen.
  *
- *  This replaced a redirect straight to Projects, which dropped you into a
- *  list with no indication that recording came next, then generating, then
- *  running. The pipeline is the product; the pages are just where its parts
- *  live.
+ *  This replaced four pages — Projects, Recordings, Tests, and a suite detail
+ *  page — that were peers in the navigation but steps in a single loop. The
+ *  loop is: record something, read the tests, run them, read the failures. Any
+ *  of that costing a page load meant losing your place in it.
+ *
+ *  So: suites down the left, the selected one filling the rest, recording as a
+ *  button rather than a destination. Projects still exist — they are just not
+ *  something you visit to get work done.
  */
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import {
-  ArrowRight,
+  ChevronRight,
   FlaskConical,
   FolderKanban,
-  Play,
+  RefreshCw,
   Video,
 } from "lucide-react";
+import Link from "next/link";
 import { api } from "@/lib/api";
-import {
-  RUN_BADGE,
-  formatDuration,
-  type Project,
-  type RecordingSession,
-  type TestRun,
-  type TestSuite,
-} from "@/lib/types";
-import { useAuthStore } from "@/stores/auth-store";
+import type { TestSuite, TestSuiteDetail } from "@/lib/types";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
-import { Pipeline, type Step } from "@/components/pipeline";
-import { Badge } from "@/components/ui/badge";
+import { LaunchRecording } from "@/components/launch-recording";
+import { SuiteWorkspace } from "@/components/suite-workspace";
 import { Button } from "@/components/ui/button";
-import { Card, PageHeader } from "@/components/ui/card";
-import { SkeletonRows } from "@/components/ui/skeleton";
+import { Alert, EmptyState } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
-export default function HomePage() {
+export default function WorkspacePage() {
   return (
     <RequireAuth>
-      <AppShell>
-        <Overview />
+      <AppShell wide>
+        <Workspace />
       </AppShell>
     </RequireAuth>
   );
 }
 
-function Overview() {
-  const user = useAuthStore((s) => s.user);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [recordings, setRecordings] = useState<RecordingSession[]>([]);
+function Workspace() {
   const [suites, setSuites] = useState<TestSuite[]>([]);
-  const [runs, setRuns] = useState<TestRun[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [detail, setDetail] = useState<TestSuiteDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadSuites = useCallback(async () => {
+    try {
+      const list = await api.suites.list();
+      setSuites(list);
+      // Default to the newest suite: it is almost always the one you just
+      // made, and an empty right-hand pane teaches nobody anything.
+      setSelected((current) => current ?? list[0]?.id ?? null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load your tests");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      // One shot for everything the overview needs. A failure falls back to an
-      // empty list rather than blanking the page: a missing run history is no
-      // reason to hide the pipeline.
-      const [p, r, s, ru] = await Promise.all([
-        api.projects.list().catch(() => [] as Project[]),
-        api.recordings.list().catch(() => [] as RecordingSession[]),
-        api.suites.list().catch(() => [] as TestSuite[]),
-        api.runs.list().catch(() => [] as TestRun[]),
-      ]);
-      if (cancelled) return;
-      setProjects(p);
-      setRecordings(r);
-      setSuites(s);
-      setRuns(ru);
-      setLoading(false);
+      try {
+        const list = await api.suites.list();
+        if (cancelled) return;
+        setSuites(list);
+        setSelected((current) => current ?? list[0]?.id ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load your tests");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (loading) return <SkeletonRows count={3} />;
+  useEffect(() => {
+    if (selected === null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const found = await api.suites.get(selected);
+        if (!cancelled) setDetail(found);
+      } catch {
+        /* keep what is on screen; the id check below hides a stale one */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
 
-  const latestSuite = suites[0];
-  const firstName = (user?.full_name || user?.email || "").split(/[\s@]/)[0];
-
-  const steps: Step[] = [
-    {
-      id: "project",
-      label: "1 · Add a project",
-      detail: "The web application you want to test.",
-      icon: <FolderKanban />,
-      href: "/projects",
-      done: projects.length > 0,
-    },
-    {
-      id: "record",
-      label: "2 · Record a session",
-      detail: "A browser opens; use the site normally.",
-      icon: <Video />,
-      href: "/recordings",
-      done: recordings.length > 0,
-    },
-    {
-      id: "tests",
-      label: "3 · Review the tests",
-      detail: "Written for you the moment you stop.",
-      icon: <FlaskConical />,
-      href: latestSuite ? `/suites/${latestSuite.id}` : "/suites",
-      done: suites.length > 0,
-    },
-    {
-      id: "run",
-      label: "4 · Run them",
-      detail: "Chrome, Firefox and Safari at once.",
-      icon: <Play />,
-      href: latestSuite ? `/suites/${latestSuite.id}` : "/suites",
-      done: runs.length > 0,
-    },
-  ];
+  // Derived rather than cleared in the effect: while a new suite is loading,
+  // the previous one is still in state, and showing it under the wrong name
+  // would be worse than a moment of skeleton.
+  const current = detail && detail.id === selected ? detail : null;
 
   return (
-    <div className="animate-in">
-      <PageHeader
-        title={firstName ? `Hello, ${firstName}` : "Overview"}
-        description="Record what a tester would do, and AutoQA writes and runs the tests."
-      >
-        <Link href="/recordings">
-          <Button>
+    <div className="animate-in flex flex-col gap-4">
+      <header className="flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold">Tests</h1>
+        <span className="tabular text-sm text-muted-foreground">
+          {suites.length} suite{suites.length === 1 ? "" : "s"}
+        </span>
+
+        <div className="ml-auto flex items-center gap-2">
+          <Link href="/projects">
+            <Button variant="ghost" size="sm">
+              <FolderKanban />
+              Projects
+            </Button>
+          </Link>
+          <Button size="sm" onClick={() => setRecording((v) => !v)}>
             <Video />
-            Record a session
+            {recording ? "Close" : "Record a session"}
           </Button>
-        </Link>
-      </PageHeader>
+        </div>
+      </header>
 
-      <Pipeline steps={steps} />
+      {error && <Alert>{error}</Alert>}
 
-      <div className="mt-8 grid gap-4 lg:grid-cols-2">
-        <RecentSuites suites={suites} />
-        <RecentRuns runs={runs} />
-      </div>
+      {/* Recording is a panel that drops in here rather than its own page, so
+          starting one never costs you the suite you were looking at. */}
+      {recording && (
+        <LaunchRecording
+          onChanged={() => {
+            void loadSuites();
+          }}
+        />
+      )}
+
+      {loading ? (
+        <Skeleton className="h-96 w-full" />
+      ) : suites.length === 0 ? (
+        <EmptyState
+          icon={<FlaskConical />}
+          title="No tests yet"
+          description="Record a session and AutoQA writes a runnable test the moment you stop."
+          action={
+            <Button onClick={() => setRecording(true)}>
+              <Video />
+              Record a session
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
+          <SuiteList
+            suites={suites}
+            selected={selected}
+            onSelect={setSelected}
+            onRefresh={() => void loadSuites()}
+          />
+
+          {current ? (
+            <SuiteWorkspace suite={current} onChange={setDetail} />
+          ) : (
+            <Skeleton className="h-96 w-full" />
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function RecentSuites({ suites }: { suites: TestSuite[] }) {
+function SuiteList({
+  suites,
+  selected,
+  onSelect,
+  onRefresh,
+}: {
+  suites: TestSuite[];
+  selected: number | null;
+  onSelect: (id: number) => void;
+  onRefresh: () => void;
+}) {
   return (
-    <section>
-      <h2 className="mb-2.5 text-sm font-semibold">Your tests</h2>
-      {suites.length === 0 ? (
-        <Card className="px-4 py-6 text-center text-[13px] text-muted-foreground">
-          Nothing yet — record a session and a suite appears here.
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {suites.slice(0, 4).map((suite) => (
-            <Link key={suite.id} href={`/suites/${suite.id}`} className="group">
-              <Card className="flex items-center gap-3 px-4 py-3 transition-all hover:border-border-strong hover:shadow-md">
-                <FlaskConical className="size-4 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                  {suite.name}
-                </span>
-                <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
+    <aside className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between px-1 pb-1">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Suites
+        </span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          aria-label="Refresh"
+        >
+          <RefreshCw className="size-3.5" />
+        </button>
+      </div>
 
-function RecentRuns({ runs }: { runs: TestRun[] }) {
-  return (
-    <section>
-      <h2 className="mb-2.5 text-sm font-semibold">Recent runs</h2>
-      {runs.length === 0 ? (
-        <Card className="px-4 py-6 text-center text-[13px] text-muted-foreground">
-          No runs yet. Open a suite and press Run tests.
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {runs.slice(0, 4).map((run) => (
-            <Link
-              key={run.id}
-              href={run.suite_id ? `/suites/${run.suite_id}` : "/suites"}
-              className="group"
-            >
-              <Card className="flex items-center gap-3 px-4 py-3 transition-all hover:border-border-strong hover:shadow-md">
-                <Badge tone={RUN_BADGE[run.status]}>{run.status}</Badge>
-                <span className="tabular text-[13px]">
-                  <span className="font-medium text-success">{run.passed}</span>
-                  {run.failed > 0 && (
-                    <>
-                      {" / "}
-                      <span className="font-medium text-destructive">
-                        {run.failed}
-                      </span>
-                    </>
-                  )}
-                  <span className="text-muted-foreground"> of {run.total}</span>
-                </span>
-                <span className="tabular ml-auto text-xs text-muted-foreground">
-                  {formatDuration(run.duration_ms)}
-                </span>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
-    </section>
+      {suites.map((suite) => {
+        const active = suite.id === selected;
+        return (
+          <button
+            key={suite.id}
+            type="button"
+            onClick={() => onSelect(suite.id)}
+            className={cn(
+              "group flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-left transition-all",
+              active
+                ? "lit border-primary/35 bg-card ring-1 ring-primary/20"
+                : "border-transparent hover:border-border hover:bg-card/70",
+            )}
+          >
+            <FlaskConical
+              className={cn(
+                "size-4 shrink-0",
+                active ? "text-primary" : "text-muted-foreground",
+              )}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-medium">
+                {suite.name}
+              </span>
+            </span>
+            <ChevronRight
+              className={cn(
+                "size-3.5 shrink-0 transition-opacity",
+                active ? "text-primary" : "text-muted-foreground opacity-0 group-hover:opacity-100",
+              )}
+            />
+          </button>
+        );
+      })}
+    </aside>
   );
 }

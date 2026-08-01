@@ -15,27 +15,27 @@
    - The accent is a gradient, not a colour. One flat indigo across every
      button is what makes an interface read as a default template. */
 :root[data-theme="dark"] {
-  --background: #16150f;
-  --surface: #1c1a13;
-  --card: #22201a;
-  --card-elevated: #2a2721;
-  --card-foreground: #f0ece3;
-  --foreground: #f0ece3;
+  --background: #080b14;
+  --surface: #0d1120;
+  --card: #141a2b;
+  --card-elevated: #1a2136;
+  --card-foreground: #e8ecf6;
+  --foreground: #e8ecf6;
 
-  --primary: #2dd4bf;
-  --primary-hover: #5eead4;
-  --primary-foreground: #10312d;
-  --primary-subtle: #10312d;
-  --primary-glow: rgb(45 212 191 / 0.30);
+  --primary: #818cf8;
+  --primary-hover: #a5b4fc;
+  --primary-foreground: #10132b;
+  --primary-subtle: #1e2149;
+  --primary-glow: rgb(129 140 248 / 0.35);
 
-  --secondary: #2c2921;
-  --secondary-foreground: #f0ece3;
+  --secondary: #1e2740;
+  --secondary-foreground: #e8ecf6;
 
-  --muted: #24211a;
-  --muted-foreground: #a49a89;
+  --muted: #171e30;
+  --muted-foreground: #8b97b4;
 
-  --accent: #2c2921;
-  --accent-foreground: #f0ece3;
+  --accent: #1e2740;
+  --accent-foreground: #e8ecf6;
 
   --destructive: #f2707a;
   --destructive-foreground: #ffffff;
@@ -47,10 +47,10 @@
   --warning: #fbbf24;
   --warning-subtle: #2a2109;
 
-  --border: #333027;
-  --border-strong: #4a4539;
-  --input: #383429;
-  --ring: #2dd4bf;
+  --border: #232c45;
+  --border-strong: #35415f;
+  --input: #2a3453;
+  --ring: #818cf8;
 
   --radius: 0.75rem;
 
@@ -68,64 +68,59 @@
 
 :root,
 :root[data-theme="light"] {
-  /* Warm stone, not grey, and certainly not white.
-     Two choices worth naming, because they are what stops this looking like
-     every other admin panel:
+  /* Cool blue-slate. Third attempt, and the reasoning is subtractive: white
+     had no depth, warm stone read as a document rather than a tool. This is
+     unmistakably tinted — you can tell it is blue, not "off-white" — with
+     enough contrast between surface and card that the hierarchy needs no
+     shadow to be legible.
 
-     - The neutrals are warm. A page built on cool grey plus indigo is the
-       default of every SaaS starter; shifting the base a few degrees towards
-       paper makes white cards read as objects sitting on a surface instead of
-       slightly different rectangles.
-     - The accent is deep teal, used sparingly. It carries enough contrast to
-       be a real signal against warm neutrals, and it leaves red and amber free
-       to mean failure and warning without competing with the brand. */
-  --background: #e6e1d7;
-  --surface: #ddd7cb;
-  /* Warm ivory, NOT white. #fffdfa is white in all but name — the cards have
-     to carry the warmth too, or the theme stops at the page behind them and
-     the whole thing still reads as white boxes on a tinted background. */
-  --card: #f7f3ea;
-  --card-elevated: #fbf8f2;
-  --card-foreground: #1c1917;
-  --foreground: #1c1917;
+     The accent is vivid indigo, and it is the only saturated colour in the
+     interface apart from status. Everything else is one hue at different
+     lightnesses, which is what makes a palette read as chosen. */
+  --background: #dfe4ee;
+  --surface: #d3daea;
+  --card: #f7f9fd;
+  --card-elevated: #ffffff;
+  --card-foreground: #0d1526;
+  --foreground: #0d1526;
 
-  --primary: #0d7a6f;
-  --primary-hover: #0a635a;
+  --primary: #4338ca;
+  --primary-hover: #3730a3;
   --primary-foreground: #ffffff;
-  --primary-subtle: #d5ebe7;
-  --primary-glow: rgb(13 122 111 / 0.28);
+  --primary-subtle: #e0e2fb;
+  --primary-glow: rgb(67 56 202 / 0.30);
 
-  --secondary: #e2dcd0;
-  --secondary-foreground: #292524;
+  --secondary: #e3e8f3;
+  --secondary-foreground: #1e293b;
 
-  --muted: #efeae0;
-  --muted-foreground: #6b6459;
+  --muted: #eef1f8;
+  --muted-foreground: #55617a;
 
-  --accent: #e5dfd3;
-  --accent-foreground: #292524;
+  --accent: #e3e8f3;
+  --accent-foreground: #1e293b;
 
-  --destructive: #c2410c;
+  --destructive: #d92d20;
   --destructive-foreground: #ffffff;
-  --destructive-subtle: #f9e9df;
+  --destructive-subtle: #fde9e7;
 
-  --success: #15803d;
-  --success-subtle: #e3f1e6;
+  --success: #067647;
+  --success-subtle: #e3f6ec;
 
-  --warning: #b45309;
-  --warning-subtle: #f9eeda;
+  --warning: #b54708;
+  --warning-subtle: #fdf0e0;
 
-  --border: #d5cec0;
-  --border-strong: #bcb2a0;
-  --input: #cfc7b7;
-  --ring: #0d7a6f;
+  --border: #c9d2e4;
+  --border-strong: #a9b6d0;
+  --input: #bfcadf;
+  --ring: #4338ca;
 
-  --shadow-xs: 0 1px 2px 0 rgb(60 50 35 / 0.05);
-  --shadow-sm: 0 1px 3px 0 rgb(60 50 35 / 0.08), 0 1px 2px -1px rgb(60 50 35 / 0.05);
-  --shadow-md: 0 8px 16px -4px rgb(60 50 35 / 0.10), 0 3px 6px -3px rgb(60 50 35 / 0.06);
-  --shadow-lg: 0 20px 32px -8px rgb(60 50 35 / 0.13), 0 6px 12px -6px rgb(60 50 35 / 0.07);
+  --shadow-xs: 0 1px 2px 0 rgb(13 21 38 / 0.06);
+  --shadow-sm: 0 1px 3px 0 rgb(13 21 38 / 0.10), 0 1px 2px -1px rgb(13 21 38 / 0.06);
+  --shadow-md: 0 10px 18px -6px rgb(13 21 38 / 0.14), 0 3px 6px -3px rgb(13 21 38 / 0.08);
+  --shadow-lg: 0 24px 38px -10px rgb(13 21 38 / 0.18), 0 8px 14px -8px rgb(13 21 38 / 0.10);
 
-  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.7);
-  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.35), transparent 45%);
+  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.85);
+  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.5), transparent 45%);
 }
 
 @theme inline {
@@ -192,7 +187,7 @@ body::before {
   pointer-events: none;
   background:
     radial-gradient(55rem 38rem at 12% -8%, var(--primary-subtle), transparent 62%),
-    radial-gradient(45rem 30rem at 100% 4%, var(--warning-subtle), transparent 58%);
+    radial-gradient(45rem 30rem at 100% 2%, var(--secondary), transparent 55%);
   opacity: 0.85;
 }
 
@@ -223,7 +218,7 @@ h1, h2, h3 {
 /* The brand gradient. One accent used deliberately in a few places beats an
    evenly coloured interface. */
 .brand-gradient {
-  background-image: linear-gradient(135deg, #0d7a6f 0%, #11998e 45%, #2dd4bf 100%);
+  background-image: linear-gradient(135deg, #4338ca 0%, #6366f1 45%, #818cf8 100%);
 }
 
 .brand-text {

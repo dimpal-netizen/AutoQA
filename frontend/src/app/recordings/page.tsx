@@ -119,7 +119,7 @@ function Recordings() {
                 <StatusBadge status={session.status} />
 
                 {session.suite_id && (
-                  <Link href={`/suites/${session.suite_id}`}>
+                  <Link href={`/?suite=${session.suite_id}`}>
                     <Button variant="outline" size="sm">
                       <FlaskConical />
                       Tests
