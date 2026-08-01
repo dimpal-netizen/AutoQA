@@ -64,6 +64,12 @@
      painted. */
   --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.05);
   --sheen: none;
+
+  --sidebar: #101024;
+  --sidebar-foreground: #e9eaf2;
+  --sidebar-muted: #8b8fa8;
+  --sidebar-border: #222240;
+  --sidebar-active: #2a1f56;
 }
 
 :root,
@@ -119,6 +125,16 @@
 
   --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
   --sheen: none;
+
+  /* The sidebar is dark even in the light theme. That contrast — a dark rail
+     against white content — is the single strongest signature of this layout,
+     and it is why the sidebar needs its own tokens rather than reusing the
+     page surface. */
+  --sidebar: #14142b;
+  --sidebar-foreground: #e9eaf2;
+  --sidebar-muted: #8b8fa8;
+  --sidebar-border: #262647;
+  --sidebar-active: #241b4d;
 }
 
 @theme inline {
@@ -145,6 +161,11 @@
   --color-success-subtle: var(--success-subtle);
   --color-warning: var(--warning);
   --color-warning-subtle: var(--warning-subtle);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-active: var(--sidebar-active);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-input: var(--input);

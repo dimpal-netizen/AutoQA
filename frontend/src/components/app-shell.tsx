@@ -90,10 +90,8 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[248px] flex-col border-r border-border",
-          // A shade darker than the page, so the sidebar reads as a fixed
-          // frame the content scrolls inside rather than another panel.
-          "bg-surface/80 backdrop-blur-xl",
+          "fixed inset-y-0 left-0 z-50 flex w-[248px] flex-col",
+          "border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
           "transition-transform duration-200 lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
@@ -103,7 +101,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent lg:hidden"
+            className="rounded-md p-1 text-sidebar-muted hover:bg-white/10 lg:hidden"
             aria-label="Close navigation"
           >
             <X className="size-4" />
@@ -124,8 +122,8 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
                 className={cn(
                   "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   active
-                    ? "lit bg-primary-subtle text-primary"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    ? "bg-sidebar-active text-white"
+                    : "text-sidebar-muted hover:bg-white/5 hover:text-sidebar-foreground",
                 )}
               >
                 {/* A rail on the active item, so the current page is legible
@@ -154,8 +152,8 @@ function Wordmark() {
         <Radar className="size-[17px]" />
       </span>
       <span className="flex flex-col leading-none">
-        <span className="brand-text text-[15px] font-semibold tracking-tight">AutoQA</span>
-        <span className="mt-1 text-[11px] text-muted-foreground">
+        <span className="text-[15px] font-semibold tracking-tight text-white">AutoQA</span>
+        <span className="mt-1 text-[11px] text-sidebar-muted">
           Test automation
         </span>
       </span>
@@ -179,14 +177,14 @@ function UserCard() {
     .join("");
 
   return (
-    <div className="border-t border-border p-3">
+    <div className="border-t border-sidebar-border p-3">
       <div className="flex items-center gap-3 rounded-md px-2 py-2">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold text-secondary-foreground">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-sidebar-foreground">
           {initials}
         </span>
         <span className="min-w-0 flex-1 leading-tight">
           <span className="block truncate text-[13px] font-medium">{name}</span>
-          <span className="block text-[11px] text-muted-foreground">
+          <span className="block text-[11px] text-sidebar-muted">
             {ROLE_LABEL[user.role]}
           </span>
         </span>
@@ -197,7 +195,7 @@ function UserCard() {
             logout();
             router.replace("/login");
           }}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="rounded-md p-1.5 text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-foreground"
           title="Sign out"
           aria-label="Sign out"
         >
