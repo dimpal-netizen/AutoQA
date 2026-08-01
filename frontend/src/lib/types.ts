@@ -340,6 +340,31 @@ export const RUN_BADGE: Record<RunStatus, Tone> = {
   error: "warning",
 };
 
+/** "4m ago" / "yesterday" / "12 Jul" — when something happened, at the
+ *  precision that is actually useful. Nothing older than a week gets a fuzzy
+ *  label, because "3 weeks ago" is harder to reason about than a date. */
+export function formatRelative(iso: string | null): string {
+  if (!iso) return "—";
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "—";
+
+  const seconds = Math.round((Date.now() - then.getTime()) / 1000);
+  if (seconds < 45) return "just now";
+  if (seconds < 90) return "a minute ago";
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  if (hours < 48) return "yesterday";
+
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+
+  return then.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
 /** "1.8s" / "2m 04s" — durations in a table need to be scannable. */
 export function formatDuration(ms: number | null): string {
   if (ms === null || ms < 0) return "-";

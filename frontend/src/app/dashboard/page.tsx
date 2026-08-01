@@ -20,8 +20,10 @@ import {
 import { api } from "@/lib/api";
 import {
   BROWSER_LABEL,
-  RUN_BADGE,
+  RESULT_BADGE,
+  formatRelative,
   type Browser,
+  type ResultStatus,
   type Project,
   type TestResult,
   type TestRun,
@@ -88,7 +90,20 @@ function Dashboard() {
               .catch(() => [] as Failure[]),
           ),
         );
-        if (!cancelled) setFailures(detailed.flat().slice(0, 8));
+
+        // One row per broken test, not one per time it broke. A test that
+        // failed in the last three runs is one thing to fix; listing it three
+        // times inflates the count and buries whatever is below it. Runs
+        // arrive newest first, so the first sighting is the newest.
+        const seen = new Set<string>();
+        const unique = detailed.flat().filter(({ result }) => {
+          const key = `${result.case_name}|${result.browser}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+        if (!cancelled) setFailures(unique.slice(0, 8));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -197,6 +212,11 @@ function Dashboard() {
             <Mini
               label="Last run"
               value={latest ? `${latest.passed}/${latest.total}` : "—"}
+              hint={
+                latest
+                  ? formatRelative(latest.finished_at ?? latest.created_at)
+                  : undefined
+              }
               tone={latest && latest.failed > 0 ? "danger" : "default"}
             />
             <Mini
@@ -239,8 +259,12 @@ function Dashboard() {
                 href={`/projects/${run.project_id}`}
                 className="group"
               >
-                <Card className="flex flex-wrap items-center gap-3 px-4 py-3 transition-all hover:border-border-strong hover:shadow-md">
-                  <Badge tone={RUN_BADGE[run.status]}>{result.status}</Badge>
+                <Card className="flex flex-wrap items-center gap-3 px-4 py-3 transition-all hover:border-primary/40 hover:shadow-md">
+                  {/* The badge tone follows the result, not the run — an
+                      errored test inside a failed run is a different thing. */}
+                  <Badge tone={RESULT_BADGE[result.status as ResultStatus]}>
+                    {result.status}
+                  </Badge>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium">
                       {result.case_name}
@@ -251,8 +275,13 @@ function Dashboard() {
                       </span>
                     )}
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {BROWSER_LABEL[result.browser as Browser] ?? result.browser}
+                  <span className="shrink-0 text-right text-xs text-muted-foreground">
+                    <span className="block">
+                      {BROWSER_LABEL[result.browser as Browser] ?? result.browser}
+                    </span>
+                    <span className="tabular block">
+                      {formatRelative(run.finished_at ?? run.created_at)}
+                    </span>
                   </span>
                   <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                 </Card>
@@ -300,10 +329,12 @@ function Dashboard() {
 function Mini({
   label,
   value,
+  hint,
   tone = "default",
 }: {
   label: string;
   value: React.ReactNode;
+  hint?: string;
   tone?: "default" | "success" | "danger";
 }) {
   const colour = {
@@ -317,9 +348,14 @@ function Mini({
       <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">
         {label}
       </dt>
-      <dd className={`mt-0.5 text-lg font-semibold leading-none ${colour}`}>
+      <dd className={`mt-0.5 text-lg font-extrabold leading-none ${colour}`}>
         {value}
       </dd>
+      {hint && (
+        <dd className="mt-1 truncate text-[11px] text-muted-foreground">
+          {hint}
+        </dd>
+      )}
     </div>
   );
 }

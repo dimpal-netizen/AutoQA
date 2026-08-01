@@ -23,10 +23,28 @@ export interface TrendPoint {
   href?: string;
 }
 
-const BAR_W = 26;
-const GAP = 12;
+/** The plot is drawn into a fixed-width viewBox and scaled to the container, so
+ *  bar width has to be derived from how many runs there are. Drawing every bar
+ *  at a constant 26px meant three runs huddled in the left corner of a very
+ *  wide card — technically correct and obviously wrong. Capped, because two
+ *  runs should not produce two enormous slabs either. */
+const VIEW_W = 640;
+const MAX_BAR_W = 44;
+const MIN_BAR_W = 10;
+const GAP_RATIO = 0.45;
 const H = 132;
 const RADIUS = 4;
+
+function geometry(count: number) {
+  // width = n*bar + (n-1)*bar*ratio  →  solve for bar.
+  const raw = VIEW_W / (count + (count - 1) * GAP_RATIO);
+  const bar = Math.max(MIN_BAR_W, Math.min(MAX_BAR_W, raw));
+  const gap = bar * GAP_RATIO;
+  const used = count * bar + (count - 1) * gap;
+  // Centred, so a short series sits under the middle of the card rather than
+  // hugging one edge.
+  return { bar, gap, offset: (VIEW_W - used) / 2 };
+}
 /** A 2px gap of surface between the two segments, so a stack never reads as
  *  one solid bar with a colour change halfway up. */
 const SEGMENT_GAP = 2;
@@ -43,24 +61,26 @@ export function RunTrend({ points }: { points: TrendPoint[] }) {
   }
 
   const max = Math.max(...points.map((p) => p.passed + p.failed), 1);
-  const width = points.length * BAR_W + (points.length - 1) * GAP;
+  const { bar: BAR_W, gap: GAP, offset } = geometry(points.length);
   const active = points.find((p) => p.id === hover);
 
   return (
     <figure className="m-0">
       <div className="relative">
         <svg
-          viewBox={`0 0 ${Math.max(width, 1)} ${H}`}
+          viewBox={`0 0 ${VIEW_W} ${H}`}
           width="100%"
           height={H}
-          preserveAspectRatio="xMinYMax meet"
+          // `meet`, not `none` — stretching the viewBox to the container would
+          // distort the rounded data-ends and the value labels with it.
+          preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label={`Passed and failed tests across the last ${points.length} runs`}
           className="overflow-visible"
         >
           {points.map((point, index) => {
             const total = point.passed + point.failed;
-            const x = index * (BAR_W + GAP);
+            const x = offset + index * (BAR_W + GAP);
             const fullH = (total / max) * (H - 22);
             const failH = total ? (point.failed / total) * fullH : 0;
             const passH = Math.max(fullH - failH - (failH ? SEGMENT_GAP : 0), 0);
