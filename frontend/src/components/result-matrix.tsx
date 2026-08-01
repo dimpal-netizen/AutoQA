@@ -33,7 +33,10 @@ const ICON: Record<ResultStatus, string> = {
 };
 
 export function ResultMatrix({ results }: { results: TestResult[] }) {
-  const [open, setOpen] = useState<number | null>(null);
+  // Failures start open. Someone looking at a red run came to read the error;
+  // making them click for it is the one interaction this table should not
+  // have. Collapsing is still there for when you have read it.
+  const [closed, setClosed] = useState<Set<number>>(() => new Set());
 
   // Group by test, keeping the order results arrived in.
   const byCase = new Map<string, TestResult[]>();
@@ -63,13 +66,20 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
               (r) => r.status === "failed" || r.status === "error",
             );
             const expandable = Boolean(failure);
-            const isOpen = open === group[0].id;
+            const isOpen = expandable && !closed.has(group[0].id);
 
             return (
               <Fragment key={name}>
                 <tr
                   className={`border-b ${expandable ? "cursor-pointer hover:bg-muted/50" : ""}`}
-                  onClick={() => expandable && setOpen(isOpen ? null : group[0].id)}
+                  onClick={() =>
+                    expandable &&
+                    setClosed((current) => {
+                      const next = new Set(current);
+                      if (!next.delete(group[0].id)) next.add(group[0].id);
+                      return next;
+                    })
+                  }
                 >
                   <td className="py-2 pr-3">
                     <span className="flex items-center gap-1">

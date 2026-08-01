@@ -10,9 +10,9 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronRight, FlaskConical, RefreshCw, Video } from "lucide-react";
+import { ArrowLeft, Video } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Project, TestSuite, TestSuiteDetail } from "@/lib/types";
+import type { Project, TestRun, TestSuite, TestSuiteDetail } from "@/lib/types";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
 import { LaunchRecording } from "@/components/launch-recording";
@@ -20,7 +20,6 @@ import { SuiteWorkspace } from "@/components/suite-workspace";
 import { Button } from "@/components/ui/button";
 import { Alert, EmptyState } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 
 export default function ProjectPage({
   params,
@@ -43,6 +42,7 @@ function ProjectWorkspace({ id }: { id: number }) {
   const [suites, setSuites] = useState<TestSuite[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [detail, setDetail] = useState<TestSuiteDetail | null>(null);
+  const [lastRun, setLastRun] = useState<TestRun | null>(null);
   const [recording, setRecording] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,8 +75,13 @@ function ProjectWorkspace({ id }: { id: number }) {
     let cancelled = false;
     void (async () => {
       try {
-        const found = await api.suites.get(selected);
-        if (!cancelled) setDetail(found);
+        const [found, runs] = await Promise.all([
+          api.suites.get(selected),
+          api.runs.list({ suiteId: selected }).catch(() => [] as TestRun[]),
+        ]);
+        if (cancelled) return;
+        setDetail(found);
+        setLastRun(runs[0] ?? null);
       } catch {
         /* keep what is on screen; the id check below hides a stale one */
       }
@@ -138,65 +143,19 @@ function ProjectWorkspace({ id }: { id: number }) {
             </Button>
           }
         />
+      ) : current ? (
+        <SuiteWorkspace
+          suite={current}
+          suites={suites}
+          lastRun={lastRun}
+          onSelect={setSelected}
+          onChange={(updated) => {
+            setDetail(updated);
+            void load();
+          }}
+        />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
-          <aside className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between px-1 pb-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Test suites
-              </span>
-              <button
-                type="button"
-                onClick={() => void load()}
-                className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                aria-label="Refresh"
-              >
-                <RefreshCw className="size-3.5" />
-              </button>
-            </div>
-
-            {suites.map((suite) => {
-              const active = suite.id === selected;
-              return (
-                <button
-                  key={suite.id}
-                  type="button"
-                  onClick={() => setSelected(suite.id)}
-                  className={cn(
-                    "group flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-left transition-all",
-                    active
-                      ? "lit border-primary/35 bg-card ring-1 ring-primary/20"
-                      : "border-transparent hover:border-border hover:bg-card/70",
-                  )}
-                >
-                  <FlaskConical
-                    className={cn(
-                      "size-4 shrink-0",
-                      active ? "text-primary" : "text-muted-foreground",
-                    )}
-                  />
-                  <span className="block min-w-0 flex-1 truncate text-[13px] font-medium">
-                    {suite.name}
-                  </span>
-                  <ChevronRight
-                    className={cn(
-                      "size-3.5 shrink-0 transition-opacity",
-                      active
-                        ? "text-primary"
-                        : "text-muted-foreground opacity-0 group-hover:opacity-100",
-                    )}
-                  />
-                </button>
-              );
-            })}
-          </aside>
-
-          {current ? (
-            <SuiteWorkspace suite={current} onChange={setDetail} />
-          ) : (
-            <Skeleton className="h-96 w-full" />
-          )}
-        </div>
+        <Skeleton className="h-96 w-full" />
       )}
     </div>
   );

@@ -1,10 +1,18 @@
 "use client";
 
-/** One suite, in the right-hand pane: run it, read the tests, find the files.
+/** One suite: how it is doing, then run it, read the tests, find the files.
  *
- *  The same three sections the old detail page had, minus the page. It takes a
- *  suite it was given rather than fetching by id, so switching suites in the
- *  list is instant and never navigates.
+ *  Rewritten after the two-column version left half the screen blank. Three
+ *  things changed and they are all about density:
+ *
+ *  - The suite picker is a row of pills above the content, not a 17rem column
+ *    beside it. A column that holds one truncated name is spending a sixth of
+ *    the width to say less than a tab would.
+ *  - A stat strip answers "how is this doing" without expanding anything. The
+ *    old detail page had this and the workspace lost it.
+ *  - Failures are open by default. Someone looking at a red run came to read
+ *    the error; making them click for it is the one interaction this screen
+ *    should not have.
  */
 
 import { useState } from "react";
@@ -21,6 +29,9 @@ import { api } from "@/lib/api";
 import {
   RELIABLE_RANK,
   SELECTOR_RANK,
+  formatDuration,
+  type TestRun,
+  type TestSuite,
   type TestSuiteDetail,
 } from "@/lib/types";
 import { GenerateCases } from "@/components/generate-cases";
@@ -29,14 +40,22 @@ import { ScriptLocation } from "@/components/script-location";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/card";
+import { Stat, StatRow } from "@/components/ui/stat";
 import { Tabs } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
 export function SuiteWorkspace({
   suite,
+  suites,
+  onSelect,
   onChange,
+  lastRun,
 }: {
   suite: TestSuiteDetail;
+  suites: TestSuite[];
+  onSelect: (id: number) => void;
   onChange: (suite: TestSuiteDetail) => void;
+  lastRun: TestRun | null;
 }) {
   const [tab, setTab] = useState("run");
   const [regenerating, setRegenerating] = useState(false);
@@ -59,21 +78,46 @@ export function SuiteWorkspace({
   const fragile = steps.filter(
     (s) => s.selector_strategy && SELECTOR_RANK[s.selector_strategy] > RELIABLE_RANK,
   );
+  const generated = suite.cases.filter((c) => c.category !== "recorded").length;
   const paths = [
     ...suite.cases.map((c) => c.file_path),
     ...suite.files.map((f) => f.path),
   ].sort();
 
   return (
-    <section className="min-w-0">
+    <section className="flex min-w-0 flex-col gap-5">
+      {/* Only worth showing when there is a choice to make. */}
+      {suites.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {suites.map((option) => {
+            const active = option.id === suite.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => onSelect(option.id)}
+                className={cn(
+                  "max-w-xs truncate rounded-md border px-3 py-1.5 text-[13px] font-medium transition-all",
+                  active
+                    ? "lit border-primary/35 bg-card text-primary"
+                    : "border-border bg-card/60 text-muted-foreground hover:border-border-strong hover:text-foreground",
+                )}
+              >
+                {option.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate text-lg font-semibold">{suite.name}</h2>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">
-            {suite.cases.length} test case{suite.cases.length === 1 ? "" : "s"} ·{" "}
-            {steps.length} steps
-            {fragile.length > 0 && ` · ${fragile.length} fragile`}
-          </p>
+          <h2 className="text-lg font-semibold">{suite.name}</h2>
+          {suite.description && (
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
+              {suite.description}
+            </p>
+          )}
         </div>
 
         {suite.recording_id && (
@@ -97,54 +141,91 @@ export function SuiteWorkspace({
         )}
       </div>
 
-      {error && <Alert className="mt-3">{error}</Alert>}
+      <StatRow>
+        <Stat
+          label="Test cases"
+          value={suite.cases.length}
+          hint={generated ? `1 recorded · ${generated} generated` : "from your recording"}
+        />
+        <Stat label="Steps" value={steps.length} hint="across every case" />
+        <Stat
+          label="Last run"
+          value={lastRun ? `${lastRun.passed}/${lastRun.total}` : "—"}
+          tone={
+            !lastRun || lastRun.status === "cancelled"
+              ? "muted"
+              : lastRun.failed > 0
+                ? "danger"
+                : "success"
+          }
+          hint={
+            lastRun
+              ? `${lastRun.status}${lastRun.duration_ms ? ` · ${formatDuration(lastRun.duration_ms)}` : ""}`
+              : "not run yet"
+          }
+        />
+        <Stat
+          label="Fragile steps"
+          value={fragile.length}
+          tone={fragile.length ? "warning" : "success"}
+          hint={fragile.length ? "may break on a UI change" : "all reliable selectors"}
+        />
+      </StatRow>
 
-      <Tabs
-        className="mt-4"
-        active={tab}
-        onChange={setTab}
-        tabs={[
-          { id: "run", label: "Run", icon: <Play /> },
-          {
-            id: "cases",
-            label: "Test cases",
-            count: suite.cases.length,
-            icon: <FlaskConical />,
-          },
-          { id: "scripts", label: "Scripts", count: paths.length, icon: <FolderOpen /> },
-        ]}
-      />
+      {error && <Alert>{error}</Alert>}
 
-      <div className="mt-4">
-        {tab === "run" && (
-          <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
-        )}
+      <div>
+        <Tabs
+          active={tab}
+          onChange={setTab}
+          tabs={[
+            { id: "run", label: "Run", icon: <Play /> },
+            {
+              id: "cases",
+              label: "Test cases",
+              count: suite.cases.length,
+              icon: <FlaskConical />,
+            },
+            {
+              id: "scripts",
+              label: "Scripts",
+              count: paths.length,
+              icon: <FolderOpen />,
+            },
+          ]}
+        />
 
-        {tab === "cases" && (
-          <div className="flex flex-col gap-5">
-            <div className="rounded-lg border border-dashed border-border bg-muted/40 p-4">
-              <GenerateCases
-                suiteId={suite.id}
-                hasGenerated={suite.cases.some((c) => c.category !== "recorded")}
-                onGenerated={onChange}
-              />
+        <div className="mt-4">
+          {tab === "run" && (
+            <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
+          )}
+
+          {tab === "cases" && (
+            <div className="flex flex-col gap-5">
+              <div className="rounded-lg border border-dashed border-border bg-muted/40 p-4">
+                <GenerateCases
+                  suiteId={suite.id}
+                  hasGenerated={generated > 0}
+                  onGenerated={onChange}
+                />
+              </div>
+
+              {fragile.length > 0 && (
+                <Alert variant="warning">
+                  <AlertTriangle className="mr-1 inline size-4" />
+                  {fragile.length} of {steps.length} steps rely on a fragile
+                  selector — the ones most likely to break when the UI changes.
+                </Alert>
+              )}
+
+              <TestCaseList cases={suite.cases} />
             </div>
+          )}
 
-            {fragile.length > 0 && (
-              <Alert variant="warning">
-                <AlertTriangle className="mr-1 inline size-4" />
-                {fragile.length} of {steps.length} steps rely on a fragile
-                selector — the ones most likely to break when the UI changes.
-              </Alert>
-            )}
-
-            <TestCaseList cases={suite.cases} />
-          </div>
-        )}
-
-        {tab === "scripts" && (
-          <ScriptLocation outputDir={suite.output_dir} paths={paths} />
-        )}
+          {tab === "scripts" && (
+            <ScriptLocation outputDir={suite.output_dir} paths={paths} />
+          )}
+        </div>
       </div>
     </section>
   );

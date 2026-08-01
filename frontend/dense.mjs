@@ -1,0 +1,17 @@
+import { chromium } from "playwright";
+import { readFileSync } from "node:fs";
+const WEB = "http://localhost:3000";
+const { token, user } = JSON.parse(readFileSync("tok.json", "utf-8"));
+const b = await chromium.launch();
+const p = await b.newPage({ viewport: { width: 1600, height: 950 } });
+await p.goto(`${WEB}/login`);
+await p.evaluate(([t,u])=>localStorage.setItem("autoqa-auth",JSON.stringify({state:{accessToken:t,refreshToken:t,user:u},version:0})),[token,user]);
+await p.goto(`${WEB}/projects`);
+await p.locator('a[aria-label^="Open"]').first().click();
+await p.waitForSelector("text=Run tests", { timeout: 40000 });
+await p.waitForTimeout(2500);
+await p.screenshot({ path: "dense.png" });
+const body = await p.locator("main").innerText();
+console.log(`  ${/TEST CASES/i.test(body) ? "PASS" : "FAIL"}  stat strip present`);
+console.log(`  ${/strict mode|AssertionError|Timeout/i.test(body) ? "PASS" : "FAIL"}  failure error visible without clicking`);
+await b.close();
