@@ -18,6 +18,8 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  Download,
+  FileSpreadsheet,
   FlaskConical,
   FolderOpen,
   Play,
@@ -25,7 +27,7 @@ import {
   Video,
 } from "lucide-react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, downloadTestCaseSheet } from "@/lib/api";
 import {
   RELIABLE_RANK,
   SELECTOR_RANK,
@@ -210,6 +212,8 @@ export function SuiteWorkspace({
                 />
               </div>
 
+              <ExportSheet suite={suite} />
+
               {fragile.length > 0 && (
                 <Alert variant="warning">
                   <AlertTriangle className="mr-1 inline size-4" />
@@ -228,5 +232,54 @@ export function SuiteWorkspace({
         </div>
       </div>
     </section>
+  );
+}
+
+/** Hand the suite to whoever keeps the test-case sheet.
+ *
+ *  QA teams track cases in Excel and are asked for that sheet by people who
+ *  will never open this app. AutoQA already holds every column it wants, so
+ *  making them retype it would be absurd. */
+function ExportSheet({ suite }: { suite: TestSuiteDetail }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleExport() {
+    setBusy(true);
+    setError(null);
+    try {
+      const stem =
+        suite.name.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "") ||
+        `suite_${suite.id}`;
+      await downloadTestCaseSheet(suite.id, `test_cases_${stem}.csv`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not export the sheet");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
+      <FileSpreadsheet className="size-4 shrink-0 text-primary" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-semibold">Test case sheet</p>
+        <p className="text-xs text-muted-foreground">
+          All {suite.cases.length} cases as a spreadsheet — ID, priority,
+          positive/negative, steps, expected result. The execution columns are
+          filled in from the latest run.
+        </p>
+      </div>
+      {error && <span className="text-xs text-destructive">{error}</span>}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleExport}
+        disabled={busy || suite.cases.length === 0}
+      >
+        <Download />
+        {busy ? "Exporting…" : "Export CSV"}
+      </Button>
+    </div>
   );
 }

@@ -14,6 +14,7 @@ from app.codegen.generator import GeneratedCodeError, render
 from app.codegen.writer import remove_suite_directory, suite_directory, write_suite
 from app.core.config import settings
 from app.models.enums import (
+    FINISHED_RUN_STATUSES,
     CaseCategory,
     CasePriority,
     CaseSource,
@@ -22,12 +23,14 @@ from app.models.enums import (
 )
 from app.models.test_case import TestSuite
 from app.models.user import User
+from app.reports.testcases import build_testcase_sheet
 from app.repositories.recording_repo import RecordingRepository
 from app.repositories.test_case_repo import (
     GeneratedFileRepository,
     TestCaseRepository,
     TestSuiteRepository,
 )
+from app.repositories.test_run_repo import TestResultRepository
 from app.services.exceptions import NotFound, ValidationError
 from app.services.recording_service import RecordingService
 
@@ -376,6 +379,50 @@ class CodegenService:
             raise NotFound(f"Test suite {suite_id} not found") from None
 
         return suite
+
+    def export_testcases(
+        self, suite_id: int, user: User, *, run_id: int | None = None
+    ) -> tuple[str, str]:
+        """The suite as a QA test-case sheet, plus a filename.
+
+        Defaults to the suite's most recent finished run so the execution
+        columns arrive filled in — that is the version a QA lead actually
+        wants, and asking them to find a run id first would be busywork.
+
+        Imported here rather than at module scope: execution imports codegen,
+        so taking the dependency the other way round at import time would be a
+        cycle.
+        """
+        from app.services.execution_service import ExecutionService
+
+        suite = self.get_suite(suite_id, user)
+
+        run = None
+        results: list = []
+        execution = ExecutionService(self.db)
+
+        if run_id is not None:
+            run = execution.get(run_id, user)
+        else:
+            runs = execution.list_runs(user, suite_id=suite_id, limit=10)
+            run = next((r for r in runs if r.status in FINISHED_RUN_STATUSES), None)
+
+        if run is not None:
+            results = TestResultRepository(self.db).list_for_run(run.id)
+
+        csv_text = build_testcase_sheet(
+            suite,
+            list(suite.cases),
+            project_name=suite.project.name if suite.project else "",
+            designed_by=user.full_name or user.email,
+            run=run,
+            results=results,
+        )
+
+        stem = "".join(
+            c if c.isalnum() else "_" for c in f"{suite.name}"
+        ).strip("_") or f"suite_{suite.id}"
+        return csv_text, f"test_cases_{stem}.csv"
 
     def list_suites(
         self, user: User, project_id: int | None = None, skip: int = 0, limit: int = 100

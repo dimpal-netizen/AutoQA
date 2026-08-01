@@ -307,6 +307,27 @@ export async function downloadReport(artifactId: number, filename: string): Prom
   }
 }
 
+/** Download the suite as a QA test-case sheet, in the layout teams keep in
+ *  Excel. Fetched as a blob for the same reason as the report — the route
+ *  needs the auth header and an <a href> cannot carry one. */
+export async function downloadTestCaseSheet(
+  suiteId: number,
+  filename: string,
+): Promise<void> {
+  const blob = await request<Blob>(`/suites/${suiteId}/testcases.csv`, {
+    headers: { Accept: "text/csv" },
+  });
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export async function fetchArtifact(artifactId: number): Promise<string> {
   const blob = await request<Blob>(`/artifacts/${artifactId}/download`, {
     headers: { Accept: "*/*" },
