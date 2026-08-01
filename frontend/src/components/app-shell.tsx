@@ -13,6 +13,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   FolderKanban,
+  Home,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -131,6 +132,17 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
               </Link>
             );
           })}
+
+          {/* The way back out. Separated from the app's own sections, because
+              it leaves the app rather than moving around inside it. */}
+          <Link
+            href="/"
+            onClick={onClose}
+            className="mt-2 flex items-center gap-3 border-t border-sidebar-border px-3.5 pb-2 pt-4 text-sm font-medium text-sidebar-muted transition-colors hover:text-foreground"
+          >
+            <Home className="size-[18px] shrink-0" />
+            Home page
+          </Link>
         </nav>
 
         <UserCard />

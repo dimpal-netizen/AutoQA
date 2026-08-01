@@ -37,6 +37,58 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuthStore } from "@/stores/auth-store";
+
+/** Whether to offer the app or offer a way in.
+ *
+ *  Before rehydration finishes we do not know yet, and we answer "signed out" —
+ *  most people reading this page are, and a wrong guess costs one repaint of
+ *  two buttons rather than a wrong page. */
+function useSignedIn() {
+  const hydrated = useAuthStore((s) => s.hydrated);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  return hydrated && Boolean(accessToken);
+}
+
+/** The pair of buttons in the header, the hero and the closing band. They agree
+ *  with each other because they are the same component. */
+function AuthCta({ size = "default" }: { size?: "default" | "sm" | "lg" }) {
+  const signedIn = useSignedIn();
+
+  if (signedIn) {
+    return (
+      <>
+        <Link href="/projects">
+          <Button variant={size === "sm" ? "ghost" : "outline"} size={size}>
+            Projects
+          </Button>
+        </Link>
+        <Link href="/dashboard">
+          <Button size={size}>
+            Go to dashboard
+            {size !== "sm" && <ArrowRight />}
+          </Button>
+        </Link>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Link href="/login">
+        <Button variant={size === "sm" ? "ghost" : "outline"} size={size}>
+          Login
+        </Button>
+      </Link>
+      <Link href="/register">
+        <Button size={size}>
+          Get started
+          {size !== "sm" && <ArrowRight />}
+        </Button>
+      </Link>
+    </>
+  );
+}
 
 export function Marketing() {
   return (
@@ -93,14 +145,7 @@ function Nav() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <Link href="/login">
-            <Button variant="ghost" size="sm">
-              Login
-            </Button>
-          </Link>
-          <Link href="/register">
-            <Button size="sm">Get started</Button>
-          </Link>
+          <AuthCta size="sm" />
         </div>
       </div>
     </header>
@@ -112,6 +157,8 @@ function Nav() {
  * ------------------------------------------------------------------ */
 
 function Hero() {
+  const signedIn = useSignedIn();
+
   return (
     <section id="top" className="relative overflow-hidden">
       <div
@@ -143,29 +190,22 @@ function Hero() {
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Link href="/register">
-            <Button size="lg">
-              Get started
-              <ArrowRight />
-            </Button>
-          </Link>
-          <Link href="/login">
-            <Button size="lg" variant="outline">
-              Login
-            </Button>
-          </Link>
+          <AuthCta size="lg" />
         </div>
 
-        <ul className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[13px] text-muted-foreground">
-          {["No credit card", "Runs on your machine", "AI features optional"].map(
-            (item) => (
-              <li key={item} className="flex items-center gap-1.5">
-                <Check className="size-3.5 text-success" />
-                {item}
-              </li>
-            ),
-          )}
-        </ul>
+        {/* Sign-up reassurance, so it goes once you have signed up. */}
+        {!signedIn && (
+          <ul className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[13px] text-muted-foreground">
+            {["No credit card", "Runs on your machine", "AI features optional"].map(
+              (item) => (
+                <li key={item} className="flex items-center gap-1.5">
+                  <Check className="size-3.5 text-success" />
+                  {item}
+                </li>
+              ),
+            )}
+          </ul>
+        )}
       </div>
 
       <div className="mx-auto mt-14 max-w-5xl px-5 pb-16 sm:px-8">
@@ -1003,17 +1043,7 @@ function Closing() {
           test is written by the time you stop.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Link href="/register">
-            <Button size="lg">
-              Get started
-              <ArrowRight />
-            </Button>
-          </Link>
-          <Link href="/login">
-            <Button size="lg" variant="outline">
-              Login
-            </Button>
-          </Link>
+          <AuthCta size="lg" />
         </div>
       </div>
     </section>
@@ -1040,13 +1070,8 @@ function Footer() {
             ))}
           </nav>
 
-          <div className="ml-auto flex items-center gap-4 text-[13px]">
-            <Link href="/login" className="text-muted-foreground hover:text-foreground">
-              Login
-            </Link>
-            <Link href="/register" className="font-semibold text-primary hover:underline">
-              Get started
-            </Link>
+          <div className="ml-auto flex items-center gap-2">
+            <AuthCta size="sm" />
           </div>
         </div>
 
