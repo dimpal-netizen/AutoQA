@@ -14,6 +14,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   FlaskConical,
   FolderKanban,
+  LayoutDashboard,
   LogOut,
   Menu,
   Radar,
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV = [
+  { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/recordings", label: "Recordings", icon: Video },
   { href: "/suites", label: "Tests", icon: FlaskConical },
@@ -96,7 +98,10 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
         <nav className="flex flex-1 flex-col gap-0.5 px-3">
           {NAV.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
             return (
               <Link
                 key={item.href}
@@ -130,7 +135,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 function Wordmark() {
   return (
-    <Link href="/projects" className="flex items-center gap-2.5">
+    <Link href="/" className="flex items-center gap-2.5">
       <span className="brand-gradient lit flex size-8 items-center justify-center rounded-lg text-white">
         <Radar className="size-[17px]" />
       </span>

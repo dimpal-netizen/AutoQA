@@ -33,7 +33,7 @@ export default function LoginPage() {
 
     try {
       setSession(await api.auth.login(email, password));
-      router.replace("/projects");
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in");
     } finally {
