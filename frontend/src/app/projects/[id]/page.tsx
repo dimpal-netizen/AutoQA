@@ -106,10 +106,15 @@ function ProjectWorkspace({ id }: { id: number }) {
         All projects
       </Link>
 
-      <header className="flex flex-wrap items-center gap-3">
+      {/* Sized and weighted like every other page title, and given room below —
+          it used to sit at text-xl directly against the suite header, so the
+          two read as one confused block. */}
+      <header className="flex flex-wrap items-center gap-3 border-b border-border pb-5">
         <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold">{project.name}</h1>
-          <p className="truncate text-[13px] text-muted-foreground">
+          <h1 className="truncate text-[30px] font-extrabold leading-tight tracking-tight">
+            {project.name}
+          </h1>
+          <p className="mt-1 truncate text-sm text-muted-foreground">
             {project.base_url}
           </p>
         </div>

@@ -2,9 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FolderKanban, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, FolderKanban, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { BROWSER_LABEL, hasRole, type Browser, type Project } from "@/lib/types";
+import {
+  BROWSER_LABEL,
+  hasRole,
+  type Browser,
+  type Project,
+  type TestRun,
+  type TestSuite,
+} from "@/lib/types";
 import { useAuthStore } from "@/stores/auth-store";
 import { RequireAuth } from "@/components/auth-provider";
 import { AppShell } from "@/components/app-shell";
@@ -21,9 +28,47 @@ import {
   PageHeader,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Meter } from "@/components/ui/stat";
 import { SkeletonRows } from "@/components/ui/skeleton";
 
 const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
+
+/** What a project card can say about itself beyond its name.
+ *
+ *  This is the page you land on to choose what to work on, so a card that
+ *  carries only a name and a URL makes you open all of them to find the one
+ *  that needs you. */
+interface Activity {
+  suites: number;
+  runs: number;
+  passRate: number | null;
+  lastRun: TestRun | null;
+}
+
+function activityFor(
+  project: Project,
+  suites: TestSuite[],
+  runs: TestRun[],
+): Activity {
+  const mine = runs.filter((r) => r.project_id === project.id);
+  const finished = mine.filter((r) => r.total > 0);
+  const passed = finished.reduce((sum, r) => sum + r.passed, 0);
+  const total = finished.reduce((sum, r) => sum + r.total, 0);
+
+  return {
+    suites: suites.filter((s) => s.project_id === project.id).length,
+    runs: mine.length,
+    passRate: total ? Math.round((passed / total) * 100) : null,
+    // The list arrives newest first, so the first match is the latest.
+    lastRun: mine[0] ?? null,
+  };
+}
+
+function toneFor(passRate: number | null) {
+  if (passRate === null) return "muted" as const;
+  if (passRate === 100) return "success" as const;
+  return passRate >= 80 ? ("warning" as const) : ("danger" as const);
+}
 
 export default function ProjectsPage() {
   return (
@@ -40,6 +85,8 @@ function ProjectsView() {
   const canCreate = hasRole(user, "qa_engineer");
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [suites, setSuites] = useState<TestSuite[]>([]);
+  const [runs, setRuns] = useState<TestRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -51,8 +98,18 @@ function ProjectsView() {
 
     (async () => {
       try {
-        const data = await api.projects.list();
-        if (!cancelled) setProjects(data);
+        // Suites and runs only decorate the cards, so a failure there must not
+        // take the page down with it — the list of projects is the point.
+        const [data, s, r] = await Promise.all([
+          api.projects.list(),
+          api.suites.list().catch(() => [] as TestSuite[]),
+          api.runs.list().catch(() => [] as TestRun[]),
+        ]);
+        if (!cancelled) {
+          setProjects(data);
+          setSuites(s);
+          setRuns(r);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -110,11 +167,12 @@ function ProjectsView() {
       ) : projects.length === 0 ? (
         <EmptyState canCreate={canCreate} />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((project) => (
             <ProjectCard
               key={project.id}
               project={project}
+              activity={activityFor(project, suites, runs)}
               onDelete={() => handleDelete(project)}
             />
           ))}
@@ -126,13 +184,19 @@ function ProjectsView() {
 
 function ProjectCard({
   project,
+  activity,
   onDelete,
 }: {
   project: Project;
+  activity: Activity;
   onDelete: () => void;
 }) {
+  const { suites, runs, passRate, lastRun } = activity;
+  const tone = toneFor(passRate);
+  const never = runs === 0;
+
   return (
-    <Card className="group relative transition-all hover:border-border-strong hover:shadow-md">
+    <Card className="group relative flex flex-col transition-all hover:border-primary/40 hover:shadow-md">
       {/* The whole card opens the project; the delete button sits above it. */}
       <Link
         href={`/projects/${project.id}`}
@@ -159,16 +223,69 @@ function ProjectCard({
         </div>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-3">
+      <CardContent className="flex flex-1 flex-col gap-4">
         {project.description && (
-          <p className="text-sm text-muted-foreground">{project.description}</p>
+          <p className="line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
+            {project.description}
+          </p>
         )}
-        <div className="flex flex-wrap gap-1.5">
+
+        {/* The health of the project, which is the reason you came to this
+            page. A project that has never run says so plainly rather than
+            showing a 0% that reads as failure. */}
+        <div className="rounded-lg border border-border bg-muted/50 px-3.5 py-3">
+          {never ? (
+            <p className="text-[13px] text-muted-foreground">
+              Not run yet — record a session to create its first tests.
+            </p>
+          ) : (
+            <>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Pass rate
+                </span>
+                <span
+                  className={`text-lg font-extrabold leading-none ${
+                    {
+                      muted: "text-muted-foreground",
+                      success: "text-success",
+                      warning: "text-warning",
+                      danger: "text-destructive",
+                    }[tone]
+                  }`}
+                >
+                  {passRate === null ? "—" : `${passRate}%`}
+                </span>
+              </div>
+              <Meter className="mt-2" value={passRate ?? 0} tone={tone} />
+              {lastRun && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Last run {lastRun.passed}/{lastRun.total}
+                  {lastRun.failed > 0 && (
+                    <span className="text-destructive">
+                      {" "}
+                      · {lastRun.failed} failed
+                    </span>
+                  )}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="mt-auto flex flex-wrap items-center gap-1.5">
           {project.default_browsers.map((browser) => (
             <Badge key={browser} tone="outline">
               {BROWSER_LABEL[browser as Browser] ?? browser}
             </Badge>
           ))}
+          <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="tabular">
+              {suites} suite{suites === 1 ? "" : "s"} · {runs} run
+              {runs === 1 ? "" : "s"}
+            </span>
+            <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+          </span>
         </div>
       </CardContent>
     </Card>
