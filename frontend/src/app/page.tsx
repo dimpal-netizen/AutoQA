@@ -1,11 +1,14 @@
 "use client";
 
-/** Entry point. Projects come first: you pick the application under test
- *  before there is anything sensible to record, and everything after that
- *  happens inside the project. */
+/** The public front door.
+ *
+ *  Signed in, this is not where you want to be — go to the dashboard. Signed
+ *  out, it is the only page that has to explain what the product is.
+ */
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { Marketing } from "@/components/marketing";
 import { FullPageMessage } from "@/components/auth-provider";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -15,9 +18,13 @@ export default function Home() {
   const accessToken = useAuthStore((s) => s.accessToken);
 
   useEffect(() => {
-    if (!hydrated) return;
-    router.replace(accessToken ? "/dashboard" : "/login");
+    if (hydrated && accessToken) router.replace("/dashboard");
   }, [hydrated, accessToken, router]);
 
-  return <FullPageMessage>Loading AutoQA…</FullPageMessage>;
+  // Wait for rehydration before deciding — rendering the landing page and then
+  // yanking it away is worse than a moment of nothing. Mirrors RequireAuth.
+  if (!hydrated) return <FullPageMessage>Loading AutoQA…</FullPageMessage>;
+  if (accessToken) return <FullPageMessage>Redirecting…</FullPageMessage>;
+
+  return <Marketing />;
 }

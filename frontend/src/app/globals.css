@@ -22,11 +22,11 @@
   --card-foreground: #eceef6;
   --foreground: #eceef6;
 
-  --primary: #a78bfa;
-  --primary-hover: #c4b5fd;
-  --primary-foreground: #1b1033;
-  --primary-subtle: #2a1c4a;
-  --primary-glow: rgb(167 139 250 / 0.32);
+  --primary: #4d9bff;
+  --primary-hover: #7db4ff;
+  --primary-foreground: #06182f;
+  --primary-subtle: #10294a;
+  --primary-glow: rgb(77 155 255 / 0.32);
 
   --secondary: #23233d;
   --secondary-foreground: #eceef6;
@@ -50,9 +50,9 @@
   --border: #282844;
   --border-strong: #3b3b60;
   --input: #2f2f52;
-  --ring: #a78bfa;
+  --ring: #4d9bff;
 
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
@@ -74,34 +74,35 @@
 
 :root,
 :root[data-theme="light"] {
-  /* Structure taken from testRigor: white cards on a light grey page, very
-     dark navy ink rather than black, heavy tight headings, one loud accent,
-     and a flat ground with no wash.
+  /* Palette from eLuminous: a confident blue on white, Plus Jakarta Sans,
+     generous radii. Structure from testRigor: white cards, heavy tight
+     headings, one loud accent.
 
-     The accent is violet, not their red, and deliberately so: red, amber and
-     green already mean failed, warning and passed here. A brand colour that
-     collides with a status colour makes every button look like a verdict. */
-  --background: #f3f4f6;
-  --surface: #e9eaef;
+     Blue also happens to be the only strong hue left that means nothing else
+     here — red, amber and green are already spoken for by failed, warning and
+     passed, and a brand colour that collides with a status colour makes every
+     button look like a verdict. */
+  --background: #f6f8fb;
+  --surface: #e8eefb;
   --card: #ffffff;
   --card-elevated: #ffffff;
-  --card-foreground: #14142b;
-  --foreground: #14142b;
+  --card-foreground: #111b29;
+  --foreground: #111b29;
 
-  --primary: #6d28d9;
-  --primary-hover: #5b21b6;
+  --primary: #1167e8;
+  --primary-hover: #0d54c2;
   --primary-foreground: #ffffff;
-  --primary-subtle: #f1e9fe;
-  --primary-glow: rgb(109 40 217 / 0.28);
+  --primary-subtle: #dde7ff;
+  --primary-glow: rgb(28 99 255 / 0.28);
 
-  --secondary: #eceef3;
-  --secondary-foreground: #14142b;
+  --secondary: #e9eef7;
+  --secondary-foreground: #111b29;
 
-  --muted: #f5f6f9;
-  --muted-foreground: #5b5f73;
+  --muted: #f4f7fb;
+  --muted-foreground: #56657a;
 
-  --accent: #eceef3;
-  --accent-foreground: #14142b;
+  --accent: #e9eef7;
+  --accent-foreground: #111b29;
 
   --destructive: #d92d20;
   --destructive-foreground: #ffffff;
@@ -113,10 +114,10 @@
   --warning: #b45309;
   --warning-subtle: #fdf3e3;
 
-  --border: #e2e4ea;
-  --border-strong: #c5c9d4;
-  --input: #d8dbe4;
-  --ring: #6d28d9;
+  --border: #dfe6f0;
+  --border-strong: #bfcbdd;
+  --input: #d3dcea;
+  --ring: #1167e8;
 
   --shadow-xs: 0 1px 2px 0 rgb(20 20 43 / 0.05);
   --shadow-sm: 0 1px 3px 0 rgb(20 20 43 / 0.08), 0 1px 2px -1px rgb(20 20 43 / 0.05);
@@ -130,11 +131,11 @@
      against white content — is the single strongest signature of this layout,
      and it is why the sidebar needs its own tokens rather than reusing the
      page surface. */
-  --sidebar: #14142b;
-  --sidebar-foreground: #e9eaf2;
-  --sidebar-muted: #8b8fa8;
-  --sidebar-border: #262647;
-  --sidebar-active: #241b4d;
+  --sidebar: #0d1b2f;
+  --sidebar-foreground: #e6edf8;
+  --sidebar-muted: #8698b2;
+  --sidebar-border: #1b2c45;
+  --sidebar-active: #10386f;
 }
 
 @theme inline {
@@ -237,7 +238,7 @@ h1, h2, h3 {
 /* The brand gradient. One accent used deliberately in a few places beats an
    evenly coloured interface. */
 .brand-gradient {
-  background-image: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 55%, #a78bfa 100%);
+  background-image: linear-gradient(135deg, #0d54c2 0%, #1167e8 55%, #3d8bff 100%);
 }
 
 .brand-text {
