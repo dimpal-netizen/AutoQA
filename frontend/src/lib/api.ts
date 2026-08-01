@@ -7,6 +7,7 @@
 import { useAuthStore } from "@/stores/auth-store";
 import type {
   Analysis,
+  Artifact,
   Browser,
   BugReport,
   BugStatus,
@@ -253,6 +254,14 @@ export const api = {
       request<Analysis | null>(`/results/${resultId}/analysis`),
   },
 
+  reports: {
+    /** Render this run as one self-contained HTML file. */
+    build: (runId: number) =>
+      request<Artifact>(`/runs/${runId}/report`, { method: "POST" }),
+
+    latest: (runId: number) => request<Artifact | null>(`/runs/${runId}/report`),
+  },
+
   bugs: {
     /** Write a report a developer can act on without opening AutoQA. */
     draft: (resultId: number) =>
@@ -278,6 +287,26 @@ export const api = {
  *
  *  Callers must URL.revokeObjectURL() when done, or the blobs leak.
  */
+/** Download a built report, straight to the user's disk.
+ *
+ *  Fetched as a blob rather than linked, for the same reason as screenshots:
+ *  the route needs the auth header and an <a href> cannot carry one.
+ */
+export async function downloadReport(artifactId: number, filename: string): Promise<void> {
+  const blob = await request<Blob>(`/reports/${artifactId}/download`, {
+    headers: { Accept: "*/*" },
+  });
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export async function fetchArtifact(artifactId: number): Promise<string> {
   const blob = await request<Blob>(`/artifacts/${artifactId}/download`, {
     headers: { Accept: "*/*" },

@@ -128,3 +128,12 @@ class ArtifactRepository(BaseRepository[ExecutionArtifact]):
             ExecutionArtifact.result_id == result_id
         )
         return list(self.db.execute(statement).scalars().all())
+
+    def list_for_run(self, run_id: int) -> list[ExecutionArtifact]:
+        """Everything the run produced, newest first — reports included."""
+        statement = (
+            select(ExecutionArtifact)
+            .where(ExecutionArtifact.run_id == run_id)
+            .order_by(ExecutionArtifact.id.desc())
+        )
+        return list(self.db.execute(statement).scalars().all())

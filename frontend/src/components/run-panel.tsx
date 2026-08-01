@@ -8,8 +8,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Eye, Play, RefreshCw, Square } from "lucide-react";
-import { api } from "@/lib/api";
+import { Download, Eye, Play, RefreshCw, Square } from "lucide-react";
+import { api, downloadReport } from "@/lib/api";
 import {
   BROWSER_LABEL,
   RUN_BADGE,
@@ -43,6 +43,7 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
   const [run, setRun] = useState<TestRunDetail | null>(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TestRun[]>([]);
 
@@ -130,6 +131,20 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
     }
   }
 
+  async function report() {
+    if (!runId) return;
+    setBuilding(true);
+    setError(null);
+    try {
+      const artifact = await api.reports.build(runId);
+      await downloadReport(artifact.id, `autoqa-run-${runId}.html`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build the report");
+    } finally {
+      setBuilding(false);
+    }
+  }
+
   function toggle(browser: Browser) {
     setBrowsers((current) =>
       current.includes(browser)
@@ -209,6 +224,18 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
           )}
 
           <div className="ml-auto flex items-center gap-2">
+            {run && !active && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={report}
+                disabled={building}
+                title="One self-contained HTML file you can email to anyone"
+              >
+                <Download className={building ? "animate-pulse" : ""} />
+                {building ? "Building…" : "Report"}
+              </Button>
+            )}
             {active ? (
               <Button variant="destructive" size="sm" onClick={cancel} disabled={stopping}>
                 <Square className="size-3.5 fill-current" />

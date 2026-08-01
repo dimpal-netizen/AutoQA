@@ -250,8 +250,8 @@ Three rules keep it maintainable:
 | 6 | AI test cases — positive, negative, edge and security | ✅ Done |
 | 7 | AI failure analysis (Workflow 3) | ✅ Done |
 | 8 | AI bug reports drafted from failures | ✅ Done |
-| 9 | HTML / Allure reports | ⬜ Next |
-| 10 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ |
+| 9 | Shareable HTML run reports | ✅ Done |
+| 10 | Autonomous agent (Workflow 2) + Jira / Azure DevOps | ⬜ Next |
 | 11 | Chrome extension (Manifest V3) | ⬜ |
 
 Each phase extends both the backend and the UI, so the app stays runnable throughout.

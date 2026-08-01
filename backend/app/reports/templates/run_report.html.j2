@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ suite_name }} — test report</title>
+<style>
+  /* Everything is inlined. A report that needs a CDN is a blank page for
+     anyone reading it on a plane, behind a corporate proxy, or in two years. */
+  :root {
+    --bg: #eef1f6; --card: #fff; --fg: #101828; --muted: #5a6779;
+    --border: #dde3ec; --pass: #059669; --fail: #dc2626; --warn: #d97706;
+    --accent: #4f46e5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 16px; margin: 32px 0 12px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 24px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .stat .value { font-size: 26px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .pass { color: var(--pass); } .fail { color: var(--fail); } .warn { color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; background: var(--card);
+          border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600;
+       padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
+           font-size: 12px; font-weight: 500; border: 1px solid; }
+  .b-pass { color: var(--pass); background: #ecfdf5; border-color: #a7f3d0; }
+  .b-fail { color: var(--fail); background: #fef2f2; border-color: #fecaca; }
+  .b-skip { color: var(--muted); background: #f4f6fa; border-color: var(--border); }
+  .b-warn { color: var(--warn); background: #fffbeb; border-color: #fde68a; }
+  .failure { background: var(--card); border: 1px solid var(--border);
+             border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+  .failure h3 { font-size: 15px; margin: 0 0 8px; }
+  .err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+         border-radius: 8px; padding: 10px 12px; font: 12px/1.5 ui-monospace, monospace;
+         white-space: pre-wrap; word-break: break-word; margin: 8px 0; }
+  .analysis { border-left: 3px solid var(--accent); padding-left: 12px; margin-top: 12px; }
+  .analysis dt { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+                 color: var(--muted); margin-top: 8px; }
+  .analysis dd { margin: 2px 0 0; font-size: 14px; }
+  figure { margin: 12px 0 0; }
+  figcaption { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  img { max-width: 100%; border: 1px solid var(--border); border-radius: 8px; display: block; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 40px;
+          border-top: 1px solid var(--border); padding-top: 16px; }
+  .tabular { font-variant-numeric: tabular-nums; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .failure, .stat, table { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>{{ suite_name }}</h1>
+  <p class="sub">
+    {{ project_name }}{% if base_url %} · {{ base_url }}{% endif %}<br>
+    Run #{{ run.id }} · {{ started }} · {{ browsers }}
+  </p>
+
+  <div class="stats">
+    <div class="stat"><div class="label">Tests</div><div class="value tabular">{{ run.total }}</div></div>
+    <div class="stat"><div class="label">Passed</div><div class="value tabular pass">{{ run.passed }}</div></div>
+    <div class="stat"><div class="label">Failed</div><div class="value tabular {% if run.failed %}fail{% endif %}">{{ run.failed }}</div></div>
+    <div class="stat"><div class="label">Pass rate</div><div class="value tabular">{{ pass_rate }}%</div></div>
+    <div class="stat"><div class="label">Duration</div><div class="value tabular">{{ duration }}</div></div>
+  </div>
+
+  <h2>Results</h2>
+  <table>
+    <thead>
+      <tr><th>Test</th><th>Browser</th><th>Status</th><th style="text-align:right">Time</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.name }}</td>
+        <td>{{ row.browser }}</td>
+        <td><span class="badge {{ row.badge }}">{{ row.status }}</span></td>
+        <td class="tabular" style="text-align:right">{{ row.duration }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if failures %}
+  <h2>Failures ({{ failures | length }})</h2>
+  {% for failure in failures %}
+  <div class="failure">
+    <h3>{{ failure.name }}</h3>
+    <p class="sub" style="margin:0">
+      {{ failure.browser }}{% if failure.failed_step is not none %} · failed at step {{ failure.failed_step }}{% endif %}
+    </p>
+
+    {% if failure.error %}<div class="err">{{ failure.error }}</div>{% endif %}
+
+    {% if failure.analysis %}
+    <div class="analysis">
+      <span class="badge {% if failure.analysis.is_product_bug %}b-fail{% else %}b-skip{% endif %}">
+        {% if failure.analysis.is_product_bug %}Application bug{% else %}Test problem{% endif %}
+      </span>
+      <span class="badge b-warn">{{ failure.analysis.severity }}</span>
+      <span class="sub" style="font-size:12px">{{ failure.analysis.confidence }}% confident</span>
+      <dl>
+        <dt>Root cause</dt><dd>{{ failure.analysis.root_cause }}</dd>
+        <dt>Suggested fix</dt><dd>{{ failure.analysis.suggested_fix }}</dd>
+      </dl>
+    </div>
+    {% endif %}
+
+    {% if failure.screenshot %}
+    <figure>
+      <figcaption>What the page looked like when it failed</figcaption>
+      <img src="{{ failure.screenshot }}" alt="Screenshot of {{ failure.name }} failing">
+    </figure>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  <p class="foot">
+    Generated by AutoQA on {{ generated }}.
+    {% if omitted_screenshots %}
+    {{ omitted_screenshots }} screenshot(s) were left out to keep this file a
+    reasonable size.
+    {% endif %}
+  </p>
+</div>
+</body>
+</html>
