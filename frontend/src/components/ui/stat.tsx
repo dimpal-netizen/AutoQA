@@ -27,7 +27,7 @@ export function Stat({
       {/* Proportional figures, not tabular: tabular gives every digit the width
           of a zero, which makes a number like 121 look gappy at display sizes.
           Tabular is for columns that must align, not for standalone values. */}
-      <p className={cn("mt-1 text-2xl font-semibold leading-none", TONE[tone])}>
+      <p className={cn("mt-1 text-2xl font-extrabold leading-none", TONE[tone])}>
         {value}
       </p>
       {hint && (
@@ -57,7 +57,7 @@ export function Hero({
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
-      <p className={cn("text-5xl font-semibold leading-none", TONE[tone])}>
+      <p className={cn("text-5xl font-extrabold leading-none tracking-tight", TONE[tone])}>
         {value}
       </p>
       {hint && <p className="mt-1 text-[13px] text-muted-foreground">{hint}</p>}

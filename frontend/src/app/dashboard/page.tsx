@@ -138,7 +138,14 @@ function Dashboard() {
   return (
     <div className="animate-in flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
+        <div>
+          <h1 className="text-[30px] font-extrabold leading-tight tracking-tight">
+            Dashboard
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            How testing is going, and what is waiting for someone.
+          </p>
+        </div>
         <Link href="/projects">
           <Button>
             <Video />
@@ -212,7 +219,7 @@ function Dashboard() {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
       <section>
-        <h2 className="mb-2.5 flex items-center gap-2 text-sm font-semibold">
+        <h2 className="mb-3 flex items-center gap-2 text-base font-bold">
           <CircleAlert className="size-4 text-destructive" />
           Needs attention
           {failures.length > 0 && (
@@ -256,7 +263,7 @@ function Dashboard() {
       </section>
 
       <section>
-        <h2 className="mb-2.5 text-sm font-semibold">Projects</h2>
+        <h2 className="mb-3 text-base font-bold">Projects</h2>
         <div className="flex flex-col gap-2">
           {projects.slice(0, 6).map((project) => (
             <Link key={project.id} href={`/projects/${project.id}`} className="group">

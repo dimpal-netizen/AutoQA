@@ -43,7 +43,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       onClick={toggle}
       title={theme === "dark" ? "Switch to light" : "Switch to dark"}
       aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-      className={`rounded-md p-1.5 text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-foreground ${className ?? ""}`}
+      className={`rounded-full p-1.5 text-sidebar-muted transition-colors hover:bg-accent hover:text-foreground ${className ?? ""}`}
     >
       {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
     </button>

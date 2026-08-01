@@ -52,7 +52,7 @@
   --input: #2f2f52;
   --ring: #4d9bff;
 
-  --radius: 0.75rem;
+  --radius: 1rem;
 
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
@@ -82,8 +82,8 @@
      here — red, amber and green are already spoken for by failed, warning and
      passed, and a brand colour that collides with a status colour makes every
      button look like a verdict. */
-  --background: #f6f8fb;
-  --surface: #e8eefb;
+  --background: #f7f9fd;
+  --surface: #eef4fe;
   --card: #ffffff;
   --card-elevated: #ffffff;
   --card-foreground: #111b29;
@@ -114,28 +114,38 @@
   --warning: #b45309;
   --warning-subtle: #fdf3e3;
 
-  --border: #dfe6f0;
-  --border-strong: #bfcbdd;
-  --input: #d3dcea;
+  /* Borders carry a blue cast rather than being neutral grey. On the reference
+     this is what separates a white card from a white page — there is barely any
+     shadow doing that job, so the border has to be visible and on-hue. */
+  --border: #d9e4f5;
+  --border-strong: #b6cbe8;
+  --input: #cfdcef;
   --ring: #1167e8;
 
-  --shadow-xs: 0 1px 2px 0 rgb(20 20 43 / 0.05);
-  --shadow-sm: 0 1px 3px 0 rgb(20 20 43 / 0.08), 0 1px 2px -1px rgb(20 20 43 / 0.05);
-  --shadow-md: 0 10px 20px -6px rgb(20 20 43 / 0.10), 0 3px 6px -3px rgb(20 20 43 / 0.06);
-  --shadow-lg: 0 24px 40px -10px rgb(20 20 43 / 0.14), 0 8px 14px -8px rgb(20 20 43 / 0.08);
+  /* Shadows are tinted blue and kept shallow. A neutral grey drop shadow on a
+     blue-tinted page reads as dirt. */
+  --shadow-xs: 0 1px 2px 0 rgb(17 103 232 / 0.05);
+  --shadow-sm: 0 1px 2px 0 rgb(17 103 232 / 0.06), 0 2px 6px -2px rgb(17 103 232 / 0.06);
+  --shadow-md: 0 8px 20px -6px rgb(17 103 232 / 0.13), 0 2px 6px -3px rgb(17 103 232 / 0.08);
+  --shadow-lg: 0 24px 44px -12px rgb(17 103 232 / 0.18), 0 8px 16px -8px rgb(17 103 232 / 0.10);
 
-  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
-  --sheen: none;
+  --edge: none;
+  /* Cards are not flat white — they fade to the palest step of the brand hue.
+     It is a 3% shift and it is the whole reason the reference's cards look
+     considered rather than default. */
+  --sheen: linear-gradient(180deg, #ffffff 0%, #f2f7fe 100%);
 
-  /* The sidebar is dark even in the light theme. That contrast — a dark rail
-     against white content — is the single strongest signature of this layout,
-     and it is why the sidebar needs its own tokens rather than reusing the
-     page surface. */
-  --sidebar: #0d1b2f;
-  --sidebar-foreground: #e6edf8;
-  --sidebar-muted: #8698b2;
-  --sidebar-border: #1b2c45;
-  --sidebar-active: #10386f;
+  /* The sidebar is light, like everything else. An earlier version made it a
+     dark rail for contrast, which is a perfectly good pattern but not this
+     one — the reference has no dark surface anywhere, and one dark column was
+     the single loudest thing making the app look like a different product. */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #111b29;
+  --sidebar-muted: #5b6b82;
+  --sidebar-border: #e3ebf7;
+  --sidebar-active: #e6f0ff;
+
+  --radius: 1rem;
 }
 
 @theme inline {
@@ -205,9 +215,18 @@ body::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  /* A clean flat ground, not a wash. The reference is white space and a
-     single loud accent, and a tinted gradient behind everything undoes both. */
-  background: none;
+  /* Two wide, faint blue glows in opposite corners. They are barely visible on
+     their own — the point is that the page is never a single flat fill, so
+     large empty areas still have somewhere to go. */
+  background:
+    radial-gradient(60rem 40rem at 8% -8%, rgb(17 103 232 / 0.07), transparent 65%),
+    radial-gradient(52rem 36rem at 100% 4%, rgb(61 139 255 / 0.08), transparent 60%);
+}
+
+:root[data-theme="dark"] body::before {
+  background:
+    radial-gradient(60rem 40rem at 8% -8%, rgb(77 155 255 / 0.10), transparent 65%),
+    radial-gradient(52rem 36rem at 100% 4%, rgb(77 155 255 / 0.07), transparent 60%);
 }
 
 h1, h2, h3 {

@@ -8,7 +8,10 @@ export function Card({
   return (
     <div
       className={cn(
-        "lit sheen rounded-lg border border-border bg-card text-card-foreground",
+        // The border does the separating, not the shadow — on a tinted page a
+        // heavy drop shadow reads as grime, while an on-hue hairline reads as
+        // an edge. The shadow is only there to lift the card off the wash.
+        "sheen rounded-lg border border-border bg-card text-card-foreground shadow-xs",
         className,
       )}
       {...props}
@@ -31,7 +34,7 @@ export function CardTitle({
 }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
-      className={cn("text-[15px] font-semibold leading-none", className)}
+      className={cn("text-base font-bold leading-none", className)}
       {...props}
     />
   );
@@ -158,9 +161,11 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <h1 className="text-[26px] font-semibold leading-tight">{title}</h1>
+        <h1 className="text-[30px] font-extrabold leading-tight tracking-tight">
+          {title}
+        </h1>
         {description && (
-          <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             {description}
           </p>
         )}

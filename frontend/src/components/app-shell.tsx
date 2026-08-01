@@ -101,7 +101,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-sidebar-muted hover:bg-white/10 lg:hidden"
+            className="rounded-full p-1 text-sidebar-muted hover:bg-accent lg:hidden"
             aria-label="Close navigation"
           >
             <X className="size-4" />
@@ -120,18 +120,12 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
                 href={item.href}
                 onClick={onClose}
                 className={cn(
-                  "group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "group relative flex items-center gap-3 rounded-full px-3.5 py-2.5 text-sm font-medium transition-colors",
                   active
-                    ? "bg-sidebar-active text-white"
-                    : "text-sidebar-muted hover:bg-white/5 hover:text-sidebar-foreground",
+                    ? "bg-sidebar-active font-semibold text-primary"
+                    : "text-sidebar-muted hover:bg-accent hover:text-foreground",
                 )}
               >
-                {/* A rail on the active item, so the current page is legible
-                    from the corner of the eye rather than needing a colour
-                    comparison between two similar tints. */}
-                {active && (
-                  <span className="absolute inset-y-1.5 -left-3 w-1 rounded-r-full bg-primary" />
-                )}
                 <item.icon className="size-[18px] shrink-0" />
                 {item.label}
               </Link>
@@ -148,11 +142,13 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 function Wordmark() {
   return (
     <Link href="/dashboard" className="flex items-center gap-2.5">
-      <span className="brand-gradient lit flex size-8 items-center justify-center rounded-lg text-white">
-        <Radar className="size-[17px]" />
+      <span className="brand-gradient flex size-9 items-center justify-center rounded-xl text-white shadow-sm">
+        <Radar className="size-[18px]" />
       </span>
       <span className="flex flex-col leading-none">
-        <span className="text-[15px] font-semibold tracking-tight text-white">AutoQA</span>
+        <span className="text-[15px] font-bold tracking-tight text-sidebar-foreground">
+          AutoQA
+        </span>
         <span className="mt-1 text-[11px] text-sidebar-muted">
           Test automation
         </span>
@@ -178,8 +174,8 @@ function UserCard() {
 
   return (
     <div className="border-t border-sidebar-border p-3">
-      <div className="flex items-center gap-3 rounded-md px-2 py-2">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-sidebar-foreground">
+      <div className="flex items-center gap-3 rounded-full px-2 py-2">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary-subtle text-[11px] font-bold text-primary">
           {initials}
         </span>
         <span className="min-w-0 flex-1 leading-tight">
@@ -195,7 +191,7 @@ function UserCard() {
             logout();
             router.replace("/login");
           }}
-          className="rounded-md p-1.5 text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-foreground"
+          className="rounded-full p-1.5 text-sidebar-muted transition-colors hover:bg-accent hover:text-foreground"
           title="Sign out"
           aria-label="Sign out"
         >
