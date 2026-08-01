@@ -15,29 +15,29 @@
    - The accent is a gradient, not a colour. One flat indigo across every
      button is what makes an interface read as a default template. */
 :root[data-theme="dark"] {
-  --background: #080b14;
-  --surface: #0d1120;
-  --card: #141a2b;
-  --card-elevated: #1a2136;
-  --card-foreground: #e8ecf6;
-  --foreground: #e8ecf6;
+  --background: #0b0b18;
+  --surface: #121221;
+  --card: #191930;
+  --card-elevated: #20203a;
+  --card-foreground: #eceef6;
+  --foreground: #eceef6;
 
-  --primary: #818cf8;
-  --primary-hover: #a5b4fc;
-  --primary-foreground: #10132b;
-  --primary-subtle: #1e2149;
-  --primary-glow: rgb(129 140 248 / 0.35);
+  --primary: #a78bfa;
+  --primary-hover: #c4b5fd;
+  --primary-foreground: #1b1033;
+  --primary-subtle: #2a1c4a;
+  --primary-glow: rgb(167 139 250 / 0.32);
 
-  --secondary: #1e2740;
-  --secondary-foreground: #e8ecf6;
+  --secondary: #23233d;
+  --secondary-foreground: #eceef6;
 
-  --muted: #171e30;
-  --muted-foreground: #8b97b4;
+  --muted: #1c1c32;
+  --muted-foreground: #9497ad;
 
-  --accent: #1e2740;
-  --accent-foreground: #e8ecf6;
+  --accent: #23233d;
+  --accent-foreground: #eceef6;
 
-  --destructive: #f2707a;
+  --destructive: #ff7a8c;
   --destructive-foreground: #ffffff;
   --destructive-subtle: #2a161b;
 
@@ -47,12 +47,12 @@
   --warning: #fbbf24;
   --warning-subtle: #2a2109;
 
-  --border: #232c45;
-  --border-strong: #35415f;
-  --input: #2a3453;
-  --ring: #818cf8;
+  --border: #282844;
+  --border-strong: #3b3b60;
+  --input: #2f2f52;
+  --ring: #a78bfa;
 
-  --radius: 0.75rem;
+  --radius: 0.625rem;
 
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
@@ -63,64 +63,62 @@
      single cheapest thing that makes a dark interface look lit rather than
      painted. */
   --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.05);
-  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 45%);
+  --sheen: none;
 }
 
 :root,
 :root[data-theme="light"] {
-  /* Cool blue-slate. Third attempt, and the reasoning is subtractive: white
-     had no depth, warm stone read as a document rather than a tool. This is
-     unmistakably tinted — you can tell it is blue, not "off-white" — with
-     enough contrast between surface and card that the hierarchy needs no
-     shadow to be legible.
+  /* Structure taken from testRigor: white cards on a light grey page, very
+     dark navy ink rather than black, heavy tight headings, one loud accent,
+     and a flat ground with no wash.
 
-     The accent is vivid indigo, and it is the only saturated colour in the
-     interface apart from status. Everything else is one hue at different
-     lightnesses, which is what makes a palette read as chosen. */
-  --background: #dfe4ee;
-  --surface: #d3daea;
-  --card: #f7f9fd;
+     The accent is violet, not their red, and deliberately so: red, amber and
+     green already mean failed, warning and passed here. A brand colour that
+     collides with a status colour makes every button look like a verdict. */
+  --background: #f3f4f6;
+  --surface: #e9eaef;
+  --card: #ffffff;
   --card-elevated: #ffffff;
-  --card-foreground: #0d1526;
-  --foreground: #0d1526;
+  --card-foreground: #14142b;
+  --foreground: #14142b;
 
-  --primary: #4338ca;
-  --primary-hover: #3730a3;
+  --primary: #6d28d9;
+  --primary-hover: #5b21b6;
   --primary-foreground: #ffffff;
-  --primary-subtle: #e0e2fb;
-  --primary-glow: rgb(67 56 202 / 0.30);
+  --primary-subtle: #f1e9fe;
+  --primary-glow: rgb(109 40 217 / 0.28);
 
-  --secondary: #e3e8f3;
-  --secondary-foreground: #1e293b;
+  --secondary: #eceef3;
+  --secondary-foreground: #14142b;
 
-  --muted: #eef1f8;
-  --muted-foreground: #55617a;
+  --muted: #f5f6f9;
+  --muted-foreground: #5b5f73;
 
-  --accent: #e3e8f3;
-  --accent-foreground: #1e293b;
+  --accent: #eceef3;
+  --accent-foreground: #14142b;
 
   --destructive: #d92d20;
   --destructive-foreground: #ffffff;
-  --destructive-subtle: #fde9e7;
+  --destructive-subtle: #ffebeb;
 
-  --success: #067647;
-  --success-subtle: #e3f6ec;
+  --success: #0a8a4a;
+  --success-subtle: #e6f6ed;
 
-  --warning: #b54708;
-  --warning-subtle: #fdf0e0;
+  --warning: #b45309;
+  --warning-subtle: #fdf3e3;
 
-  --border: #c9d2e4;
-  --border-strong: #a9b6d0;
-  --input: #bfcadf;
-  --ring: #4338ca;
+  --border: #e2e4ea;
+  --border-strong: #c5c9d4;
+  --input: #d8dbe4;
+  --ring: #6d28d9;
 
-  --shadow-xs: 0 1px 2px 0 rgb(13 21 38 / 0.06);
-  --shadow-sm: 0 1px 3px 0 rgb(13 21 38 / 0.10), 0 1px 2px -1px rgb(13 21 38 / 0.06);
-  --shadow-md: 0 10px 18px -6px rgb(13 21 38 / 0.14), 0 3px 6px -3px rgb(13 21 38 / 0.08);
-  --shadow-lg: 0 24px 38px -10px rgb(13 21 38 / 0.18), 0 8px 14px -8px rgb(13 21 38 / 0.10);
+  --shadow-xs: 0 1px 2px 0 rgb(20 20 43 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(20 20 43 / 0.08), 0 1px 2px -1px rgb(20 20 43 / 0.05);
+  --shadow-md: 0 10px 20px -6px rgb(20 20 43 / 0.10), 0 3px 6px -3px rgb(20 20 43 / 0.06);
+  --shadow-lg: 0 24px 40px -10px rgb(20 20 43 / 0.14), 0 8px 14px -8px rgb(20 20 43 / 0.08);
 
-  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.85);
-  --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.5), transparent 45%);
+  --edge: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
+  --sheen: none;
 }
 
 @theme inline {
@@ -185,14 +183,14 @@ body::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background:
-    radial-gradient(55rem 38rem at 12% -8%, var(--primary-subtle), transparent 62%),
-    radial-gradient(45rem 30rem at 100% 2%, var(--secondary), transparent 55%);
-  opacity: 0.85;
+  /* A clean flat ground, not a wash. The reference is white space and a
+     single loud accent, and a tinted gradient behind everything undoes both. */
+  background: none;
 }
 
 h1, h2, h3 {
-  letter-spacing: -0.02em;
+  letter-spacing: -0.028em;
+  font-weight: 700;
 }
 
 /* Tabular figures so durations and counts do not jitter as they update during
@@ -218,7 +216,7 @@ h1, h2, h3 {
 /* The brand gradient. One accent used deliberately in a few places beats an
    evenly coloured interface. */
 .brand-gradient {
-  background-image: linear-gradient(135deg, #4338ca 0%, #6366f1 45%, #818cf8 100%);
+  background-image: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 55%, #a78bfa 100%);
 }
 
 .brand-text {

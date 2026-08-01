@@ -21,7 +21,6 @@ import { api } from "@/lib/api";
 import {
   BROWSER_LABEL,
   RUN_BADGE,
-  formatDuration,
   type Browser,
   type Project,
   type TestResult,
@@ -34,7 +33,7 @@ import { RunTrend, type TrendPoint } from "@/components/run-trend";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, EmptyState } from "@/components/ui/card";
-import { Stat, StatRow } from "@/components/ui/stat";
+import { Hero, Meter } from "@/components/ui/stat";
 import { SkeletonRows } from "@/components/ui/skeleton";
 
 export default function DashboardPage() {
@@ -148,77 +147,70 @@ function Dashboard() {
         </Link>
       </div>
 
-      <StatRow>
-        <Stat
-          label="Test suites"
-          value={suites.length}
-          hint={`in ${projects.length} project${projects.length === 1 ? "" : "s"}`}
-        />
-        <Stat
-          label="Pass rate"
-          value={passRate === null ? "—" : `${passRate}%`}
-          tone={passRate === null ? "muted" : passRate === 100 ? "success" : passRate >= 80 ? "warning" : "danger"}
-          hint={totalTests ? `${totalPassed} of ${totalTests} tests run` : "nothing run yet"}
-        />
-        <Stat
-          label="Last run"
-          value={latest ? `${latest.passed}/${latest.total}` : "—"}
-          tone={
-            !latest || latest.status === "cancelled"
-              ? "muted"
-              : latest.failed > 0
-                ? "danger"
-                : "success"
-          }
-          hint={
-            latest
-              ? `${latest.status}${latest.duration_ms ? ` · ${formatDuration(latest.duration_ms)}` : ""}`
-              : "not run yet"
-          }
-        />
-        <Stat
-          label="Needs attention"
-          value={failures.length}
-          tone={failures.length ? "danger" : "success"}
-          hint={failures.length ? "failing tests to triage" : "nothing failing"}
-        />
-      </StatRow>
+      {/* One hero, and the supporting numbers deliberately smaller. Five
+          equal tiles is five things shouting at the same volume, which is the
+          same as none of them being important. */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+        <Card className="flex flex-col justify-between gap-6 p-5">
+          <Hero
+            label="Pass rate"
+            value={passRate === null ? "—" : `${passRate}%`}
+            tone={
+              passRate === null
+                ? "muted"
+                : passRate === 100
+                  ? "success"
+                  : passRate >= 80
+                    ? "warning"
+                    : "danger"
+            }
+            hint={
+              totalTests
+                ? `${totalPassed} of ${totalTests} tests across ${finished.length} run${finished.length === 1 ? "" : "s"}`
+                : "nothing run yet"
+            }
+          >
+            <Meter
+              className="mt-4"
+              value={passRate ?? 0}
+              tone={
+                passRate === null
+                  ? "muted"
+                  : passRate === 100
+                    ? "success"
+                    : passRate >= 80
+                      ? "warning"
+                      : "danger"
+              }
+            />
+          </Hero>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-        <Card>
+          <dl className="grid grid-cols-3 gap-3 border-t border-border pt-4">
+            <Mini label="Suites" value={suites.length} />
+            <Mini
+              label="Last run"
+              value={latest ? `${latest.passed}/${latest.total}` : "—"}
+              tone={latest && latest.failed > 0 ? "danger" : "default"}
+            />
+            <Mini
+              label="To triage"
+              value={failures.length}
+              tone={failures.length ? "danger" : "success"}
+            />
+          </dl>
+        </Card>
+
+        <Card className="flex flex-col">
           <CardHeader>
             <CardTitle>Runs over time</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex-1">
             <RunTrend points={trend} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Projects</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {projects.slice(0, 5).map((project) => (
-              <Link key={project.id} href={`/projects/${project.id}`} className="group">
-                <div className="flex items-center gap-2.5 rounded-md border border-border bg-muted/40 px-3 py-2.5 transition-all hover:border-border-strong hover:bg-card">
-                  <FolderKanban className="size-4 shrink-0 text-primary" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium">
-                      {project.name}
-                    </span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {project.base_url}
-                    </span>
-                  </span>
-                  <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                </div>
-              </Link>
-            ))}
           </CardContent>
         </Card>
       </div>
 
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
       <section>
         <h2 className="mb-2.5 flex items-center gap-2 text-sm font-semibold">
           <CircleAlert className="size-4 text-destructive" />
@@ -263,6 +255,29 @@ function Dashboard() {
         )}
       </section>
 
+      <section>
+        <h2 className="mb-2.5 text-sm font-semibold">Projects</h2>
+        <div className="flex flex-col gap-2">
+          {projects.slice(0, 6).map((project) => (
+            <Link key={project.id} href={`/projects/${project.id}`} className="group">
+              <Card className="flex items-center gap-2.5 px-4 py-3 transition-all hover:border-border-strong hover:shadow-md">
+                <FolderKanban className="size-4 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium">
+                    {project.name}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {project.base_url}
+                  </span>
+                </span>
+                <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </Card>
+            </Link>
+          ))}
+        </div>
+      </section>
+      </div>
+
       {suites.length === 0 && (
         <EmptyState
           icon={<FlaskConical />}
@@ -270,6 +285,34 @@ function Dashboard() {
           description="Open a project and record a session — the tests are written when you stop."
         />
       )}
+    </div>
+  );
+}
+
+/** A supporting number under the hero — deliberately quiet. */
+function Mini({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: "default" | "success" | "danger";
+}) {
+  const colour = {
+    default: "text-foreground",
+    success: "text-success",
+    danger: "text-destructive",
+  }[tone];
+
+  return (
+    <div>
+      <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </dt>
+      <dd className={`mt-0.5 text-lg font-semibold leading-none ${colour}`}>
+        {value}
+      </dd>
     </div>
   );
 }
