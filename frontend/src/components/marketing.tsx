@@ -1,13 +1,11 @@
 "use client";
 
-/** The public landing page.
+/** The home page.
  *
- *  Structured the way a product site is: what it does, proof that it works,
- *  how it works, what you get, and a way in. Every claim on it is something
- *  the product actually does — the numbers come from the real pipeline, and
- *  the sample code is what the generator really emits. A landing page that
- *  overstates gets found out on day one, and this one is read by the people
- *  who will use it that day.
+ *  Every claim on it is something the product actually does — the numbers come
+ *  from the real pipeline, and the sample code is what the generator really
+ *  emits. A landing page that overstates gets found out on day one, and this
+ *  one is read by the people who will use it that day.
  */
 
 import Link from "next/link";
@@ -18,59 +16,33 @@ import {
   FileText,
   Gauge,
   MonitorPlay,
-  Radar,
   ShieldCheck,
   Sparkles,
   Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Badge,
+  CodePanel,
+  CtaBand,
+  FeatureCard,
+  MarketingShell,
+  Section,
+} from "@/components/marketing/shell";
 
 export function Marketing() {
   return (
-    <div className="min-h-screen">
-      <Nav />
+    <MarketingShell>
       <Hero />
       <Proof />
       <HowItWorks />
       <Features />
-      <Closing />
-      <Footer />
-    </div>
-  );
-}
-
-function Nav() {
-  return (
-    <header className="sticky top-0 z-40 border-b border-border bg-card/85 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-6xl items-center gap-6 px-5 py-3.5 sm:px-8">
-        <Link href="/" className="flex items-center gap-2.5">
-          <span className="brand-gradient flex size-8 items-center justify-center rounded-lg text-white">
-            <Radar className="size-[17px]" />
-          </span>
-          <span className="text-[15px] font-bold tracking-tight">AutoQA</span>
-        </Link>
-
-        <nav className="ml-4 hidden items-center gap-6 text-sm font-medium text-muted-foreground md:flex">
-          <a href="#how" className="transition-colors hover:text-foreground">
-            How it works
-          </a>
-          <a href="#features" className="transition-colors hover:text-foreground">
-            Features
-          </a>
-        </nav>
-
-        <div className="ml-auto flex items-center gap-2">
-          <Link href="/login">
-            <Button variant="ghost" size="sm">
-              Sign in
-            </Button>
-          </Link>
-          <Link href="/register">
-            <Button size="sm">Get started</Button>
-          </Link>
-        </div>
-      </div>
-    </header>
+      <CtaBand title="Record your first test in a minute">
+        Add the application you want to test, press record, and use it. The test
+        is written by the time you stop.
+      </CtaBand>
+      <Assurances />
+    </MarketingShell>
   );
 }
 
@@ -90,10 +62,10 @@ function Hero() {
       />
 
       <div className="mx-auto max-w-4xl px-5 pb-16 pt-16 text-center sm:px-8 sm:pt-24">
-        <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-card px-3.5 py-1.5 text-[13px] font-medium text-primary shadow-xs">
+        <Badge>
           <Sparkles className="size-3.5" />
           Record once. AutoQA writes the rest.
-        </span>
+        </Badge>
 
         <h1 className="mt-6 text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-5xl md:text-6xl">
           Test automation
@@ -115,9 +87,9 @@ function Hero() {
               <ArrowRight />
             </Button>
           </Link>
-          <Link href="/login">
+          <Link href="/how-it-works">
             <Button size="lg" variant="outline">
-              Sign in
+              See how it works
             </Button>
           </Link>
         </div>
@@ -138,7 +110,7 @@ function CodeSample() {
   return (
     <div className="mx-auto max-w-4xl px-5 pb-16 sm:px-8">
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <div className="sheen rounded-xl border border-border bg-card p-5 shadow-xs">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             What you did
           </p>
@@ -150,7 +122,7 @@ function CodeSample() {
               'Clicked "Login"',
             ].map((step, i) => (
               <li key={step} className="flex items-start gap-2.5">
-                <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-primary-subtle text-[10px] font-semibold text-primary">
+                <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-primary-subtle text-[10px] font-bold text-primary">
                   {i + 1}
                 </span>
                 {step}
@@ -159,12 +131,9 @@ function CodeSample() {
           </ol>
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-border bg-[#0d1b2f] p-5 shadow-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            What AutoQA wrote
-          </p>
-          <pre className="mt-3 overflow-x-auto font-mono text-[12px] leading-relaxed text-slate-200">
-            <code>{`def test_signs_in(page: Page) -> None:
+        <CodePanel
+          label="What AutoQA wrote"
+          code={`def test_signs_in(page: Page) -> None:
     login = LoginPage(page)
 
     page.goto(BASE_URL + '/login')
@@ -172,9 +141,8 @@ function CodeSample() {
     login.password_input.fill('••••••••')
     login.login_button.click()
 
-    expect(page).to_have_url(DASHBOARD)`}</code>
-          </pre>
-        </div>
+    expect(page).to_have_url(DASHBOARD)`}
+        />
       </div>
     </div>
   );
@@ -189,16 +157,18 @@ function Proof() {
   ];
 
   return (
-    <section className="border-y border-border bg-card">
+    <div className="border-y border-border bg-card">
       <div className="mx-auto grid max-w-6xl gap-6 px-5 py-12 sm:grid-cols-2 sm:px-8 lg:grid-cols-4">
         {items.map((item) => (
           <div key={item.label} className="text-center">
-            <p className="text-3xl font-extrabold text-primary">{item.value}</p>
+            <p className="text-4xl font-extrabold tracking-tight text-primary">
+              {item.value}
+            </p>
             <p className="mt-1 text-[13px] text-muted-foreground">{item.label}</p>
           </div>
         ))}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -227,39 +197,39 @@ function HowItWorks() {
   ];
 
   return (
-    <section id="how" className="mx-auto max-w-6xl px-5 py-20 sm:px-8">
-      <div className="max-w-2xl">
-        <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
-          Four steps, and you write none of them
-        </h2>
-        <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-          The part that runs is ordinary Python, generated by ordinary code — so
-          the same recording gives the same test every time. AI improves the
-          naming and explains failures; it never sits in the path of your tests
-          working.
-        </p>
-      </div>
-
-      <ol className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <Section
+      title="Four steps, and you write"
+      accent="none of them"
+      lead="The part that runs is ordinary Python, generated by ordinary code — so the same recording gives the same test every time. AI improves the naming and explains failures; it never sits in the path of your tests working."
+    >
+      <ol className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {steps.map((step, index) => (
-          <li
-            key={step.title}
-            className="rounded-xl border border-border bg-card p-5 shadow-sm transition-all hover:border-border-strong hover:shadow-md"
-          >
-            <span className="flex size-10 items-center justify-center rounded-lg bg-primary-subtle text-primary [&_svg]:size-5">
-              {step.icon}
-            </span>
-            <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Step {index + 1}
-            </p>
-            <h3 className="mt-1 text-lg font-bold">{step.title}</h3>
-            <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
-              {step.body}
-            </p>
+          <li key={step.title}>
+            <div className="sheen h-full rounded-xl border border-border bg-card p-5 shadow-xs transition-all hover:border-primary/40 hover:shadow-md">
+              <span className="flex size-10 items-center justify-center rounded-xl bg-primary-subtle text-primary [&_svg]:size-5">
+                {step.icon}
+              </span>
+              <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Step {index + 1}
+              </p>
+              <h3 className="mt-1 text-lg font-bold">{step.title}</h3>
+              <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
+                {step.body}
+              </p>
+            </div>
           </li>
         ))}
       </ol>
-    </section>
+
+      <div className="mt-8">
+        <Link href="/how-it-works">
+          <Button variant="outline">
+            The whole pipeline, in detail
+            <ArrowRight />
+          </Button>
+        </Link>
+      </div>
+    </Section>
   );
 }
 
@@ -298,94 +268,43 @@ function Features() {
   ];
 
   return (
-    <section id="features" className="border-y border-border bg-card">
-      <div className="mx-auto max-w-6xl px-5 py-20 sm:px-8">
-        <div className="max-w-2xl">
-          <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
-            Built for the way QA actually works
-          </h2>
-          <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-            Recorded tests have a reputation for breaking the first time anyone
-            touches the UI. Most of this product is the answer to that.
-          </p>
-        </div>
-
-        <div className="mt-10 grid gap-x-8 gap-y-9 md:grid-cols-2 lg:grid-cols-3">
-          {features.map((feature) => (
-            <div key={feature.title}>
-              <span className="flex size-9 items-center justify-center rounded-lg bg-primary-subtle text-primary [&_svg]:size-[18px]">
-                {feature.icon}
-              </span>
-              <h3 className="mt-3.5 text-base font-bold">{feature.title}</h3>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-                {feature.body}
-              </p>
-            </div>
-          ))}
-        </div>
+    <Section
+      tinted
+      title="Built for the way QA"
+      accent="actually works"
+      lead="Recorded tests have a reputation for breaking the first time anyone touches the UI. Most of this product is the answer to that."
+    >
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {features.map((feature) => (
+          <FeatureCard key={feature.title} icon={feature.icon} title={feature.title}>
+            {feature.body}
+          </FeatureCard>
+        ))}
       </div>
-    </section>
-  );
-}
 
-function Closing() {
-  return (
-    <section className="mx-auto max-w-4xl px-5 py-20 text-center sm:px-8">
-      <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
-        Record your first test in a minute
-      </h2>
-      <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-muted-foreground">
-        Add the application you want to test, press record, and use it. The test
-        is written by the time you stop.
-      </p>
-
-      <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-        <Link href="/register">
-          <Button size="lg">
-            Get started
+      <div className="mt-8">
+        <Link href="/features">
+          <Button variant="outline">
+            All features
             <ArrowRight />
           </Button>
         </Link>
       </div>
+    </Section>
+  );
+}
 
-      <ul className="mx-auto mt-8 flex max-w-lg flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[13px] text-muted-foreground">
-        {[
-          "No credit card",
-          "Runs on your machine",
-          "AI features optional",
-        ].map((item) => (
+function Assurances() {
+  return (
+    <ul className="mx-auto -mt-12 mb-16 flex max-w-lg flex-wrap items-center justify-center gap-x-6 gap-y-2 px-5 text-[13px] text-muted-foreground">
+      {["No credit card", "Runs on your machine", "AI features optional"].map(
+        (item) => (
           <li key={item} className="flex items-center gap-1.5">
             <Check className="size-3.5 text-success" />
             {item}
           </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="border-t border-border bg-card">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-5 py-8 sm:px-8">
-        <span className="flex items-center gap-2.5">
-          <span className="brand-gradient flex size-7 items-center justify-center rounded-lg text-white">
-            <Radar className="size-4" />
-          </span>
-          <span className="text-sm font-bold">AutoQA</span>
-        </span>
-        <p className="text-[13px] text-muted-foreground">
-          AI-powered test automation.
-        </p>
-        <div className="ml-auto flex items-center gap-4 text-[13px]">
-          <Link href="/login" className="text-muted-foreground hover:text-foreground">
-            Sign in
-          </Link>
-          <Link href="/register" className="font-medium text-primary hover:underline">
-            Get started
-          </Link>
-        </div>
-      </div>
-    </footer>
+        ),
+      )}
+    </ul>
   );
 }
