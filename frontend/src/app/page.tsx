@@ -66,25 +66,13 @@ function Workspace() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    // Awaited inside the IIFE rather than called directly, which keeps the
+    // state updates asynchronous — and avoids duplicating loadSuites here,
+    // which is what the first version of this did.
     void (async () => {
-      try {
-        const list = await api.suites.list();
-        if (cancelled) return;
-        setSuites(list);
-        setSelected((current) => current ?? list[0]?.id ?? null);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Could not load your tests");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      await loadSuites();
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [loadSuites]);
 
   useEffect(() => {
     if (selected === null) return;
