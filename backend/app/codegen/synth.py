@@ -73,6 +73,24 @@ VERBS: dict[str, Verb] = {
         True,
         "expect(page).not_to_have_url(re.compile({value}))",
     ),
+    # Masking is an attribute, not visibility. A password field is on screen and
+    # `to_be_hidden()` is false for it whether or not the characters are shown,
+    # so "the password is not displayed" had no way to be expressed — the model
+    # reached for expect_hidden and produced a test that could only ever be red.
+    "expect_masked": Verb(
+        ActionType.ASSERT,
+        True,
+        False,
+        "expect({target}).to_have_attribute('type', 'password')",
+    ),
+    # After the reveal toggle. A separate case, because it asserts the opposite
+    # of the one above and depends on an action having been taken.
+    "expect_not_masked": Verb(
+        ActionType.ASSERT,
+        True,
+        False,
+        "expect({target}).not_to_have_attribute('type', 'password')",
+    ),
 }
 
 # Actions that only observe. A case made of nothing but these passes trivially.
@@ -82,7 +100,12 @@ _ASSERTIONS = {
     "expect_text",
     "expect_url",
     "expect_not_url",
+    "expect_masked",
+    "expect_not_masked",
 }
+
+#: Verbs whose value is a URL fragment that gets wrapped in `re.compile`.
+_URL_ASSERTIONS = {"expect_url", "expect_not_url"}
 
 
 def synthesise(
@@ -142,8 +165,23 @@ def synthesise(
             used_pages.add(class_name)
             target_expr = f"{page_var}.{locator_name}"
 
-        if str(raw.action).strip().lower() in ("expect_url", "expect_not_url"):
+        # The step's human-readable fields keep the value as written. Escaping
+        # is a detail of compiling to a regex, and `\?password\=` in a test-case
+        # sheet is noise to whoever reads it.
+        readable = value
+
+        action = str(raw.action).strip().lower()
+        if action in _URL_ASSERTIONS:
             needs_regex = True
+            # The value is a fragment of a URL, not a pattern someone wrote.
+            # Unescaped it is at best loose and at worst fatal:
+            #
+            #   re.compile('?password=')  ->  re.error: nothing to repeat
+            #
+            # which is a generated test that errors before it asserts anything.
+            # The quiet version is worse, because it looks fine: the dots in
+            # `re.compile('app.example.com')` match any character at all.
+            value = re.escape(str(value))
 
         line = verb.render.format(
             target=target_expr or "",
@@ -158,10 +196,10 @@ def synthesise(
                 description=_clean(getattr(raw, "description", "") or str(raw.action)),
                 page_var=page_var,
                 locator_name=locator_name,
-                input_data=str(value) if value is not None and verb.action
+                input_data=str(readable) if readable is not None and verb.action
                 is not ActionType.ASSERT else None,
-                expected_result=str(value)
-                if verb.action is ActionType.ASSERT and value is not None
+                expected_result=str(readable)
+                if verb.action is ActionType.ASSERT and readable is not None
                 else None,
             )
         )
@@ -207,14 +245,22 @@ def _locator_index(pages: list[PageSpec]) -> dict[str, tuple[str, str]]:
 
 
 def _assert_meaningful(steps: list[object]) -> None:
-    """Refuse a case that never checks anything.
+    """Refuse a case that never checks anything, or never does anything.
 
     A test with no assertion passes whether or not the feature works, which is
     worse than no test: it reports green and hides the bug.
+
+    A test with nothing *but* assertions is the mirror image. It never opens a
+    page, so it runs against a blank one and reports on nothing — the comment
+    on `_ASSERTIONS` always said as much, but only the first half was enforced.
     """
     actions = {str(getattr(s, "action", "")).strip().lower() for s in steps}
+
     if not (actions & _ASSERTIONS):
         raise SynthesisError("no assertion; the test would pass even when broken")
+
+    if not (actions - _ASSERTIONS):
+        raise SynthesisError("only assertions; the test never opens or does anything")
 
 
 def _clean(text: str) -> str:

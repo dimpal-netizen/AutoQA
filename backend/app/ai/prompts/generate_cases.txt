@@ -42,6 +42,8 @@ Each step must use one of these actions, and nothing else:
 | expect_text     | any element           | the text it should contain   |
 | expect_url      | -                     | text the URL should contain  |
 | expect_not_url  | -                     | text the URL must NOT contain|
+| expect_masked   | a password input      | -                            |
+| expect_not_masked | a password input    | -                            |
 
 Rules, all of which matter:
 
@@ -52,6 +54,19 @@ Rules, all of which matter:
   A test that asserts nothing passes even when the feature is broken.
 - Assert what the user sees, not what the database holds. You can only observe
   the page.
+- `expect_hidden` means the element is NOT ON THE PAGE. It does not mean
+  masked, obscured, greyed out, disabled, or scrolled out of view. Only use it
+  on an element the recorded steps showed appearing and disappearing — asserting
+  that something you never saw disappear is now absent is a guess, and site
+  navigation in particular is present on every page including error pages.
+- A password field is visible; its characters are masked. "The password is not
+  displayed" is `expect_masked`, never `expect_hidden`. If the form has a
+  reveal toggle, clicking it and then asserting `expect_not_masked` is a
+  separate test case.
+- Never assert a page is broken by expecting a normal element to be gone. If
+  the recording gives you no evidence of what a bad URL or a rejected input
+  actually shows, use `expect_not_url` for where it must not end up, and write
+  nothing else.
 - For a negative case, expect the app to STAY on the same page - use
   expect_not_url with the path a success would reach. Do not guess the wording
   of an error message you have not seen.
