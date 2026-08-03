@@ -23,6 +23,7 @@ import {
   FlaskConical,
   FolderOpen,
   RefreshCw,
+  Trash2,
   Video,
 } from "lucide-react";
 import Link from "next/link";
@@ -31,10 +32,13 @@ import {
   RELIABLE_RANK,
   SELECTOR_RANK,
   formatDuration,
+  formatRelative,
+  hasRole,
   type TestRun,
   type TestSuite,
   type TestSuiteDetail,
 } from "@/lib/types";
+import { useAuthStore } from "@/stores/auth-store";
 import { GenerateCases } from "@/components/generate-cases";
 import { RunPanel } from "@/components/run-panel";
 import { ScriptLocation } from "@/components/script-location";
@@ -49,17 +53,57 @@ export function SuiteWorkspace({
   suites,
   onSelect,
   onChange,
+  onDeleted,
   lastRun,
 }: {
   suite: TestSuiteDetail;
   suites: TestSuite[];
   onSelect: (id: number) => void;
   onChange: (suite: TestSuiteDetail) => void;
+  /** The suite is gone — the parent owns the list, so it reloads and picks
+   *  whatever is left. */
+  onDeleted: () => void;
   lastRun: TestRun | null;
 }) {
   const [tab, setTab] = useState("cases");
   const [regenerating, setRegenerating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const user = useAuthStore((s) => s.user);
+  const canDelete = hasRole(user, "qa_engineer");
+
+  // Names collide when the same site is recorded twice; the pills then need a
+  // date to tell them apart.
+  const duplicateNames = new Set(
+    suites
+      .map((s) => s.name)
+      .filter((name, i, all) => all.indexOf(name) !== i),
+  );
+
+  async function remove() {
+    // Deleting a suite takes its test cases and run history with it, and there
+    // is no undo — so the prompt names the suite and its age, which is the only
+    // thing distinguishing two recordings of the same site.
+    const confirmed = window.confirm(
+      `Delete "${suite.name}" (created ${formatRelative(suite.created_at)})?\n\n` +
+        `Its ${suite.cases.length} test case(s) and run history go with it. ` +
+        `This cannot be undone.\n\n` +
+        `The recording itself is kept — you can generate from it again.`,
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.suites.remove(suite.id);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete this suite");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function regenerate() {
     if (!suite.recording_id) return;
@@ -103,7 +147,16 @@ export function SuiteWorkspace({
                     : "border-border bg-card/60 text-muted-foreground hover:border-border-strong hover:text-foreground",
                 )}
               >
-                {option.name}
+                <span className="block truncate">{option.name}</span>
+                {/* Recording a site twice gives two suites with the same name,
+                    and then the only way to tell them apart is when they were
+                    made. Shown only when the names actually collide, so it is
+                    absent in the ordinary case. */}
+                {duplicateNames.has(option.name) && (
+                  <span className="block text-[11px] font-normal opacity-70">
+                    {formatRelative(option.created_at)}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -115,32 +168,47 @@ export function SuiteWorkspace({
           <h2 className="truncate text-xl font-extrabold tracking-tight">
             {suite.name}
           </h2>
-          {suite.description && (
-            <p className="mt-1 text-[13px] text-muted-foreground">
-              {suite.description}
-            </p>
-          )}
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            {suite.description
+              ? suite.description
+              : `Created ${formatRelative(suite.created_at)}`}
+          </p>
         </div>
 
-        {suite.recording_id && (
-          <div className="flex shrink-0 items-center gap-2">
-            <Link href={`/recordings/${suite.recording_id}`}>
-              <Button variant="ghost" size="sm">
-                <Video />
-                Recording
+        <div className="flex shrink-0 items-center gap-2">
+          {suite.recording_id && (
+            <>
+              <Link href={`/recordings/${suite.recording_id}`}>
+                <Button variant="ghost" size="sm">
+                  <Video />
+                  Recording
+                </Button>
+              </Link>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={regenerating}
+                onClick={regenerate}
+              >
+                <RefreshCw className={regenerating ? "animate-spin" : ""} />
+                {regenerating ? "Regenerating…" : "Regenerate"}
               </Button>
-            </Link>
+            </>
+          )}
+
+          {canDelete && (
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
-              disabled={regenerating}
-              onClick={regenerate}
+              disabled={deleting}
+              onClick={remove}
+              className="text-muted-foreground hover:bg-destructive-subtle hover:text-destructive"
             >
-              <RefreshCw className={regenerating ? "animate-spin" : ""} />
-              {regenerating ? "Regenerating…" : "Regenerate"}
+              <Trash2 />
+              {deleting ? "Deleting…" : "Delete"}
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* One banded row of figures rather than four separate boxes. Four

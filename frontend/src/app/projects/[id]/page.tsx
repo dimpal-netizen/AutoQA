@@ -179,6 +179,15 @@ function ProjectWorkspace({ id }: { id: number }) {
             setDetail(updated);
             void load();
           }}
+          onDeleted={() => {
+            // Clear the selection before reloading. `load` only fills it in
+            // when it is null, so leaving it pointing at the deleted suite
+            // would leave the workspace stuck on a suite that is gone.
+            setSelected(null);
+            setDetail(null);
+            setLastRun(null);
+            void load();
+          }}
         />
       ) : (
         <Skeleton className="h-96 w-full" />
