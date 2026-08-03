@@ -33,9 +33,15 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
 export function TestCaseList({ cases }: { cases: TestCase[] }) {
+  // The recording is not a test case, it is the session every case came from —
+  // one row of 33 steps sitting above a list of focused three-step checks,
+  // answering a different question and skewing every column it appears in. It
+  // has its own place: the Recording link in the suite header.
+  const testCases = cases.filter((c) => c.category !== "recorded");
+
   // One case is the one you came to read; a suite of fifteen is a list to scan.
   const [open, setOpen] = useState<Set<number>>(
-    () => new Set(cases.length === 1 ? cases.map((c) => c.id) : []),
+    () => new Set(testCases.length === 1 ? testCases.map((c) => c.id) : []),
   );
 
   function toggle(id: number) {
@@ -46,20 +52,22 @@ export function TestCaseList({ cases }: { cases: TestCase[] }) {
     });
   }
 
-  if (cases.length === 0) {
+  if (testCases.length === 0) {
     return (
       <Card>
         <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          No test cases yet.
+          {cases.length > 0
+            ? "No test cases yet — generate them from your recording above."
+            : "No test cases yet."}
         </CardContent>
       </Card>
     );
   }
 
-  // Category order carries meaning — recorded first, because it is the one that
-  // was real. Sorting by it keeps that without splitting the table up.
+  // Category order carries meaning, so sorting by it keeps the grouping
+  // visible without splitting the table up.
   const ordered = CATEGORY_ORDER.flatMap((category) =>
-    cases.filter((c) => c.category === category),
+    testCases.filter((c) => c.category === category),
   );
 
   return (

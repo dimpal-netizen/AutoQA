@@ -189,7 +189,9 @@ export function SuiteWorkspace({
             {
               id: "cases",
               label: "Test cases",
-              count: suite.cases.length,
+              // The generated cases, matching the rows in the table. The
+              // recording is counted in the stat strip above, not here.
+              count: generated,
               icon: <FlaskConical />,
             },
             {
