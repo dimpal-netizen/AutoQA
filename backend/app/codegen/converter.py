@@ -137,6 +137,19 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     for action in live:
         kind = ActionType(action["action_type"])
+
+        # The browser AutoQA launches starts on a blank page, and that first
+        # navigation gets recorded like any other. Left in, the generated test
+        # navigates away from the application it just opened and every step
+        # after it fails on an empty document.
+        if kind is ActionType.NAVIGATE and _is_blank(action):
+            continue
+
+        # A wheel event with no distance. Harmless but meaningless, and it is
+        # a step that can appear in a failure report as though it mattered.
+        if kind is ActionType.SCROLL and not _scroll_distance(action):
+            continue
+
         previous = result[-1] if result else None
 
         if previous is not None:
@@ -144,6 +157,15 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             # Only the final position of a scroll gesture matters.
             if kind is prev_kind is ActionType.SCROLL:
+                result[-1] = action
+                continue
+
+            # Hovering something and then acting on it is one intention, and
+            # Playwright hovers before it clicks anyway. Recording both doubles
+            # the number of ways the step can fail while testing nothing extra.
+            # A hover over a *different* element is kept: that is a menu being
+            # opened, which the next step depends on.
+            if prev_kind is ActionType.HOVER and _same_element(previous, action):
                 result[-1] = action
                 continue
 
@@ -173,6 +195,25 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+#: Pages a browser shows when it has nothing to show. None of them are the
+#: application under test, so none of them belong in a generated test.
+_BLANK_URLS = ("about:blank", "about://blank", "chrome://newtab", "edge://newtab")
+
+
+def _is_blank(action: dict[str, Any]) -> bool:
+    """Only `payload["url"]` is consulted: for a navigation that is where it
+    goes, while `action["url"]` is the page it left, and judging a destination
+    by its origin would drop the wrong steps."""
+    url = ((action.get("payload") or {}).get("url") or "").strip()
+    return not url or url.lower().rstrip("/") in _BLANK_URLS
+
+
+def _scroll_distance(action: dict[str, Any]) -> int:
+    """How far a scroll actually moved, in pixels."""
+    payload = action.get("payload") or {}
+    return abs(int(payload.get("x") or 0)) + abs(int(payload.get("y") or 0))
+
+
 def _same_element(a: dict[str, Any], b: dict[str, Any]) -> bool:
     first = best_selector(a.get("selectors") or [])
     second = best_selector(b.get("selectors") or [])
@@ -184,6 +225,32 @@ def _same_element(a: dict[str, Any], b: dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 # Page objects
 # ---------------------------------------------------------------------------
+def _is_identifier_segment(segment: str) -> bool:
+    """True when a URL path segment is a record id rather than a page name.
+
+    An id in the path becomes part of the page object's name if it is not
+    caught, and the result is a class called
+    `PropertiesCmryim584000q01p42kj4ts8qPage` that no longer matches anything
+    the next time the record changes.
+
+    Three shapes, all of which appear in real URLs:
+
+    - all digits — `/orders/1042/edit`
+    - a UUID — `/users/3f2504e0-4f89-11d3-9a0c-0305e82c3301`
+    - an opaque token: long, alphanumeric, and containing a digit. That last
+      condition is what separates `cmryim584000q01p42kj4ts8q` from a genuine
+      slug like `property-management`, and it is why the length floor is
+      generous — real page names rarely carry digits at all.
+    """
+    if not segment:
+        return False
+    if segment.isdigit():
+        return True
+    if re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", segment, re.I):
+        return True
+    return len(segment) >= 12 and segment.isalnum() and any(c.isdigit() for c in segment)
+
+
 def page_identity(url: str) -> tuple[str, str]:
     """(ClassName, module_name) for the page at `url`."""
     path = urlparse(url).path.strip("/")
@@ -191,7 +258,7 @@ def page_identity(url: str) -> tuple[str, str]:
         base = "home"
     else:
         # Skip path segments that are ids — /orders/1042/edit -> orders_edit
-        parts = [p for p in path.split("/") if p and not re.fullmatch(r"[0-9a-f-]{2,}", p)]
+        parts = [p for p in path.split("/") if not _is_identifier_segment(p)]
         base = "_".join(parts[-2:]) if parts else "home"
 
     module = snake_case(base, fallback="page")

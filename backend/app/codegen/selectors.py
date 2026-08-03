@@ -41,25 +41,50 @@ class Selector:
         )
 
 
-def best_selector(raw_selectors: list[dict[str, Any]]) -> Selector | None:
-    """Pick the most reliable candidate. Re-sorts rather than trusting order.
+#: Selectors that describe *where an element sits* rather than *what it is*.
+#: A structural path is invalidated by any change to the markup around it —
+#: a wrapper div, a reordered section, a new sibling — none of which change
+#: the element itself.
+_POSITIONAL = {
+    SelectorStrategy.CSS,
+    SelectorStrategy.XPATH,
+    SelectorStrategy.NTH_CHILD,
+}
 
-    Uniqueness outranks everything, including strategy. A selector that matched
-    two elements when recorded is not "slightly worse" — Playwright runs in
-    strict mode, so it raises rather than guessing, and the test fails every
-    single time:
+
+def best_selector(raw_selectors: list[dict[str, Any]]) -> Selector | None:
+    """Pick the most durable candidate. Re-sorts rather than trusting order.
+
+    Two properties compete, and the order between them is the whole decision.
+
+    *Uniqueness* is about working at all. Playwright runs in strict mode, so a
+    selector matching two elements raises rather than guessing:
 
         strict mode violation: get_by_placeholder("Email") resolved to 2 elements
 
-    A humble `#email` that matches exactly one element beats a beautiful
-    placeholder selector that matches two. Ranking is about surviving the next
-    UI change; uniqueness is about working at all, and working at all comes
-    first.
+    *Being descriptive* is about surviving the next UI change. `//body/section[2]
+    /div[1]/div[1]/a[1]` describes a position in a tree; wrap that section in one
+    more div and it points at nothing. `get_by_role("link", name="See All
+    Properties")` describes the element, and survives any redesign that keeps the
+    link saying what it says.
+
+    Descriptive wins. An earlier version put uniqueness first outright, which
+    meant a unique absolute XPath beat a role-and-name that happened to match two
+    links — trading a test that fails on the next deploy for one that fails now.
+    Neither is good, but `.first` on a semantic locator at least picks a real
+    element by a name a human recognises, and keeps working when the page moves.
+
+    Among equally descriptive candidates, uniqueness decides; then strategy rank;
+    then the recorder's own score.
     """
     if not raw_selectors:
         return None
+
     candidates = [Selector.from_dict(s) for s in raw_selectors]
-    return min(candidates, key=lambda s: (not s.unique, s.rank, -s.score))
+    return min(
+        candidates,
+        key=lambda s: (s.strategy in _POSITIONAL, not s.unique, s.rank, -s.score),
+    )
 
 
 def py_str(value: str) -> str:
@@ -156,7 +181,35 @@ def snake_case(text: str, fallback: str = "element") -> str:
         cleaned = f"{fallback}_{cleaned}"
     if keyword.iskeyword(cleaned) or cleaned in _RESERVED:
         cleaned = f"{cleaned}_"
-    return cleaned[:60]
+    return clip_words(cleaned, 42)
+
+
+def clip_words(name: str, limit: int) -> str:
+    """Shorten a snake_case name without cutting a word in half.
+
+    Slicing to a character count produces `..._is_not_visible_on_the` and
+    `..._on_a_naviga` — names that read like a truncated sentence, because they
+    are one. Dropping whole words instead leaves something that still parses as
+    English, and a name that stops early is far easier to read than one that
+    stops mid-syllable.
+
+    A single word longer than the limit is cut anyway; there is nothing else to
+    do with it, and a link label can be arbitrarily long.
+    """
+    if len(name) <= limit:
+        return name
+
+    kept: list[str] = []
+    used = 0
+    for word in name.split("_"):
+        # +1 for the underscore that will join it.
+        cost = len(word) + (1 if kept else 0)
+        if used + cost > limit:
+            break
+        kept.append(word)
+        used += cost
+
+    return "_".join(kept) if kept else name[:limit]
 
 
 def element_name(selector: Selector, element: dict[str, Any] | None) -> str:

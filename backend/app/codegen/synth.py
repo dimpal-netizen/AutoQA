@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 
 from app.codegen.converter import PageSpec, StepSpec, TestIR, page_variables
-from app.codegen.selectors import py_str, snake_case
+from app.codegen.selectors import clip_words, py_str, snake_case
 from app.models.enums import ActionType
 
 logger = logging.getLogger(__name__)
@@ -232,7 +232,13 @@ def module_for(name: str, taken: set[str]) -> tuple[str, str]:
     names, so a case called "Login" would sail past a check for "login" and
     then write itself over `test_login.py` — the recorded test.
     """
-    stem = snake_case(re.sub(r"[^0-9a-zA-Z ]+", " ", name), fallback="case")[:48]
+    # Clipped on a word boundary. A flat slice produced names like
+    # `test_verify_back_to_search_link_is_not_visible_on_the`, which stops
+    # mid-sentence and tells you least at the point you most need it: in a
+    # failure report, where the name is all you get.
+    stem = clip_words(
+        snake_case(re.sub(r"[^0-9a-zA-Z ]+", " ", name), fallback="case"), 48
+    )
     stem = stem.strip("_") or "case"
 
     candidate = f"test_{stem}"
