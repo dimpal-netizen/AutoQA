@@ -160,6 +160,7 @@ export function SuiteWorkspace({
     setError(null);
     try {
       onChange(await api.suites.regenerate(suite.recording_id));
+      setStatusToken((n) => n + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not regenerate");
     } finally {
@@ -347,6 +348,7 @@ export function SuiteWorkspace({
                 suiteId={suite.id}
                 caseCount={suite.cases.length}
                 request={runRequest}
+                reloadToken={statusToken}
                 onDeleted={() => void onChange(suite)}
                 onRunningChange={(ids) => {
                   setRunningCaseIds(ids);
@@ -359,7 +361,11 @@ export function SuiteWorkspace({
                 <GenerateCases
                   suiteId={suite.id}
                   hasGenerated={generated > 0}
-                  onGenerated={onChange}
+                  onGenerated={(updated) => {
+                    onChange(updated);
+                    // The old runs tested the cases this just replaced.
+                    setStatusToken((n) => n + 1);
+                  }}
                 />
               </div>
 

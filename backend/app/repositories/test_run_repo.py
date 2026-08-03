@@ -50,6 +50,16 @@ class TestRunRepository(BaseRepository[TestRun]):
         statement = statement.order_by(TestRun.id.desc()).offset(skip).limit(limit)
         return list(self.db.execute(statement).scalars().all())
 
+    def list_for_suite(self, suite_id: int) -> list[TestRun]:
+        """Every run of this suite, newest first. No project filtering — the
+        caller has already authorised the suite it is asking about."""
+        statement = (
+            select(TestRun)
+            .where(TestRun.suite_id == suite_id)
+            .order_by(TestRun.id.desc())
+        )
+        return list(self.db.execute(statement).scalars().all())
+
     def list_stale(self, before: datetime) -> list[TestRun]:
         """Runs still claiming to be in progress that started before `before`.
 

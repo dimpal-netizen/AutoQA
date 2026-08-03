@@ -142,3 +142,93 @@ def test_case_status_route_is_registered(client: TestClient) -> None:
 def test_case_status_requires_a_token(client: TestClient) -> None:
     response = client.get(f"{settings.API_V1_PREFIX}/suites/1/case-status")
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Regenerating throws away verdicts about the code it replaced
+# ---------------------------------------------------------------------------
+class _Suite:
+    def __init__(self, suite_id: int = 1) -> None:
+        self.id = suite_id
+        self.project = type("P", (), {"owner": object()})()
+
+
+def test_finished_runs_are_discarded_when_cases_are_replaced(monkeypatch) -> None:
+    """A verdict is about a version of a test. Rewrite the test and it is not
+    a stale opinion, it is an opinion about a file that no longer exists."""
+    from app.repositories import test_run_repo
+    import app.services.execution_service as execution_module
+
+    runs = [FakeRun(3, RunStatus.PASSED), FakeRun(4, RunStatus.FAILED)]
+    deleted: list[int] = []
+
+    monkeypatch.setattr(
+        test_run_repo.TestRunRepository, "list_for_suite", lambda self, sid: runs
+    )
+    monkeypatch.setattr(
+        execution_module.ExecutionService,
+        "delete_run",
+        lambda self, run_id, user: deleted.append(run_id),
+    )
+
+    from app.services.codegen_service import CodegenService
+
+    service = CodegenService.__new__(CodegenService)
+    service.db = FakeDb()
+    service._discard_runs(_Suite())
+
+    assert deleted == [3, 4]
+
+
+def test_a_run_still_going_is_left_alone(monkeypatch) -> None:
+    """It is writing to its own directory and will finish against the files it
+    started with. Deleting it underneath itself is worse than a stale verdict."""
+    from app.repositories import test_run_repo
+    import app.services.execution_service as execution_module
+
+    runs = [FakeRun(5, RunStatus.RUNNING), FakeRun(6, RunStatus.QUEUED), FakeRun(7, RunStatus.PASSED)]
+    deleted: list[int] = []
+
+    monkeypatch.setattr(
+        test_run_repo.TestRunRepository, "list_for_suite", lambda self, sid: runs
+    )
+    monkeypatch.setattr(
+        execution_module.ExecutionService,
+        "delete_run",
+        lambda self, run_id, user: deleted.append(run_id),
+    )
+
+    from app.services.codegen_service import CodegenService
+
+    service = CodegenService.__new__(CodegenService)
+    service.db = FakeDb()
+    service._discard_runs(_Suite())
+
+    assert deleted == [7]
+
+
+def test_one_run_failing_to_delete_does_not_stop_the_rest(monkeypatch) -> None:
+    """Regeneration must not be abandoned half-done because of a stuck file."""
+    from app.repositories import test_run_repo
+    import app.services.execution_service as execution_module
+
+    runs = [FakeRun(8, RunStatus.PASSED), FakeRun(9, RunStatus.PASSED)]
+    deleted: list[int] = []
+
+    def flaky(self, run_id, user):
+        if run_id == 8:
+            raise OSError("file in use")
+        deleted.append(run_id)
+
+    monkeypatch.setattr(
+        test_run_repo.TestRunRepository, "list_for_suite", lambda self, sid: runs
+    )
+    monkeypatch.setattr(execution_module.ExecutionService, "delete_run", flaky)
+
+    from app.services.codegen_service import CodegenService
+
+    service = CodegenService.__new__(CodegenService)
+    service.db = FakeDb()
+    service._discard_runs(_Suite())
+
+    assert deleted == [9]

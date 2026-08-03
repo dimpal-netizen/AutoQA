@@ -40,6 +40,7 @@ export function RunPanel({
   suiteId,
   caseCount,
   request,
+  reloadToken = 0,
   onDeleted,
   onRunningChange,
 }: {
@@ -47,6 +48,9 @@ export function RunPanel({
   caseCount: number;
   /** A row below asked for one case to be run. The token changes per press. */
   request?: { caseIds: number[]; token: number } | null;
+  /** Bumped when the suite's cases are replaced, so the panel drops the run it
+   *  is showing — that verdict was about code that no longer exists. */
+  reloadToken?: number;
   /** A run was deleted, so anything showing it needs to refresh. */
   onDeleted?: () => void;
   /** What is running: null when idle, the case ids when a run is going, and
@@ -101,12 +105,12 @@ export function RunPanel({
       const runs = await api.runs.list({ suiteId }).catch(() => [] as TestRun[]);
       if (!mounted.current) return;
       setHistory(runs);
-      if (runs[0]) {
-        const detail = await api.runs.get(runs[0].id).catch(() => null);
-        if (mounted.current && detail) setRun(detail);
-      }
+      // Explicitly null when there is nothing left: after a regeneration the
+      // runs are gone, and keeping the last one on screen would show a verdict
+      // for a test that has been rewritten.
+      setRun(runs[0] ? await api.runs.get(runs[0].id).catch(() => null) : null);
     })();
-  }, [suiteId]);
+  }, [suiteId, reloadToken]);
 
   useEffect(() => {
     if (!runId || !active) return;

@@ -21,6 +21,7 @@ from app.models.enums import (
     CaseStatus,
     FileType,
     RecordingStatus,
+    RunStatus,
 )
 from app.models.test_case import TestSuite
 from app.models.user import User
@@ -31,7 +32,7 @@ from app.repositories.test_case_repo import (
     TestCaseRepository,
     TestSuiteRepository,
 )
-from app.repositories.test_run_repo import TestResultRepository
+from app.repositories.test_run_repo import TestResultRepository, TestRunRepository
 from app.services.exceptions import NotFound, ValidationError
 from app.services.recording_service import RecordingService
 
@@ -147,6 +148,9 @@ class CodegenService:
                 generator=generator,
             )
         else:
+            # Runs first: they are about the cases that are about to go, and
+            # delete_run needs the suite row intact to authorise itself.
+            self._discard_runs(suite)
             self.suites.delete_generated(suite)
             self.suites.update(
                 suite, name=suite_name, description=description, generator=generator
@@ -275,11 +279,44 @@ class CodegenService:
             self._store_case(suite, synthesised, browser_info, outcome.model)
 
         self._refresh_files(suite, recorded_ir)
+        self._discard_runs(suite)
 
         self.db.commit()
         suite = self.suites.get_full(suite.id)  # type: ignore[assignment]
         self._rewrite_folder(suite)
         return suite, outcome
+
+    def _discard_runs(self, suite: TestSuite) -> None:
+        """Throw away runs that tested code this regeneration has replaced.
+
+        A verdict is about a particular version of a test. Once the cases are
+        rewritten, "1 passed" is a statement about a file that no longer
+        exists — and because deleting a case sets its results' test_case_id to
+        NULL, the result cannot even say which case it was about any more.
+        Keeping that on screen next to the new cases invites reading it as
+        their result.
+
+        A run still going is left alone. It is writing to its own directory and
+        will finish against the files it started with; deleting it underneath
+        itself is the one thing worse than a stale verdict.
+        """
+        from app.services.execution_service import ExecutionService
+
+        execution = ExecutionService(self.db)
+        for run in TestRunRepository(self.db).list_for_suite(suite.id):
+            if run.status in (RunStatus.QUEUED, RunStatus.RUNNING):
+                logger.info("Suite %s: keeping run %s, still going", suite.id, run.id)
+                continue
+            try:
+                execution.delete_run(run.id, self._owner_of(suite))
+            except Exception:
+                logger.exception("Could not discard run %s", run.id)
+
+    @staticmethod
+    def _owner_of(suite: TestSuite):
+        """Whoever owns the project. Regeneration has already been authorised,
+        and delete_run re-checks against a user rather than trusting a flag."""
+        return suite.project.owner
 
     def _refresh_files(self, suite: TestSuite, ir: TestIR) -> None:
         """Re-render the page objects and config from the IR the cases used.
