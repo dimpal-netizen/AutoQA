@@ -28,6 +28,7 @@ import {
   PageHeader,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SearchBox, matches } from "@/components/ui/search";
 import { Meter } from "@/components/ui/stat";
 import { SkeletonRows } from "@/components/ui/skeleton";
 
@@ -90,6 +91,7 @@ function ProjectsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     // `cancelled` stops a slow response from setting state after unmount, and
@@ -125,6 +127,10 @@ function ProjectsView() {
       cancelled = true;
     };
   }, []);
+
+  const visible = projects.filter((project) =>
+    matches(query, project.name, project.base_url, project.description),
+  );
 
   async function handleDelete(project: Project) {
     if (!confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
@@ -167,16 +173,36 @@ function ProjectsView() {
       ) : projects.length === 0 ? (
         <EmptyState canCreate={canCreate} />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              activity={activityFor(project, suites, runs)}
-              onDelete={() => handleDelete(project)}
+        <>
+          {/* Only worth showing when there is enough to lose something in. */}
+          {projects.length > 3 && (
+            <SearchBox
+              className="mb-4"
+              value={query}
+              onChange={setQuery}
+              placeholder="Search projects by name or URL…"
+              count={visible.length}
+              total={projects.length}
             />
-          ))}
-        </div>
+          )}
+
+          {visible.length === 0 ? (
+            <Card className="px-4 py-10 text-center text-sm text-muted-foreground">
+              No project matches “{query}”.
+            </Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {visible.map((project) => (
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  activity={activityFor(project, suites, runs)}
+                  onDelete={() => handleDelete(project)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
