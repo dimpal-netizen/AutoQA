@@ -10,9 +10,10 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Video } from "lucide-react";
+import { ArrowLeft, ExternalLink, Pencil, Video } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Project, TestRun, TestSuite, TestSuiteDetail } from "@/lib/types";
+import { useAuthStore } from "@/stores/auth-store";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
 import { LaunchRecording } from "@/components/launch-recording";
@@ -34,6 +35,107 @@ export default function ProjectPage({
         <ProjectWorkspace id={Number(id)} />
       </AppShell>
     </RequireAuth>
+  );
+}
+
+/** The project name, renameable in place.
+ *
+ *  In place rather than in a settings form: the name is the first thing on the
+ *  page and the only thing anyone renames, so a whole form to change one field
+ *  is a page nobody would visit twice.
+ *
+ *  Shown as editable only to whoever the API would actually let through —
+ *  owner or admin, mirroring `_assert_can_edit`. Offering a control that always
+ *  returns 403 is worse than not offering it.
+ */
+function ProjectName({
+  project,
+  onRenamed,
+}: {
+  project: Project;
+  onRenamed: (project: Project) => void;
+}) {
+  const user = useAuthStore((s) => s.user);
+  const canRename = user
+    ? project.owner_id === user.id || user.role === "admin"
+    : false;
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(project.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    const name = draft.trim();
+
+    // Nothing to do, and an empty name would leave the project unfindable.
+    if (!name || name === project.name) {
+      setDraft(project.name);
+      setEditing(false);
+      setError(null);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      onRenamed(await api.projects.update(project.id, { name }));
+      setEditing(false);
+    } catch (err) {
+      // Renaming onto a name you already have is the common failure, and the
+      // API says so precisely. Stay in the field so the name can be fixed
+      // rather than retyped.
+      setError(err instanceof Error ? err.message : "Could not rename");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <h1 className="group flex min-w-0 items-center gap-2 text-2xl font-bold leading-tight tracking-tight">
+        <span className="truncate">{project.name}</span>
+        {canRename && (
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(project.name);
+              setEditing(true);
+            }}
+            aria-label={`Rename ${project.name}`}
+            title="Rename"
+            className="shrink-0 rounded-full p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Pencil className="size-4" />
+          </button>
+        )}
+      </h1>
+    );
+  }
+
+  return (
+    <div className="min-w-0">
+      <input
+        autoFocus
+        value={draft}
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+          // Escape restores the original. A rename you did not mean to start
+          // should cost nothing to abandon.
+          if (e.key === "Escape") {
+            setDraft(project.name);
+            setEditing(false);
+            setError(null);
+          }
+        }}
+        aria-label="Project name"
+        className="w-full min-w-0 rounded-lg border border-input bg-card px-2 py-1 text-2xl font-bold leading-tight tracking-tight outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+      />
+      {error && <p className="mt-1.5 text-[13px] text-destructive">{error}</p>}
+    </div>
   );
 }
 
@@ -122,9 +224,10 @@ function ProjectWorkspace({ id }: { id: number }) {
 
         <div className="relative flex flex-wrap items-start gap-4">
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-2xl font-bold leading-tight tracking-tight">
-              {project.name}
-            </h1>
+            <ProjectName
+              project={project}
+              onRenamed={(renamed) => setProject(renamed)}
+            />
 
             <a
               href={project.base_url}
