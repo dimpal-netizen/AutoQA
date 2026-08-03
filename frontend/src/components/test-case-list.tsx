@@ -88,9 +88,6 @@ export function TestCaseList({ cases }: { cases: TestCase[] }) {
               <th scope="col" className="px-3 py-2.5 font-semibold">
                 Priority
               </th>
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-                Steps
-              </th>
               <th scope="col" className="px-3 py-2.5 font-semibold">
                 File
               </th>
@@ -150,7 +147,21 @@ function CaseRows({
         </td>
 
         <td className="px-3 py-2.5">
-          <span className="block text-[13px] font-medium">{testCase.name}</span>
+          <span className="flex items-center gap-2">
+            <span className="text-[13px] font-medium">{testCase.name}</span>
+            {/* The fragile count lost its column, not its meaning — it warns
+                that this case is built on selectors likely to break, which is
+                worth knowing before you trust the row. */}
+            {fragile.length > 0 && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 text-xs text-warning"
+                title={`${fragile.length} of ${testCase.steps.length} steps use a selector likely to break on a UI change`}
+              >
+                <TriangleAlert className="size-3" />
+                {fragile.length}
+              </span>
+            )}
+          </span>
           {testCase.description && (
             <span className="mt-0.5 block max-w-xl truncate text-xs text-muted-foreground">
               {testCase.description}
@@ -173,21 +184,6 @@ function CaseRows({
           </Badge>
         </td>
 
-        {/* Right-aligned and tabular, so counts line up down the column —
-            which is the only reason to put a number in a table at all. */}
-        <td className="tabular whitespace-nowrap px-3 py-2.5 text-right text-[13px]">
-          {testCase.steps.length}
-          {fragile.length > 0 && (
-            <span
-              className="ml-2 inline-flex items-center gap-1 text-xs text-warning"
-              title={`${fragile.length} step(s) use a selector likely to break on a UI change`}
-            >
-              <TriangleAlert className="size-3" />
-              {fragile.length}
-            </span>
-          )}
-        </td>
-
         <td className="px-3 py-2.5">
           <span className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
             <FileCode2 className="size-3 shrink-0" />
@@ -200,7 +196,7 @@ function CaseRows({
 
       {open && (
         <tr className="border-b border-border bg-muted/30">
-          <td colSpan={6} className="px-4 py-4">
+          <td colSpan={5} className="px-4 py-4">
             <Steps steps={testCase.steps} />
           </td>
         </tr>
