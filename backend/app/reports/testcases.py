@@ -13,16 +13,20 @@ run, the Actual Results, Status and Execution Date columns come back filled in
 too. What is left blank is what a human is supposed to decide: retesting, peer
 review and comments.
 
-CSV rather than .xlsx because it needs no dependency, opens in Excel by
-double-clicking, and pastes cleanly into a team's existing styled template —
-which is where this data usually has to end up anyway.
+A real .xlsx rather than CSV. The columns were never the hard part — the shape
+was: wrapped step lists, a frozen header, a filter, and positive and negative
+cases tinted apart so a reviewer can see the split without reading. A sheet
+handed to a QA lead is read, not parsed.
 """
 
 from __future__ import annotations
 
-import csv
 import io
 from datetime import datetime
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from app.models.enums import CaseCategory, ResultStatus
 from app.models.test_case import TestCase, TestSuite
@@ -54,6 +58,20 @@ _NEGATIVE = {CaseCategory.NEGATIVE, CaseCategory.EDGE, CaseCategory.SECURITY}
 
 # Security cases are the one group that is not plain functional testing.
 _TYPE = {CaseCategory.SECURITY: "Security"}
+
+#: Taken from the sheet this format is copied from: a dark banner, a green
+#: header, and the two case kinds tinted apart.
+_TITLE_BG = "1F3864"
+_HEADER_BG = "217346"
+_LABEL_FG = "1F3864"
+_POSITIVE_BG = "E8F5E9"
+_NEGATIVE_BG = "FDEAEA"
+
+_BORDER = Border(*(Side(style="thin", color="D0D7DE") for _ in range(4)))
+
+#: Wide enough to read without unwrapping. Steps and expected results carry
+#: most of the text, so they get most of the width.
+_WIDTHS = [14, 26, 12, 12, 14, 40, 26, 42, 42, 30, 12, 16, 14, 14, 14, 22]
 
 _STATUS_TEXT = {
     ResultStatus.PASSED: "Pass",
@@ -134,49 +152,52 @@ def _date(value: datetime | None) -> str:
     return value.strftime("%d-%m-%Y") if value else ""
 
 
-def build_testcase_sheet(
-    suite: TestSuite,
-    cases: list[TestCase],
-    *,
-    project_name: str,
-    designed_by: str = "",
-    run: TestRun | None = None,
-    results: list[TestResult] | None = None,
-) -> str:
-    """Render the suite as CSV in the standard QA test-case layout.
+def _worst_per_case(results: list[TestResult] | None) -> dict[str, TestResult]:
+    """One result per test, worst outcome winning.
 
-    `results` fills the execution columns. Where a case ran on several browsers
-    the worst outcome wins, because a sheet has one Status column and a test
-    that fails anywhere has not passed.
+    A sheet has one Status column, and a test that fails on any browser has not
+    passed — so the failure is the row's verdict even when two other browsers
+    were green.
     """
     worst: dict[str, TestResult] = {}
     for result in results or []:
         current = worst.get(result.function_name)
-        # Anything that is not a pass beats a pass; the first non-pass sticks.
         if current is None or (
             current.status is ResultStatus.PASSED
             and result.status is not ResultStatus.PASSED
         ):
             worst[result.function_name] = result
+    return worst
 
-    buffer = io.StringIO()
-    writer = csv.writer(buffer, lineterminator="\n")
 
-    writer.writerow([f"{project_name} | {suite.name}"])
-    writer.writerow([])
-    writer.writerow(["Project Name", project_name])
-    writer.writerow(["Module Name", suite.name])
-    writer.writerow(["Description", suite.description or ""])
-    writer.writerow(["Test Designed By", designed_by])
-    writer.writerow(["Creation Date", _date(suite.created_at)])
-    writer.writerow([])
-    writer.writerow(COLUMNS)
+def _header_block(
+    suite: TestSuite, *, project_name: str, designed_by: str
+) -> list[tuple[str, str]]:
+    return [
+        ("Project Name", project_name),
+        ("Module Name", suite.name),
+        ("Description", suite.description or ""),
+        ("Test Designed By", designed_by),
+        ("Creation Date", _date(suite.created_at)),
+    ]
 
+
+def _rows(
+    suite: TestSuite,
+    cases: list[TestCase],
+    *,
+    project_name: str,
+    run: TestRun | None,
+    results: list[TestResult] | None,
+) -> list[list[str]]:
+    """One row per case, in `COLUMNS` order."""
+    worst = _worst_per_case(results)
     prefix = _prefix(project_name, suite.name)
 
+    rows: list[list[str]] = []
     for index, case in enumerate(cases, 1):
         result = worst.get(case.function_name)
-        writer.writerow(
+        rows.append(
             [
                 _case_id(prefix, index),
                 _prerequisites(case, suite),
@@ -196,5 +217,82 @@ def build_testcase_sheet(
                 "",  # Comments
             ]
         )
+    return rows
 
+
+def build_testcase_workbook(
+    suite: TestSuite,
+    cases: list[TestCase],
+    *,
+    project_name: str,
+    designed_by: str = "",
+    run: TestRun | None = None,
+    results: list[TestResult] | None = None,
+) -> bytes:
+    """The suite as a real .xlsx, formatted the way the sheet is kept by hand.
+
+    CSV carried the same values but none of the shape: every column the same
+    width, steps on one unreadable line, and no way to tell a positive case from
+    a negative one at a glance. A spreadsheet handed to a QA lead is read, not
+    parsed, so the formatting is the deliverable as much as the data is.
+    """
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Test Cases"
+
+    last_column = get_column_letter(len(COLUMNS))
+
+    # Title band.
+    sheet.merge_cells(f"A1:{last_column}1")
+    title = sheet["A1"]
+    title.value = f"{project_name} — {suite.name}"
+    title.font = Font(bold=True, size=12, color="FFFFFF")
+    title.fill = PatternFill("solid", fgColor=_TITLE_BG)
+    title.alignment = Alignment(horizontal="center", vertical="center")
+    sheet.row_dimensions[1].height = 26
+
+    # Header block: label and value, one per row.
+    for offset, (label, value) in enumerate(
+        _header_block(suite, project_name=project_name, designed_by=designed_by)
+    ):
+        row = 2 + offset
+        sheet.cell(row=row, column=1, value=label).font = Font(bold=True, color=_LABEL_FG)
+        sheet.cell(row=row, column=2, value=value).alignment = Alignment(vertical="center")
+
+    header_row = 8
+
+    for index, name in enumerate(COLUMNS, start=1):
+        cell = sheet.cell(row=header_row, column=index, value=name)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor=_HEADER_BG)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = _BORDER
+    sheet.row_dimensions[header_row].height = 30
+
+    positive = COLUMNS.index("Positive/Negative")
+
+    for offset, values in enumerate(
+        _rows(suite, cases, project_name=project_name, run=run, results=results)
+    ):
+        row = header_row + 1 + offset
+        # Tinted by what the case asserts, which is the split a reviewer reads
+        # the sheet for. Left uncoloured where it is neither.
+        fill = _POSITIVE_BG if values[positive] == "Positive" else _NEGATIVE_BG
+
+        for index, value in enumerate(values, start=1):
+            cell = sheet.cell(row=row, column=index, value=value)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = _BORDER
+            cell.fill = PatternFill("solid", fgColor=fill)
+
+    for index, width in enumerate(_WIDTHS, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+
+    # Everything above the first case stays put while the cases scroll, and the
+    # header becomes a filter — a hundred-row sheet is unusable without both.
+    sheet.freeze_panes = f"A{header_row + 1}"
+    sheet.auto_filter.ref = f"A{header_row}:{last_column}{header_row + len(cases)}"
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
     return buffer.getvalue()

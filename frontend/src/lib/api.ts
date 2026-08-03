@@ -315,15 +315,18 @@ export async function downloadReport(artifactId: number, filename: string): Prom
   }
 }
 
-/** Download the suite as a QA test-case sheet, in the layout teams keep in
- *  Excel. Fetched as a blob for the same reason as the report — the route
- *  needs the auth header and an <a href> cannot carry one. */
+/** Download the suite as a QA test-case workbook. Fetched as a blob for the
+ *  same reason as the report — the route needs the auth header and an <a href>
+ *  cannot carry one. */
 export async function downloadTestCaseSheet(
   suiteId: number,
   filename: string,
 ): Promise<void> {
-  const blob = await request<Blob>(`/suites/${suiteId}/testcases.csv`, {
-    headers: { Accept: "text/csv" },
+  const blob = await request<Blob>(`/suites/${suiteId}/testcases.xlsx`, {
+    headers: {
+      Accept:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
   });
   const url = URL.createObjectURL(blob);
   try {

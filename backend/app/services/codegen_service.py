@@ -25,7 +25,7 @@ from app.models.enums import (
 )
 from app.models.test_case import TestSuite
 from app.models.user import User
-from app.reports.testcases import build_testcase_sheet
+from app.reports.testcases import build_testcase_workbook
 from app.repositories.recording_repo import RecordingRepository
 from app.repositories.test_case_repo import (
     GeneratedFileRepository,
@@ -480,8 +480,8 @@ class CodegenService:
 
     def export_testcases(
         self, suite_id: int, user: User, *, run_id: int | None = None
-    ) -> tuple[str, str]:
-        """The suite as a QA test-case sheet, plus a filename.
+    ) -> tuple[bytes, str]:
+        """The suite as a QA test-case workbook, plus a filename.
 
         Defaults to the suite's most recent finished run so the execution
         columns arrive filled in — that is the version a QA lead actually
@@ -508,7 +508,7 @@ class CodegenService:
         if run is not None:
             results = TestResultRepository(self.db).list_for_run(run.id)
 
-        csv_text = build_testcase_sheet(
+        workbook = build_testcase_workbook(
             suite,
             list(suite.cases),
             project_name=suite.project.name if suite.project else "",
@@ -520,7 +520,7 @@ class CodegenService:
         stem = "".join(
             c if c.isalnum() else "_" for c in f"{suite.name}"
         ).strip("_") or f"suite_{suite.id}"
-        return csv_text, f"test_cases_{stem}.csv"
+        return workbook, f"test_cases_{stem}.xlsx"
 
     def list_suites(
         self, user: User, project_id: int | None = None, skip: int = 0, limit: int = 100

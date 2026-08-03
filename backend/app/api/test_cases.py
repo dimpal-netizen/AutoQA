@@ -88,25 +88,24 @@ def get_bundle(suite_id: int, db: DbSession, user: CurrentUser) -> dict[str, str
     return CodegenService(db).bundle(suite_id, user)
 
 
-@router.get("/suites/{suite_id}/testcases.csv")
+@router.get("/suites/{suite_id}/testcases.xlsx")
 def export_testcases(
     suite_id: int, db: DbSession, user: CurrentUser, run_id: int | None = None
 ) -> Response:
-    """The suite as a QA test-case sheet, in the layout teams keep by hand.
+    """The suite as a QA test-case workbook, in the layout teams keep by hand.
 
     Defaults to the most recent finished run so the Actual Results, Status and
     Execution Date columns come back filled in.
     """
-    csv_text, filename = CodegenService(db).export_testcases(
+    workbook, filename = CodegenService(db).export_testcases(
         suite_id, user, run_id=run_id
     )
 
     return Response(
-        # Excel decides the encoding of a CSV from a BOM. Without one, a test
-        # name containing an apostrophe or an accent arrives as mojibake, which
-        # is exactly the kind of thing that gets blamed on the tool.
-        content=csv_text.encode("utf-8-sig"),
-        media_type="text/csv; charset=utf-8",
+        content=workbook,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

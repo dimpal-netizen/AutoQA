@@ -467,7 +467,7 @@ function ExportSheet({ suite }: { suite: TestSuiteDetail }) {
       const stem =
         suite.name.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "") ||
         `suite_${suite.id}`;
-      await downloadTestCaseSheet(suite.id, `test_cases_${stem}.csv`);
+      await downloadTestCaseSheet(suite.id, `test_cases_${stem}.xlsx`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not export the sheet");
     } finally {
@@ -481,7 +481,7 @@ function ExportSheet({ suite }: { suite: TestSuiteDetail }) {
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-semibold">Test case sheet</p>
         <p className="text-xs text-muted-foreground">
-          All {suite.cases.length} cases as a spreadsheet — ID, priority,
+          All {suite.cases.length} cases as an Excel workbook — ID, priority,
           positive/negative, steps, expected result. The execution columns are
           filled in from the latest run.
         </p>
@@ -494,7 +494,7 @@ function ExportSheet({ suite }: { suite: TestSuiteDetail }) {
         disabled={busy || suite.cases.length === 0}
       >
         <Download />
-        {busy ? "Exporting…" : "Export CSV"}
+        {busy ? "Exporting…" : "Export Excel"}
       </Button>
     </div>
   );
