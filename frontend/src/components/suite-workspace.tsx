@@ -220,28 +220,40 @@ export function SuiteWorkspace({
           value={suite.cases.length}
           hint={generated ? `1 recorded · ${generated} generated` : "from your recording"}
         />
-        <Figure label="Steps" value={steps.length} hint="across every case" />
+        <Figure
+          label="Passed"
+          value={lastRun ? lastRun.passed : "—"}
+          tone={lastRun && lastRun.passed > 0 ? "success" : "muted"}
+          hint={lastRun ? `of ${lastRun.total} in the last run` : "not run yet"}
+        />
+        <Figure
+          label="Failed"
+          value={lastRun ? lastRun.failed : "—"}
+          tone={!lastRun ? "muted" : lastRun.failed > 0 ? "danger" : "success"}
+          hint={
+            !lastRun
+              ? "not run yet"
+              : lastRun.failed > 0
+                ? "needs attention"
+                : "nothing failing"
+          }
+        />
+        {/* When, not what. Passed and failed are meaningless without it —
+            "12 passed" from three weeks ago and from two minutes ago are very
+            different facts, and only this card tells them apart. The fragile
+            step count it replaces is still on the banner above the table and
+            on every row that has one, so nothing was lost. */}
         <Figure
           label="Last run"
-          value={lastRun ? `${lastRun.passed}/${lastRun.total}` : "—"}
-          tone={
-            !lastRun || lastRun.status === "cancelled"
-              ? "muted"
-              : lastRun.failed > 0
-                ? "danger"
-                : "success"
+          value={
+            lastRun ? formatRelative(lastRun.finished_at ?? lastRun.created_at) : "—"
           }
+          tone={lastRun ? "default" : "muted"}
           hint={
             lastRun
               ? `${lastRun.status}${lastRun.duration_ms ? ` · ${formatDuration(lastRun.duration_ms)}` : ""}`
-              : "not run yet"
+              : "no runs yet"
           }
-        />
-        <Figure
-          label="Fragile steps"
-          value={fragile.length}
-          tone={fragile.length ? "warning" : "success"}
-          hint={fragile.length ? "may break on a UI change" : "all reliable selectors"}
         />
       </div>
 
@@ -330,12 +342,23 @@ function Figure({
     muted: "text-muted-foreground",
   }[tone];
 
+  // "yesterday" cannot be set at the size of "5" and still fit the column, so
+  // word-shaped values step down. Numbers keep the display size that makes the
+  // row scannable.
+  const wordy = typeof value === "string" && value.length > 5;
+
   return (
     <div className="px-5 py-4">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
-      <p className={cn("mt-1.5 text-3xl font-extrabold leading-none tracking-tight", colour)}>
+      <p
+        className={cn(
+          "mt-1.5 font-extrabold leading-none tracking-tight",
+          wordy ? "text-xl" : "text-3xl",
+          colour,
+        )}
+      >
         {value}
       </p>
       {hint && (
