@@ -22,7 +22,6 @@ import {
   FileSpreadsheet,
   FlaskConical,
   FolderOpen,
-  Play,
   RefreshCw,
   Video,
 } from "lucide-react";
@@ -58,7 +57,7 @@ export function SuiteWorkspace({
   onChange: (suite: TestSuiteDetail) => void;
   lastRun: TestRun | null;
 }) {
-  const [tab, setTab] = useState("run");
+  const [tab, setTab] = useState("cases");
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -185,7 +184,6 @@ export function SuiteWorkspace({
           active={tab}
           onChange={setTab}
           tabs={[
-            { id: "run", label: "Run", icon: <Play /> },
             {
               id: "cases",
               label: "Test cases",
@@ -204,12 +202,13 @@ export function SuiteWorkspace({
         />
 
         <div className="mt-4">
-          {tab === "run" && (
-            <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
-          )}
-
           {tab === "cases" && (
             <div className="flex flex-col gap-5">
+              {/* Running belongs with the tests being run. It was its own tab,
+                  which meant generating cases and then running them was two
+                  places for one continuous thought. */}
+              <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
+
               <div className="rounded-lg border border-dashed border-border bg-muted/40 p-4">
                 <GenerateCases
                   suiteId={suite.id}
