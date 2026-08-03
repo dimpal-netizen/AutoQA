@@ -29,7 +29,6 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SearchBox, matches } from "@/components/ui/search";
-import { Meter } from "@/components/ui/stat";
 import { SkeletonRows } from "@/components/ui/skeleton";
 
 const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
@@ -42,7 +41,6 @@ const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
 interface Activity {
   suites: number;
   runs: number;
-  passRate: number | null;
   lastRun: TestRun | null;
 }
 
@@ -52,23 +50,13 @@ function activityFor(
   runs: TestRun[],
 ): Activity {
   const mine = runs.filter((r) => r.project_id === project.id);
-  const finished = mine.filter((r) => r.total > 0);
-  const passed = finished.reduce((sum, r) => sum + r.passed, 0);
-  const total = finished.reduce((sum, r) => sum + r.total, 0);
 
   return {
     suites: suites.filter((s) => s.project_id === project.id).length,
     runs: mine.length,
-    passRate: total ? Math.round((passed / total) * 100) : null,
     // The list arrives newest first, so the first match is the latest.
-    lastRun: mine[0] ?? null,
+    lastRun: mine.find((r) => r.total > 0) ?? null,
   };
-}
-
-function toneFor(passRate: number | null) {
-  if (passRate === null) return "muted" as const;
-  if (passRate === 100) return "success" as const;
-  return passRate >= 80 ? ("warning" as const) : ("danger" as const);
 }
 
 export default function ProjectsPage() {
@@ -149,9 +137,14 @@ function ProjectsView() {
         title="Projects"
         description="Pick a project to record and run its tests. Each project is one web application."
       >
+        {/* The plus belongs to "New project". Leaving it on "Cancel" made the
+            button look like it would add something. */}
         {canCreate && (
-          <Button onClick={() => setShowForm((v) => !v)}>
-            <Plus />
+          <Button
+            variant={showForm ? "outline" : "default"}
+            onClick={() => setShowForm((v) => !v)}
+          >
+            {showForm ? null : <Plus />}
             {showForm ? "Cancel" : "New project"}
           </Button>
         )}
@@ -219,8 +212,7 @@ function ProjectCard({
   activity: Activity;
   onDelete: () => void;
 }) {
-  const { suites, runs, passRate, lastRun } = activity;
-  const tone = toneFor(passRate);
+  const { suites, runs, lastRun } = activity;
   const never = runs === 0;
 
   return (
@@ -258,48 +250,23 @@ function ProjectCard({
           </p>
         )}
 
-        {/* The health of the project, which is the reason you came to this
-            page. A project that has never run says so plainly rather than
-            showing a 0% that reads as failure. */}
-        <div className="rounded-lg border border-border bg-muted/50 px-3.5 py-3">
+        {/* One line, not a panel. A pass rate averaged over every run this
+            project has ever had answers a question nobody asks — what matters
+            is whether the last one was clean, and that is one sentence. */}
+        <p className="text-[13px] text-muted-foreground">
           {never ? (
-            <p className="text-[13px] text-muted-foreground">
-              Not run yet — record a session to create its first tests.
-            </p>
-          ) : (
+            "Not run yet — record a session to create its first tests."
+          ) : lastRun ? (
             <>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Pass rate
-                </span>
-                <span
-                  className={`text-lg font-extrabold leading-none ${
-                    {
-                      muted: "text-muted-foreground",
-                      success: "text-success",
-                      warning: "text-warning",
-                      danger: "text-destructive",
-                    }[tone]
-                  }`}
-                >
-                  {passRate === null ? "—" : `${passRate}%`}
-                </span>
-              </div>
-              <Meter className="mt-2" value={passRate ?? 0} tone={tone} />
-              {lastRun && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Last run {lastRun.passed}/{lastRun.total}
-                  {lastRun.failed > 0 && (
-                    <span className="text-destructive">
-                      {" "}
-                      · {lastRun.failed} failed
-                    </span>
-                  )}
-                </p>
+              Last run {lastRun.passed}/{lastRun.total}
+              {lastRun.failed > 0 && (
+                <span className="text-destructive"> · {lastRun.failed} failed</span>
               )}
             </>
+          ) : (
+            "No finished runs yet."
           )}
-        </div>
+        </p>
 
         <div className="mt-auto flex flex-wrap items-center gap-1.5">
           {project.default_browsers.map((browser) => (
