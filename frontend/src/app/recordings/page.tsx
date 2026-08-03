@@ -99,17 +99,17 @@ function Recordings() {
         />
       ) : (
         <>
-          {/* Only worth showing when there is enough to lose something in. */}
-          {sessions.length > 3 && (
-            <SearchBox
-              className="mb-4"
-              value={query}
-              onChange={setQuery}
-              placeholder="Search recordings by name or URL…"
-              count={visible.length}
-              total={sessions.length}
-            />
-          )}
+          {/* Always, once there is anything to search. An earlier version
+              hid it under four items, which meant the person who asked for a
+              search box could not find one. */}
+          <SearchBox
+            className="mb-4"
+            value={query}
+            onChange={setQuery}
+            placeholder="Search recordings by name or URL…"
+            count={visible.length}
+            total={sessions.length}
+          />
 
           {visible.length === 0 ? (
             <Card className="px-4 py-10 text-center text-sm text-muted-foreground">
