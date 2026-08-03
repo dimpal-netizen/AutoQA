@@ -12,6 +12,11 @@ durable.
 
 {% if ir.needs_regex %}
 import re
+{% endif %}
+{% if ir.needs_uuid %}
+from uuid import uuid4
+{% endif %}
+{% if ir.needs_regex or ir.needs_uuid %}
 
 {% endif %}
 from playwright.sync_api import Page, expect

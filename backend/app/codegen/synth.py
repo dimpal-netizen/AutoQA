@@ -107,6 +107,24 @@ _ASSERTIONS = {
 #: Verbs whose value is a URL fragment that gets wrapped in `re.compile`.
 _URL_ASSERTIONS = {"expect_url", "expect_not_url"}
 
+#: Values that must differ on every run, and the expression each becomes.
+#:
+#: A registration test written with a fixed address passes the first time and
+#: fails on every run after it, because the account now exists. The steps are
+#: right and the result is red, which is the worst way for a test to be wrong —
+#: it teaches a tester to distrust the tool rather than the application. It also
+#: leaves a real account behind each time, so the app under test fills up with
+#: junk that nobody asked for.
+#:
+#: The suffix is short and the prefix is fixed, so everything a run creates is
+#: identifiable and can be cleaned up with one query.
+_UNIQUE_VALUES = {
+    "{{unique_email}}": "f'autoqa-{uuid4().hex[:10]}@example.test'",
+    "{{unique_phone}}": "f'7{uuid4().int % 100_000_000:08d}'",
+    "{{unique_name}}": "f'AutoQA {uuid4().hex[:6]}'",
+    "{{unique}}": "uuid4().hex[:10]",
+}
+
 
 def synthesise(
     case: object,
@@ -134,6 +152,7 @@ def synthesise(
     steps: list[StepSpec] = []
     used_pages: set[str] = set()
     needs_regex = False
+    needs_uuid = False
 
     for index, raw in enumerate(steps_in):
         verb = VERBS.get(str(getattr(raw, "action", "")).strip().lower())
@@ -183,9 +202,17 @@ def synthesise(
             # `re.compile('app.example.com')` match any character at all.
             value = re.escape(str(value))
 
+        # A unique value renders as the expression that produces one, so it is
+        # evaluated per run rather than baked in as a literal.
+        unique = _UNIQUE_VALUES.get(str(value).strip()) if value is not None else None
+        if unique is not None:
+            needs_uuid = True
+
         line = verb.render.format(
             target=target_expr or "",
-            value=py_str(str(value)) if value is not None else "",
+            value=unique
+            if unique is not None
+            else (py_str(str(value)) if value is not None else ""),
         )
 
         steps.append(
@@ -216,6 +243,7 @@ def synthesise(
         pages=[p for p in pages if p.class_name in used_pages],
         steps=steps,
         needs_regex=needs_regex,
+        needs_uuid=needs_uuid,
     )
     return ir
 

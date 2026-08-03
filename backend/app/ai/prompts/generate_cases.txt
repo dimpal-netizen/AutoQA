@@ -67,9 +67,33 @@ Rules, all of which matter:
   the recording gives you no evidence of what a bad URL or a rejected input
   actually shows, use `expect_not_url` for where it must not end up, and write
   nothing else.
-- For a negative case, expect the app to STAY on the same page - use
-  expect_not_url with the path a success would reach. Do not guess the wording
-  of an error message you have not seen.
+- For a negative case, use `expect_not_url` with the path a SUCCESS would
+  reach. Do not guess the wording of an error message you have not seen.
+
+  Do not assert `expect_url` of the page the test is already on. That is where
+  it started, so the assertion is true before the test does anything and stays
+  true if the button is dead, the form never submits, or the server returns an
+  error page at the same address. It reports green for all of them. Name the
+  destination the app must NOT reach instead — that is the claim with content.
 - Never use a real password other than the one already recorded, and never
   write a test that deletes data, sends mail, or makes a payment.
+
+- **Anything that creates a record must use a unique value, every run.** These
+  four placeholders are replaced with a fresh value each time the test runs:
+
+  | value              | becomes                        |
+  |--------------------|--------------------------------|
+  | `{{unique_email}}` | autoqa-3f9c1b7a0e@example.test |
+  | `{{unique_phone}}` | 748120993                      |
+  | `{{unique_name}}`  | AutoQA 4d2a91                  |
+  | `{{unique}}`       | 3f9c1b7a0e                     |
+
+  A registration test written with a fixed address passes the first time and
+  fails on every run after it, because that account now exists. The steps are
+  right and the result is red, which is the worst way for a test to be wrong.
+  Use `{{unique_email}}` for the email on every sign-up case.
+
+  The one exception is a case that is *about* duplication — "registering with
+  an address that is already taken must be rejected". There, reuse the recorded
+  address deliberately, and say so in the description.
 - Prefer few strong steps over many weak ones. Four to eight steps is normal.

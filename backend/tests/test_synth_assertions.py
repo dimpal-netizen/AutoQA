@@ -21,6 +21,7 @@ from app.ai.schemas import CaseStep, GeneratedCase
 from app.codegen.converter import LocatorSpec, PageSpec
 from app.codegen.generator import render
 from app.codegen.synth import VERBS, SynthesisError, synthesise
+from app.models.enums import ActionType
 
 
 @pytest.fixture
@@ -179,3 +180,110 @@ def test_an_invented_verb_is_still_refused(pages):
     with pytest.raises(SynthesisError, match="unknown action"):
         build([OPEN, CaseStep(action="expect_greyed_out",
                               target="LoginPage.password_input", description="x")], pages)
+
+
+# ---------------------------------------------------------------------------
+# Data that must not collide with the last run
+# ---------------------------------------------------------------------------
+SIGNUP = [
+    OPEN,
+    CaseStep(action="fill", target="LoginPage.email_input",
+             value="{{unique_email}}", description="Enter an email"),
+    CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+    CaseStep(action="expect_not_url", value="/register", description="Left the form"),
+]
+
+
+def test_a_unique_email_is_generated_per_run_not_baked_in(pages):
+    """A fixed address passes once and is red on every run after it."""
+    code = build(SIGNUP, pages)
+    ast.parse(code)
+
+    assert "uuid4().hex" in code
+    assert "from uuid import uuid4" in code
+    # The placeholder itself must not survive into the test.
+    assert "{{unique_email}}" not in code
+    # And it must be an expression, not a quoted literal.
+    assert "'{{unique_email}}'" not in code
+
+
+@pytest.mark.parametrize(
+    "token", ["{{unique_email}}", "{{unique_phone}}", "{{unique_name}}", "{{unique}}"]
+)
+def test_every_placeholder_renders_as_a_live_expression(token, pages):
+    code = build(
+        [
+            OPEN,
+            CaseStep(action="fill", target="LoginPage.email_input",
+                     value=token, description="Fill"),
+            CaseStep(action="expect_not_url", value="/done", description="x"),
+        ],
+        pages,
+    )
+    ast.parse(code)
+    assert "uuid4()" in code
+    assert token not in code
+
+
+def test_the_generated_email_is_recognisably_ours_and_undeliverable(pages):
+    """`.test` is reserved and cannot resolve, so nothing can be mailed to it,
+    and the prefix makes every account a run created findable in one query."""
+    code = build(SIGNUP, pages)
+    line = next(l for l in code.splitlines() if "email_input.fill" in l)
+    assert "autoqa-" in line
+    assert "@example.test" in line
+
+
+def test_uuid_is_not_imported_when_nothing_needs_it(pages):
+    code = build(
+        [
+            OPEN,
+            CaseStep(action="fill", target="LoginPage.email_input",
+                     value="a@b.test", description="Fill"),
+            CaseStep(action="expect_not_url", value="/done", description="x"),
+        ],
+        pages,
+    )
+    assert "uuid4" not in code
+
+
+def test_an_ordinary_value_is_still_a_literal(pages):
+    """Only the placeholders are special; nothing else is reinterpreted."""
+    code = build(
+        [
+            OPEN,
+            CaseStep(action="fill", target="LoginPage.email_input",
+                     value="deliberate@example.test", description="Fill"),
+            CaseStep(action="expect_not_url", value="/done", description="x"),
+        ],
+        pages,
+    )
+    assert "'deliberate@example.test'" in code
+
+
+def test_the_readable_step_shows_the_placeholder_not_the_expression(pages):
+    """A test-case sheet should say the value varies, not print f-string code."""
+    ir = synthesise(
+        GeneratedCase(name="Case", category="positive", priority="high",
+                      description="d", steps=SIGNUP),
+        pages=pages, start_url="https://x.test/login",
+        module_name="test_case", function_name="test_case",
+    )
+    # `goto` carries its URL as input_data too, so select the fill.
+    fill = next(s for s in ir.steps if s.action is ActionType.INPUT)
+    assert fill.input_data == "{{unique_email}}"
+
+
+def test_a_module_needing_both_imports_gets_both_and_still_parses(pages):
+    code = build(
+        [
+            OPEN,
+            CaseStep(action="fill", target="LoginPage.email_input",
+                     value="{{unique_email}}", description="Fill"),
+            CaseStep(action="expect_url", value="?ref=a+b", description="x"),
+        ],
+        pages,
+    )
+    ast.parse(code)
+    assert "import re" in code
+    assert "from uuid import uuid4" in code

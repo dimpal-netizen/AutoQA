@@ -127,6 +127,10 @@ class TestIR:
     # needs `import re`. A flag rather than scanning the rendered code, which
     # would couple the template to string matching.
     needs_regex: bool = False
+    # Set when a step uses a value that must differ per run, so the module
+    # imports uuid4. Same reasoning as needs_regex: a flag rather than scanning
+    # the rendered code, which would couple the template to string matching.
+    needs_uuid: bool = False
 
     @property
     def file_path(self) -> str:
