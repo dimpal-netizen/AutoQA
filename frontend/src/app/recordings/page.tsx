@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FlaskConical, Trash2, Video } from "lucide-react";
+import { FlaskConical, FolderKanban, Trash2, Video } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RecordingSession } from "@/lib/types";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
-import { LaunchRecording } from "@/components/launch-recording";
 import { Button } from "@/components/ui/button";
 import { Alert, Card, EmptyState, PageHeader } from "@/components/ui/card";
 import { SearchBox, matches } from "@/components/ui/search";
@@ -29,19 +28,6 @@ function Recordings() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-
-  const load = useCallback(async () => {
-    try {
-      setSessions(await api.recordings.list());
-      setError(null);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not load recordings",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
     // `cancelled` guards against the response landing after unmount.
@@ -82,12 +68,10 @@ function Recordings() {
     <div className="animate-in">
       <PageHeader
         title="Recordings"
-        description="Every browser session you have captured. Each one becomes a runnable test the moment you stop recording."
+        description="Every browser session you have captured, across all projects. Each one becomes a runnable test the moment you stop recording."
       />
 
       {error && <Alert className="mb-4">{error}</Alert>}
-
-      <LaunchRecording onChanged={load} />
 
       {loading ? (
         <SkeletonRows count={2} />
@@ -95,7 +79,15 @@ function Recordings() {
         <EmptyState
           icon={<Video />}
           title="No recordings yet"
-          description="Enter a URL above and press Start. A browser opens, you use the site normally, and every interaction is captured."
+          description="Recording starts inside a project. Open one and press Record a session — a browser opens, you use the site normally, and every interaction is captured."
+          action={
+            <Link href="/projects">
+              <Button>
+                <FolderKanban />
+                Go to projects
+              </Button>
+            </Link>
+          }
         />
       ) : (
         <>
