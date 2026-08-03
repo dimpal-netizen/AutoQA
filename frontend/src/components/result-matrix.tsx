@@ -33,10 +33,15 @@ const ICON: Record<ResultStatus, string> = {
 };
 
 export function ResultMatrix({ results }: { results: TestResult[] }) {
-  // Failures start open. Someone looking at a red run came to read the error;
-  // making them click for it is the one interaction this table should not
-  // have. Collapsing is still there for when you have read it.
-  const [closed, setClosed] = useState<Set<number>>(() => new Set());
+  // Everything starts closed.
+  //
+  // This used to open every failure automatically, on the reasoning that
+  // someone looking at a red run came to read the error. That holds for one
+  // failure and stops holding at five: the run expands into a page of stack
+  // traces and analysis prose, and the list of which tests failed — the thing
+  // you actually look at first — is pushed off the screen by the detail of the
+  // first one. The row says what failed; opening it says why.
+  const [openRows, setOpenRows] = useState<Set<number>>(() => new Set());
 
   // Group by test, keeping the order results arrived in.
   const byCase = new Map<string, TestResult[]>();
@@ -66,7 +71,7 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
               (r) => r.status === "failed" || r.status === "error",
             );
             const expandable = Boolean(failure);
-            const isOpen = expandable && !closed.has(group[0].id);
+            const isOpen = expandable && openRows.has(group[0].id);
 
             return (
               <Fragment key={name}>
@@ -74,7 +79,7 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
                   className={`border-b ${expandable ? "cursor-pointer hover:bg-muted/50" : ""}`}
                   onClick={() =>
                     expandable &&
-                    setClosed((current) => {
+                    setOpenRows((current) => {
                       const next = new Set(current);
                       if (!next.delete(group[0].id)) next.add(group[0].id);
                       return next;
