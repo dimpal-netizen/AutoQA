@@ -159,16 +159,18 @@ function ProjectsView() {
 
       {error && <Alert className="mb-4">{error}</Alert>}
 
-      {showForm && (
+      {/* Creating a project replaces the list rather than pushing it down.
+          The form is the whole task while it is open — a search box and a grid
+          of projects underneath are things to do instead of finishing it, and
+          neither is any use until it is finished. Cancel brings them back. */}
+      {showForm ? (
         <NewProjectForm
           onCreated={(project) => {
             setProjects((current) => [project, ...current]);
             setShowForm(false);
           }}
         />
-      )}
-
-      {loading ? (
+      ) : loading ? (
         <SkeletonRows count={2} />
       ) : projects.length === 0 ? (
         <EmptyState canCreate={canCreate} />
