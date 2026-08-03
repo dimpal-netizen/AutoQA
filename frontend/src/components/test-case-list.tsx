@@ -221,9 +221,9 @@ function CaseRows({
               onClick={onRun}
               aria-label={`Run ${testCase.name}`}
               title="Run this test case"
-              className="inline-flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-all hover:bg-primary-hover hover:shadow-[0_4px_12px_var(--primary-glow)]"
+              className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
-              <Play className="size-3.5 fill-current" />
+              <Play className="size-4" />
             </button>
           </td>
         )}
