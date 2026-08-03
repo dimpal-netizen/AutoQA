@@ -97,13 +97,19 @@ function ProjectWorkspace({ id }: { id: number }) {
   if (!project) return <Alert>{error ?? "Project not found"}</Alert>;
 
   return (
-    <div className="animate-in flex flex-col gap-5">
-      {/* One banded header instead of two stacked ones.
-          The project title and the suite title were both set large and sat
-          directly on top of each other, so the eye could not tell which was
-          the subject of the page. The project is now the breadcrumb it always
-          was, inside a tinted panel that separates the identity of this page
-          from its contents. */}
+    <div className="animate-in flex flex-col gap-4">
+      {/* Above the panel, not inside it. The panel is this project — its name,
+          its URL, the button that records into it. A link that leaves the
+          project is not part of the project, and putting it in the same box
+          made the box mean two things. */}
+      <Link
+        href="/projects"
+        className="inline-flex w-fit items-center gap-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-primary"
+      >
+        <ArrowLeft className="size-3.5" />
+        All projects
+      </Link>
+
       <header className="relative overflow-hidden rounded-2xl border border-border bg-card px-6 py-6 shadow-xs sm:px-8">
         <div
           aria-hidden
@@ -116,15 +122,7 @@ function ProjectWorkspace({ id }: { id: number }) {
 
         <div className="relative flex flex-wrap items-start gap-4">
           <div className="min-w-0 flex-1">
-            <Link
-              href="/projects"
-              className="inline-flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-primary"
-            >
-              <ArrowLeft className="size-3.5" />
-              All projects
-            </Link>
-
-            <h1 className="mt-3 truncate text-[30px] font-extrabold leading-tight tracking-tight">
+            <h1 className="truncate text-[30px] font-extrabold leading-tight tracking-tight">
               {project.name}
             </h1>
 
