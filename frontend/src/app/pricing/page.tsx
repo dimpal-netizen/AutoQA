@@ -31,11 +31,11 @@ export default function PricingPage() {
             <span className="flex size-11 items-center justify-center rounded-xl bg-primary-subtle text-primary">
               <Server className="size-5" />
             </span>
-            <h3 className="mt-5 text-xl font-extrabold">AutoQA itself</h3>
+            <h3 className="mt-5 text-xl font-bold">AutoQA itself</h3>
             <p className="mt-1 text-[13px] text-muted-foreground">
               Everything except the AI features.
             </p>
-            <p className="mt-5 text-5xl font-extrabold tracking-tight">Free</p>
+            <p className="mt-5 text-4xl font-bold tracking-tight">Free</p>
             <p className="mt-1.5 text-[13px] text-muted-foreground">
               No account limits, no seat count, no expiry.
             </p>
@@ -62,11 +62,11 @@ export default function PricingPage() {
             <span className="flex size-11 items-center justify-center rounded-xl bg-primary-subtle text-primary">
               <Sparkles className="size-5" />
             </span>
-            <h3 className="mt-5 text-xl font-extrabold">AI features</h3>
+            <h3 className="mt-5 text-xl font-bold">AI features</h3>
             <p className="mt-1 text-[13px] text-muted-foreground">
               Test generation, failure analysis, bug drafting.
             </p>
-            <p className="mt-5 text-5xl font-extrabold tracking-tight">
+            <p className="mt-5 text-4xl font-bold tracking-tight">
               Your key
             </p>
             <p className="mt-1.5 text-[13px] text-muted-foreground">

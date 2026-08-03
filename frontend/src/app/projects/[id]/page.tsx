@@ -122,7 +122,7 @@ function ProjectWorkspace({ id }: { id: number }) {
 
         <div className="relative flex flex-wrap items-start gap-4">
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[30px] font-extrabold leading-tight tracking-tight">
+            <h1 className="truncate text-2xl font-bold leading-tight tracking-tight">
               {project.name}
             </h1>
 

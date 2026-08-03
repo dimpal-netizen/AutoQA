@@ -214,7 +214,7 @@ export function SuiteWorkspace({
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate text-xl font-extrabold tracking-tight">
+          <h2 className="truncate text-lg font-bold tracking-tight">
             {suite.name}
           </h2>
           <p className="mt-1 text-[13px] text-muted-foreground">
@@ -432,7 +432,7 @@ function Figure({
       <p
         className={cn(
           "mt-1.5 font-extrabold leading-none tracking-tight",
-          wordy ? "text-xl" : "text-3xl",
+          wordy ? "text-lg" : "text-2xl",
           colour,
         )}
       >

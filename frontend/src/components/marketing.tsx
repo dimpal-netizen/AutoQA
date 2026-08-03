@@ -176,7 +176,7 @@ function Hero() {
           Record once. AutoQA writes the rest.
         </Badge>
 
-        <h1 className="mt-6 text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-5xl md:text-6xl">
+        <h1 className="mt-6 text-3xl font-bold leading-[1.08] tracking-tight sm:text-4xl md:text-5xl">
           Test automation
           <br />
           <span className="text-primary">without writing code</span>
@@ -261,7 +261,7 @@ function DashboardShot() {
         {/* Content */}
         <div className="min-w-0 flex-1 p-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-base font-extrabold tracking-tight">Dashboard</p>
+            <p className="text-base font-bold tracking-tight">Dashboard</p>
             <span className="rounded-full bg-primary px-3 py-1.5 text-[10px] font-semibold text-primary-foreground">
               Record a session
             </span>
@@ -272,7 +272,7 @@ function DashboardShot() {
               <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Pass rate
               </p>
-              <p className="mt-1 text-3xl font-extrabold leading-none text-success">
+              <p className="mt-1 text-2xl font-bold leading-none text-success">
                 92%
               </p>
               <p className="mt-1 text-[10px] text-muted-foreground">
@@ -388,7 +388,7 @@ function Stats() {
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {items.map(([value, label]) => (
           <div key={label} className="text-center">
-            <p className="text-4xl font-extrabold tracking-tight text-primary">
+            <p className="text-3xl font-bold tracking-tight text-primary">
               {value}
             </p>
             <p className="mt-1 text-[13px] text-muted-foreground">{label}</p>
@@ -436,7 +436,7 @@ function Problem() {
             key={n}
             className="sheen rounded-xl border border-border bg-card p-6 shadow-xs"
           >
-            <span className="text-3xl font-extrabold tracking-tight text-destructive/70">
+            <span className="text-2xl font-bold tracking-tight text-destructive/70">
               {n}
             </span>
             <h3 className="mt-3 text-base font-bold">{title}</h3>
@@ -909,11 +909,11 @@ function Pricing() {
 
       <div className="mx-auto mt-10 grid max-w-4xl gap-5 md:grid-cols-2">
         <div className="sheen flex flex-col rounded-xl border-2 border-primary bg-card p-7 shadow-md">
-          <h3 className="text-xl font-extrabold">AutoQA itself</h3>
+          <h3 className="text-xl font-bold">AutoQA itself</h3>
           <p className="mt-1 text-[13px] text-muted-foreground">
             Everything except the AI features.
           </p>
-          <p className="mt-5 text-5xl font-extrabold tracking-tight">Free</p>
+          <p className="mt-5 text-4xl font-bold tracking-tight">Free</p>
           <p className="mt-1.5 text-[13px] text-muted-foreground">
             No account limits, no seat count, no expiry.
           </p>
@@ -935,11 +935,11 @@ function Pricing() {
         </div>
 
         <div className="sheen flex flex-col rounded-xl border border-border bg-card p-7 shadow-xs">
-          <h3 className="text-xl font-extrabold">AI features</h3>
+          <h3 className="text-xl font-bold">AI features</h3>
           <p className="mt-1 text-[13px] text-muted-foreground">
             Test generation, failure analysis, bug drafting.
           </p>
-          <p className="mt-5 text-5xl font-extrabold tracking-tight">Your key</p>
+          <p className="mt-5 text-4xl font-bold tracking-tight">Your key</p>
           <p className="mt-1.5 text-[13px] text-muted-foreground">
             Billed to you by Google, at their rates. AutoQA takes no cut and
             adds no markup.
@@ -1035,7 +1035,7 @@ function Closing() {
   return (
     <section className="border-y border-border bg-card">
       <div className="mx-auto max-w-4xl px-5 py-20 text-center sm:px-8">
-        <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+        <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
           Record your first test in a minute
         </h2>
         <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-muted-foreground">
@@ -1133,7 +1133,7 @@ function Heading({
 }) {
   return (
     <div className={center ? "mx-auto max-w-2xl text-center" : "max-w-2xl"}>
-      <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+      <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
         {title} {accent && <span className="text-primary">{accent}</span>}
       </h2>
       {lead && (
@@ -1164,7 +1164,7 @@ function Split({
         <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
           {eyebrow}
         </p>
-        <h3 className="mt-2 text-2xl font-extrabold tracking-tight">{title}</h3>
+        <h3 className="mt-2 text-2xl font-bold tracking-tight">{title}</h3>
         <div className="mt-3 flex flex-col gap-3 text-[15px] leading-relaxed text-muted-foreground">
           {children}
         </div>

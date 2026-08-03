@@ -57,7 +57,7 @@ export default function WhyAutoQAPage() {
               key={item.n}
               className="sheen rounded-xl border border-border bg-card p-6 text-left shadow-xs"
             >
-              <span className="text-3xl font-extrabold tracking-tight text-destructive/70">
+              <span className="text-2xl font-bold tracking-tight text-destructive/70">
                 {item.n}
               </span>
               <h3 className="mt-3 text-base font-bold">{item.title}</h3>

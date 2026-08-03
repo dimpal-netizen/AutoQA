@@ -34,7 +34,7 @@ export function CardTitle({
 }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
-      className={cn("text-base font-bold leading-none", className)}
+      className={cn("text-[15px] font-semibold leading-none", className)}
       {...props}
     />
   );
@@ -161,7 +161,7 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <h1 className="text-[30px] font-extrabold leading-tight tracking-tight">
+        <h1 className="text-2xl font-bold leading-tight tracking-tight">
           {title}
         </h1>
         {description && (

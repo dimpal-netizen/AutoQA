@@ -273,7 +273,7 @@ export function PageHero({
       />
       <div className="mx-auto max-w-3xl px-5 py-16 text-center sm:px-8 sm:py-20">
         <Badge>{badge}</Badge>
-        <h1 className="mt-6 text-4xl font-extrabold leading-[1.1] tracking-tight sm:text-5xl">
+        <h1 className="mt-6 text-3xl font-bold leading-[1.1] tracking-tight sm:text-4xl">
           {title}
           <br />
           <span className="text-primary">{accent}</span>
@@ -337,7 +337,7 @@ export function Section({
       <div className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
         {title && (
           <div className={cn("max-w-2xl", center && "mx-auto text-center")}>
-            <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+            <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
               {title} {accent && <span className="text-primary">{accent}</span>}
             </h2>
             {lead && (
@@ -376,7 +376,7 @@ export function SplitRow({
             {eyebrow}
           </p>
         )}
-        <h3 className="mt-2 text-2xl font-extrabold tracking-tight">{title}</h3>
+        <h3 className="mt-2 text-2xl font-bold tracking-tight">{title}</h3>
         <div className="mt-3 flex flex-col gap-3 text-[15px] leading-relaxed text-muted-foreground">
           {children}
         </div>
@@ -464,7 +464,7 @@ export function CtaBand({
 }) {
   return (
     <section className="mx-auto max-w-4xl px-5 py-20 text-center sm:px-8">
-      <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+      <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
         {title}
       </h2>
       {children && (
