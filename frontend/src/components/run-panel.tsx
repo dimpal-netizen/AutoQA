@@ -41,6 +41,7 @@ export function RunPanel({
   caseCount,
   request,
   onDeleted,
+  onRunningChange,
 }: {
   suiteId: number;
   caseCount: number;
@@ -48,6 +49,9 @@ export function RunPanel({
   request?: { caseIds: number[]; token: number } | null;
   /** A run was deleted, so anything showing it needs to refresh. */
   onDeleted?: () => void;
+  /** What is running: null when idle, the case ids when a run is going, and
+   *  an empty array when that run is the whole suite. */
+  onRunningChange?: (caseIds: number[] | null) => void;
 }) {
   const [browsers, setBrowsers] = useState<Browser[]>(["chromium"]);
   const [headless, setHeadless] = useState(true);
@@ -64,6 +68,15 @@ export function RunPanel({
   const runId = run?.id ?? null;
   const active = run ? isRunActive(run) : false;
   const mounted = useRef(true);
+
+  // In a ref so the polling effect does not restart every time the parent
+  // re-renders and hands over a fresh function. Written in an effect, not
+  // during render — a ref updated mid-render is read by whatever rendered
+  // first, which is the order React makes no promises about.
+  const notifyRunning = useRef(onRunningChange);
+  useEffect(() => {
+    notifyRunning.current = onRunningChange;
+  }, [onRunningChange]);
 
   useEffect(() => {
     mounted.current = true;
@@ -103,7 +116,10 @@ export function RunPanel({
         const detail = await api.runs.get(runId);
         if (!mounted.current) return;
         setRun(detail);
-        if (!isRunActive(detail)) void loadHistory();
+        if (!isRunActive(detail)) {
+          notifyRunning.current?.(null);
+          void loadHistory();
+        }
       } catch {
         /* a dropped poll is not worth an error banner - the next one retries */
       }
@@ -127,9 +143,11 @@ export function RunPanel({
         });
         setStopping(false);
         setRun({ ...started, results: [] });
+        notifyRunning.current?.(caseIds ?? []);
         void loadHistory();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not start the run");
+        notifyRunning.current?.(null);
       } finally {
         setStarting(false);
       }
@@ -188,6 +206,7 @@ export function RunPanel({
     try {
       await api.runs.cancel(runId);
       setRun(await api.runs.get(runId));
+      notifyRunning.current?.(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not stop the run");
     } finally {

@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileCode2,
+  LoaderCircle,
   Play,
   TriangleAlert,
 } from "lucide-react";
@@ -41,10 +42,14 @@ import { Card, CardContent } from "@/components/ui/card";
 export function TestCaseList({
   cases,
   onRunCase,
+  runningCaseIds = null,
 }: {
   cases: TestCase[];
   /** Run this one case on its own. Absent where the list is read-only. */
   onRunCase?: (caseId: number) => void;
+  /** null when nothing is running; the ids of a running run otherwise, with
+   *  an empty array meaning the whole suite. */
+  runningCaseIds?: number[] | null;
 }) {
   // The recording is not a test case, it is the session every case came from —
   // one row of 33 steps sitting above a list of focused three-step checks,
@@ -116,6 +121,15 @@ export function TestCaseList({
                 open={open.has(testCase.id)}
                 onToggle={() => toggle(testCase.id)}
                 onRun={onRunCase && (() => onRunCase(testCase.id))}
+                // Empty means the whole suite is running, so every row is.
+                running={
+                  runningCaseIds !== null &&
+                  (runningCaseIds.length === 0 ||
+                    runningCaseIds.includes(testCase.id))
+                }
+                // One run at a time: starting a second while the first is
+                // going would queue a run against files the first is using.
+                busy={runningCaseIds !== null}
               />
             ))}
           </tbody>
@@ -132,11 +146,15 @@ function CaseRows({
   open,
   onToggle,
   onRun,
+  running = false,
+  busy = false,
 }: {
   testCase: TestCase;
   open: boolean;
   onToggle: () => void;
   onRun?: () => void;
+  running?: boolean;
+  busy?: boolean;
 }) {
   const fragile = testCase.steps.filter(isFragile);
 
@@ -219,11 +237,18 @@ function CaseRows({
             <button
               type="button"
               onClick={onRun}
-              aria-label={`Run ${testCase.name}`}
-              title="Run this test case"
-              className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              disabled={busy}
+              aria-label={
+                running ? `${testCase.name} is running` : `Run ${testCase.name}`
+              }
+              title={running ? "Running…" : "Run this test case"}
+              className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
             >
-              <Play className="size-4" />
+              {running ? (
+                <LoaderCircle className="size-4 animate-spin text-primary" />
+              ) : (
+                <Play className="size-4" />
+              )}
             </button>
           </td>
         )}

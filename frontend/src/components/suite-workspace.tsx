@@ -76,6 +76,9 @@ export function SuiteWorkspace({
     token: number;
   } | null>(null);
   const requestCount = useRef(0);
+  // What the run panel says is running, so the row that was pressed can show
+  // it. Null means nothing is.
+  const [runningCaseIds, setRunningCaseIds] = useState<number[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const user = useAuthStore((s) => s.user);
@@ -300,6 +303,7 @@ export function SuiteWorkspace({
                 caseCount={suite.cases.length}
                 request={runRequest}
                 onDeleted={() => void onChange(suite)}
+                onRunningChange={setRunningCaseIds}
               />
 
               <div className="rounded-lg border border-dashed border-border bg-muted/40 p-4">
@@ -322,9 +326,13 @@ export function SuiteWorkspace({
 
               <TestCaseList
                 cases={suite.cases}
+                runningCaseIds={runningCaseIds}
                 onRunCase={(caseId) => {
                   requestCount.current += 1;
                   setRunRequest({ caseIds: [caseId], token: requestCount.current });
+                  // Optimistic: the panel confirms a moment later, but the
+                  // spinner has to appear on the press, not after a round trip.
+                  setRunningCaseIds([caseId]);
                 }}
               />
             </div>
