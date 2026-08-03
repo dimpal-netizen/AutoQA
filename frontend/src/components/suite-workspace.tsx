@@ -15,7 +15,7 @@
  *    should not have.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   AlertTriangle,
   Download,
@@ -68,9 +68,14 @@ export function SuiteWorkspace({
   const [tab, setTab] = useState("cases");
   const [regenerating, setRegenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // Ticked in the table, read by the Run panel. Lives here because it is the
-  // only place both can see.
-  const [picked, setPicked] = useState<Set<number>>(() => new Set());
+  // A row asked to run one case. The token makes each request distinct, so
+  // pressing the same row twice starts two runs rather than looking unchanged
+  // to the panel below.
+  const [runRequest, setRunRequest] = useState<{
+    caseIds: number[];
+    token: number;
+  } | null>(null);
+  const requestCount = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
   const user = useAuthStore((s) => s.user);
@@ -293,7 +298,7 @@ export function SuiteWorkspace({
               <RunPanel
                 suiteId={suite.id}
                 caseCount={suite.cases.length}
-                selectedCaseIds={[...picked]}
+                request={runRequest}
                 onDeleted={() => void onChange(suite)}
               />
 
@@ -317,8 +322,10 @@ export function SuiteWorkspace({
 
               <TestCaseList
                 cases={suite.cases}
-                selected={picked}
-                onSelectedChange={setPicked}
+                onRunCase={(caseId) => {
+                  requestCount.current += 1;
+                  setRunRequest({ caseIds: [caseId], token: requestCount.current });
+                }}
               />
             </div>
           )}

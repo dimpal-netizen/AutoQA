@@ -39,13 +39,13 @@ const POLL_MS = 2000;
 export function RunPanel({
   suiteId,
   caseCount,
-  selectedCaseIds = [],
+  request,
   onDeleted,
 }: {
   suiteId: number;
   caseCount: number;
-  /** Ticked in the table below. Empty means the whole suite. */
-  selectedCaseIds?: number[];
+  /** A row below asked for one case to be run. The token changes per press. */
+  request?: { caseIds: number[]; token: number } | null;
   /** A run was deleted, so anything showing it needs to refresh. */
   onDeleted?: () => void;
 }) {
@@ -112,27 +112,46 @@ export function RunPanel({
     return () => clearInterval(timer);
   }, [runId, active, loadHistory]);
 
-  async function start() {
-    setStarting(true);
-    setError(null);
-    try {
-      const started = await api.runs.start(suiteId, {
-        browsers,
-        headless,
-        slow_mo_ms: slowMo,
-        // Omitted entirely when nothing is ticked — the API reads an absent
-        // case_ids as "the whole suite", and sending [] would mean "no tests".
-        ...(selectedCaseIds.length > 0 ? { case_ids: selectedCaseIds } : {}),
-      });
-      setStopping(false);
-      setRun({ ...started, results: [] });
-      void loadHistory();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the run");
-    } finally {
-      setStarting(false);
-    }
-  }
+  const start = useCallback(
+    async (caseIds?: number[]) => {
+      setStarting(true);
+      setError(null);
+      try {
+        const started = await api.runs.start(suiteId, {
+          browsers,
+          headless,
+          slow_mo_ms: slowMo,
+          // Omitted entirely when running everything — the API reads an absent
+          // case_ids as "the whole suite", and [] would mean "no tests".
+          ...(caseIds && caseIds.length > 0 ? { case_ids: caseIds } : {}),
+        });
+        setStopping(false);
+        setRun({ ...started, results: [] });
+        void loadHistory();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not start the run");
+      } finally {
+        setStarting(false);
+      }
+    },
+    [suiteId, browsers, headless, slowMo, loadHistory],
+  );
+
+  // A row below pressed its play button.
+  //
+  // The token is what identifies a press, not the ids: pressing the same row
+  // twice must start two runs, and comparing ids would make the second press
+  // look identical to the first. It also means `start` can be an honest
+  // dependency — it changes whenever the browser choice does, and the guard
+  // makes that re-run harmless.
+  const lastToken = useRef(0);
+  useEffect(() => {
+    if (!request || request.token === lastToken.current) return;
+    lastToken.current = request.token;
+    void (async () => {
+      await start(request.caseIds);
+    })();
+  }, [request, start]);
 
   async function removeRun() {
     if (!runId) return;
@@ -206,12 +225,9 @@ export function RunPanel({
           Run tests
         </CardTitle>
         <CardDescription>
-          {selectedCaseIds.length > 0
-            ? `${selectedCaseIds.length} of ${caseCount} test cases selected`
-            : caseCount === 1
-              ? "1 test case"
-              : `${caseCount} test cases`}{" "}
-          · runs in every browser you pick, all at the same time
+          {caseCount === 1 ? "1 test case" : `${caseCount} test cases`}
+          {" "}· runs in every browser you pick, all at the same time. Use the
+          play button on a row to run just that one.
         </CardDescription>
       </CardHeader>
 
@@ -291,7 +307,7 @@ export function RunPanel({
             ) : null}
             <Button
               size="sm"
-              onClick={start}
+              onClick={() => void start()}
               disabled={starting || active || browsers.length === 0 || caseCount === 0}
             >
               {active ? (
@@ -299,13 +315,7 @@ export function RunPanel({
               ) : (
                 <Play className="size-4" />
               )}
-              {active
-                ? "Running…"
-                : starting
-                  ? "Starting…"
-                  : selectedCaseIds.length > 0
-                    ? `Run ${selectedCaseIds.length} selected`
-                    : "Run tests"}
+              {active ? "Running…" : starting ? "Starting…" : "Run tests"}
             </Button>
           </div>
         </div>
