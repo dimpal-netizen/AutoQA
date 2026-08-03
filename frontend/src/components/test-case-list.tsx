@@ -25,15 +25,18 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import {
+  BROWSER_LABEL,
   CATEGORY_BLURB,
   CATEGORY_LABEL,
   CATEGORY_ORDER,
   CATEGORY_TONE,
   PRIORITY_TONE,
   RELIABLE_RANK,
+  RESULT_BADGE,
   SELECTOR_RANK,
   type CaseCategory,
   type TestCase,
+  type TestResult,
   type TestStep,
 } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -43,10 +46,13 @@ export function TestCaseList({
   cases,
   onRunCase,
   runningCaseIds = null,
+  statusByCase,
 }: {
   cases: TestCase[];
   /** Run this one case on its own. Absent where the list is read-only. */
   onRunCase?: (caseId: number) => void;
+  /** Where each case currently stands — its newest result, from any run. */
+  statusByCase?: Map<number, TestResult[]>;
   /** null when nothing is running; the ids of a running run otherwise, with
    *  an empty array meaning the whole suite. */
   runningCaseIds?: number[] | null;
@@ -82,11 +88,16 @@ export function TestCaseList({
     );
   }
 
-  // Category order carries meaning, so sorting by it keeps the grouping
-  // visible without splitting the table up.
-  const ordered = CATEGORY_ORDER.flatMap((category) =>
-    testCases.filter((c) => c.category === category),
-  );
+  // Back to sections. A Category column repeated the same word down eight
+  // consecutive rows, which is a column spending its width to say "still the
+  // same as the row above". A heading says it once and separates the groups
+  // at the same time.
+  const groups = CATEGORY_ORDER.map((category) => ({
+    category,
+    items: testCases.filter((c) => c.category === category),
+  })).filter((group) => group.items.length > 0);
+
+  const columns = onRunCase ? 5 : 4;
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
@@ -101,7 +112,7 @@ export function TestCaseList({
                 Test case
               </th>
               <th scope="col" className="px-3 py-2.5 font-semibold">
-                Category
+                Status
               </th>
               <th scope="col" className="px-3 py-2.5 font-semibold">
                 Priority
@@ -113,11 +124,34 @@ export function TestCaseList({
             </tr>
           </thead>
 
-          <tbody>
-            {ordered.map((testCase) => (
+          {groups.map(({ category, items }) => (
+            <tbody key={category}>
+              <tr>
+                <th
+                  scope="colgroup"
+                  colSpan={columns}
+                  className="border-b border-border bg-muted/30 px-3 py-2 text-left font-normal"
+                >
+                  <span className="flex flex-wrap items-baseline gap-2.5">
+                    <Badge tone={CATEGORY_TONE[category]}>
+                      {CATEGORY_LABEL[category]}
+                    </Badge>
+                    <span className="tabular text-xs text-muted-foreground">
+                      {items.length}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {CATEGORY_BLURB[category]}
+                    </span>
+                  </span>
+                </th>
+              </tr>
+
+              {items.map((testCase) => (
               <CaseRows
                 key={testCase.id}
                 testCase={testCase}
+                columns={columns}
+                results={statusByCase?.get(testCase.id) ?? []}
                 open={open.has(testCase.id)}
                 onToggle={() => toggle(testCase.id)}
                 onRun={onRunCase && (() => onRunCase(testCase.id))}
@@ -131,12 +165,11 @@ export function TestCaseList({
                 // going would queue a run against files the first is using.
                 busy={runningCaseIds !== null}
               />
-            ))}
-          </tbody>
+              ))}
+            </tbody>
+          ))}
         </table>
       </div>
-
-      <Legend cases={ordered} />
     </div>
   );
 }
@@ -148,8 +181,12 @@ function CaseRows({
   onRun,
   running = false,
   busy = false,
+  columns,
+  results,
 }: {
   testCase: TestCase;
+  columns: number;
+  results: TestResult[];
   open: boolean;
   onToggle: () => void;
   onRun?: () => void;
@@ -208,9 +245,7 @@ function CaseRows({
         </td>
 
         <td className="px-3 py-2.5">
-          <Badge tone={CATEGORY_TONE[testCase.category]}>
-            {CATEGORY_LABEL[testCase.category]}
-          </Badge>
+          <CaseStatus results={results} />
         </td>
 
         <td className="px-3 py-2.5">
@@ -256,7 +291,7 @@ function CaseRows({
 
       {open && (
         <tr className="border-b border-border bg-muted/30">
-          <td colSpan={onRun ? 6 : 5} className="px-4 py-4">
+          <td colSpan={columns} className="px-4 py-4">
             <Steps steps={testCase.steps} />
           </td>
         </tr>
@@ -317,33 +352,44 @@ function Steps({ steps }: { steps: TestStep[] }) {
   );
 }
 
-/** What each category is for.
+/** Where a case stands, from its newest result on each browser.
  *
- *  This used to be repeated above every group. Once as a footnote is enough:
- *  it is read on the first visit and never again, so it belongs below the data
- *  rather than interrupting it. */
-function Legend({ cases }: { cases: TestCase[] }) {
-  const present = CATEGORY_ORDER.filter((category) =>
-    cases.some((c) => c.category === category),
-  );
+ *  Answers the question the table could not: did this pass? Without a run
+ *  behind it a case is "not run" rather than anything green or red — silence
+ *  is not a pass, and showing it as one would be the most misleading thing on
+ *  the page. */
+function CaseStatus({ results }: { results: TestResult[] }) {
+  if (results.length === 0) {
+    return <span className="text-xs text-muted-foreground">Not run</span>;
+  }
+
+  // One badge when every browser agrees, which is the common case. When they
+  // disagree the worst one leads, because a case red anywhere has not passed.
+  const worst =
+    results.find((r) => r.status === "failed" || r.status === "error") ??
+    results.find((r) => r.status === "flaky") ??
+    results.find((r) => r.status === "skipped") ??
+    results[0];
+
+  const others = results.filter((r) => r.status !== worst.status);
 
   return (
-    <dl className="flex flex-wrap gap-x-6 gap-y-2 border-t border-border bg-muted/30 px-4 py-3">
-      {present.map((category) => (
-        <div key={category} className="flex items-center gap-2">
-          <dt>
-            <Badge tone={CATEGORY_TONE[category]}>
-              {CATEGORY_LABEL[category]}
-            </Badge>
-          </dt>
-          <dd className="text-xs text-muted-foreground">
-            {CATEGORY_BLURB[category]}
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <span className="flex flex-wrap items-center gap-1.5">
+      <Badge tone={RESULT_BADGE[worst.status]}>{worst.status}</Badge>
+      {others.length > 0 && (
+        <span
+          className="text-xs text-muted-foreground"
+          title={results
+            .map((r) => `${BROWSER_LABEL[r.browser] ?? r.browser}: ${r.status}`)
+            .join(", ")}
+        >
+          +{others.length}
+        </span>
+      )}
+    </span>
   );
 }
+
 
 /** Counts per category, for the page header. */
 export function categoryCounts(cases: TestCase[]): [CaseCategory, number][] {

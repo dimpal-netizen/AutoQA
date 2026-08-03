@@ -241,6 +241,11 @@ export const api = {
 
     results: (id: number) => request<TestResult[]>(`/runs/${id}/results`),
 
+    /** Where each test case in a suite currently stands — the newest result
+     *  per case, which is not the same as the last run's results. */
+    caseStatus: (suiteId: number) =>
+      request<TestResult[]>(`/suites/${suiteId}/case-status`),
+
     cancel: (id: number) => request<TestRun>(`/runs/${id}/cancel`, { method: "POST" }),
 
     /** Removes the run, its results, and the screenshots and videos on disk. */

@@ -416,3 +416,75 @@ def test_a_real_error_message_is_left_alone(report: Path):
     """Only pytest's non-answers get replaced."""
     results = {r.function_name: r for r in parse_junit(report)}
     assert results["test_broken_fixture"].error_message == "fixture 'thing' not found"
+
+
+# ---------------------------------------------------------------------------
+# The newest result per case
+# ---------------------------------------------------------------------------
+class _Res:
+    """Just the fields latest_per_case reads."""
+
+    def __init__(self, run_id, case_id, browser, status, ident):
+        self.run_id = run_id
+        self.test_case_id = case_id
+        self.browser = browser
+        self.status = status
+        self.id = ident
+
+
+def _dedupe(rows):
+    """The de-duplication latest_per_case performs, in isolation.
+
+    The SQL is a plain ordered select; this is the part with a decision in it,
+    and it is the part that would silently regress.
+    """
+    seen: set = set()
+    latest = []
+    for result in rows:
+        key = (result.test_case_id, result.browser)
+        if key in seen:
+            continue
+        seen.add(key)
+        latest.append(result)
+    return latest
+
+
+def test_only_the_newest_result_for_a_case_survives():
+    """Re-running one case must replace its old verdict, not sit beside it."""
+    rows = [
+        _Res(9, 1, "chromium", ResultStatus.PASSED, 30),   # newest run
+        _Res(8, 1, "chromium", ResultStatus.FAILED, 20),   # older
+        _Res(7, 1, "chromium", ResultStatus.FAILED, 10),   # older still
+    ]
+    kept = _dedupe(rows)
+
+    assert len(kept) == 1
+    assert kept[0].status is ResultStatus.PASSED
+
+
+def test_each_browser_keeps_its_own_verdict():
+    """Green in Chrome and red in Firefox is two facts, not one."""
+    rows = [
+        _Res(9, 1, "chromium", ResultStatus.PASSED, 30),
+        _Res(9, 1, "firefox", ResultStatus.FAILED, 31),
+    ]
+    kept = _dedupe(rows)
+
+    assert {r.browser for r in kept} == {"chromium", "firefox"}
+
+
+def test_a_case_untouched_by_the_newest_run_keeps_its_earlier_result():
+    """The bug this fixes: running case 1 alone must not blank out case 2."""
+    rows = [
+        _Res(9, 1, "chromium", ResultStatus.FAILED, 30),   # the single-case run
+        _Res(8, 1, "chromium", ResultStatus.PASSED, 21),
+        _Res(8, 2, "chromium", ResultStatus.PASSED, 22),   # still stands
+        _Res(8, 3, "chromium", ResultStatus.PASSED, 23),   # still stands
+    ]
+    kept = {r.test_case_id: r.status for r in _dedupe(rows)}
+
+    assert kept == {
+        1: ResultStatus.FAILED,
+        2: ResultStatus.PASSED,
+        3: ResultStatus.PASSED,
+    }

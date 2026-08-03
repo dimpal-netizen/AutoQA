@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.models.enums import UserRole
 from app.repositories.test_run_repo import ArtifactRepository, TestResultRepository
 from app.schemas.test_run import ResultRead, RunCreate, RunDetail, RunRead
+from app.services.codegen_service import CodegenService
 from app.services.exceptions import NotFound
 from app.services.execution_service import ExecutionService
 
@@ -78,6 +79,24 @@ def list_results(run_id: int, db: DbSession, user: CurrentUser) -> list[ResultRe
 )
 def cancel_run(run_id: int, db: DbSession, user: CurrentUser) -> RunRead:
     return RunRead.model_validate(ExecutionService(db).cancel(run_id, user))
+
+
+@router.get("/suites/{suite_id}/case-status", response_model=list[ResultRead])
+def suite_case_status(
+    suite_id: int, db: DbSession, user: CurrentUser
+) -> list[ResultRead]:
+    """The most recent result for each test case in this suite.
+
+    Not the same as the last run's results. Running one case gives a run of
+    one, and reading the suite's health off it reports every other case as
+    unknown — this answers "where does each case currently stand", which is
+    what a status column and a pass count both need.
+    """
+    CodegenService(db).get_suite(suite_id, user)  # authorises
+    return [
+        ResultRead.model_validate(r)
+        for r in TestResultRepository(db).latest_per_case(suite_id)
+    ]
 
 
 @router.delete(

@@ -128,3 +128,17 @@ def test_storage_root_is_never_escaped() -> None:
     target = (root / "runs" / "12").resolve()
     assert target.is_relative_to(root)
     assert not Path("/etc").resolve().is_relative_to(root)
+
+
+# ---------------------------------------------------------------------------
+# Where each case stands — not the same as the last run
+# ---------------------------------------------------------------------------
+def test_case_status_route_is_registered(client: TestClient) -> None:
+    schema = client.get(f"{settings.API_V1_PREFIX}/openapi.json").json()
+    path = f"{settings.API_V1_PREFIX}/suites/{{suite_id}}/case-status"
+    assert "get" in schema["paths"][path]
+
+
+def test_case_status_requires_a_token(client: TestClient) -> None:
+    response = client.get(f"{settings.API_V1_PREFIX}/suites/1/case-status")
+    assert response.status_code == 401

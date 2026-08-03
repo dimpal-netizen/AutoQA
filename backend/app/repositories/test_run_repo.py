@@ -110,6 +110,41 @@ class TestResultRepository(BaseRepository[TestResult]):
         )
         return list(self.db.execute(statement).scalars().all())
 
+    def latest_per_case(self, suite_id: int) -> list[TestResult]:
+        """The most recent result for each test case in a suite.
+
+        "How is this suite doing" is not answerable from the last run alone.
+        Running one case produces a run of one, and reading the figures off it
+        says "0 passed of 1" while twelve other cases sit there green from
+        earlier — accurate about that run, wrong about the suite.
+
+        Ordered newest run first and de-duplicated in Python rather than with a
+        window function: a suite has tens of cases, not millions, and the
+        readable version is worth more than the clever one here.
+        """
+        statement = (
+            select(TestResult)
+            .join(TestRun, TestResult.run_id == TestRun.id)
+            .where(
+                TestRun.suite_id == suite_id,
+                TestResult.test_case_id.is_not(None),
+            )
+            .order_by(TestResult.run_id.desc(), TestResult.id.desc())
+        )
+
+        seen: set[tuple[int, str]] = set()
+        latest: list[TestResult] = []
+        for result in self.db.execute(statement).scalars():
+            # Per case *and* browser: a case green in Chrome and red in Firefox
+            # is two facts, and collapsing them would hide the red one.
+            key = (result.test_case_id, result.browser.value)  # type: ignore[arg-type]
+            if key in seen:
+                continue
+            seen.add(key)
+            latest.append(result)
+
+        return latest
+
     def list_failures(self, run_id: int) -> list[TestResult]:
         """Failures and errors — what Phase 7's analysis will be pointed at."""
         statement = select(TestResult).where(

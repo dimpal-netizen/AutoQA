@@ -15,7 +15,7 @@
  *    should not have.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Download,
@@ -34,6 +34,7 @@ import {
   formatDuration,
   formatRelative,
   hasRole,
+  type TestResult,
   type TestRun,
   type TestSuite,
   type TestSuiteDetail,
@@ -79,6 +80,43 @@ export function SuiteWorkspace({
   // What the run panel says is running, so the row that was pressed can show
   // it. Null means nothing is.
   const [runningCaseIds, setRunningCaseIds] = useState<number[] | null>(null);
+
+  // Where each case currently stands, newest result first. Fetched separately
+  // from the last run because they answer different questions: the run says
+  // what happened at 14:02, this says whether the suite is green now.
+  const [caseResults, setCaseResults] = useState<TestResult[]>([]);
+  const [statusToken, setStatusToken] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const results = await api.runs
+        .caseStatus(suite.id)
+        .catch(() => [] as TestResult[]);
+      if (!cancelled) setCaseResults(results);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // statusToken re-fetches after a run finishes.
+  }, [suite.id, statusToken]);
+
+  const statusByCase = new Map<number, TestResult[]>();
+  for (const result of caseResults) {
+    if (result.test_case_id === null) continue;
+    const list = statusByCase.get(result.test_case_id) ?? [];
+    list.push(result);
+    statusByCase.set(result.test_case_id, list);
+  }
+
+  // A case counts as passing only if every browser it ran on passed. Counting
+  // results rather than cases would let a case green in Chrome and red in
+  // Firefox add one to each column.
+  const judged = [...statusByCase.values()];
+  const passed = judged.filter((rs) => rs.every((r) => r.status === "passed")).length;
+  const failed = judged.filter((rs) =>
+    rs.some((r) => r.status === "failed" || r.status === "error"),
+  ).length;
   const [error, setError] = useState<string | null>(null);
 
   const user = useAuthStore((s) => s.user);
@@ -231,20 +269,27 @@ export function SuiteWorkspace({
           value={suite.cases.length}
           hint={generated ? `1 recorded · ${generated} generated` : "from your recording"}
         />
+        {/* Across the suite, not just the last run. Running one case makes a
+            run of one, and reading these off it said "0 passed" while a dozen
+            cases sat there green from earlier. */}
         <Figure
           label="Passed"
-          value={lastRun ? lastRun.passed : "—"}
-          tone={lastRun && lastRun.passed > 0 ? "success" : "muted"}
-          hint={lastRun ? `of ${lastRun.total} in the last run` : "not run yet"}
+          value={judged.length ? passed : "—"}
+          tone={judged.length && passed > 0 ? "success" : "muted"}
+          hint={
+            judged.length
+              ? `of ${judged.length} case${judged.length === 1 ? "" : "s"} ever run`
+              : "not run yet"
+          }
         />
         <Figure
           label="Failed"
-          value={lastRun ? lastRun.failed : "—"}
-          tone={!lastRun ? "muted" : lastRun.failed > 0 ? "danger" : "success"}
+          value={judged.length ? failed : "—"}
+          tone={!judged.length ? "muted" : failed > 0 ? "danger" : "success"}
           hint={
-            !lastRun
+            !judged.length
               ? "not run yet"
-              : lastRun.failed > 0
+              : failed > 0
                 ? "needs attention"
                 : "nothing failing"
           }
@@ -303,7 +348,11 @@ export function SuiteWorkspace({
                 caseCount={suite.cases.length}
                 request={runRequest}
                 onDeleted={() => void onChange(suite)}
-                onRunningChange={setRunningCaseIds}
+                onRunningChange={(ids) => {
+                  setRunningCaseIds(ids);
+                  // A finished run changes where cases stand.
+                  if (ids === null) setStatusToken((n) => n + 1);
+                }}
               />
 
               <div className="rounded-lg border border-dashed border-border bg-muted/40 p-4">
@@ -327,6 +376,7 @@ export function SuiteWorkspace({
               <TestCaseList
                 cases={suite.cases}
                 runningCaseIds={runningCaseIds}
+                statusByCase={statusByCase}
                 onRunCase={(caseId) => {
                   requestCount.current += 1;
                   setRunRequest({ caseIds: [caseId], token: requestCount.current });
