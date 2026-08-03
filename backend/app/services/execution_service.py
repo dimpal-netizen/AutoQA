@@ -18,6 +18,7 @@ happening.
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -404,6 +405,40 @@ class ExecutionService:
             raise NotFound(f"Run {run_id} not found") from None
 
         return run
+
+    def delete_run(self, run_id: int, user: User) -> None:
+        """Remove a run, its results, and the files it produced.
+
+        A run that is still going is refused rather than cancelled on the
+        caller's behalf: deleting something mid-flight would leave the worker
+        writing screenshots into a directory that no longer has a row pointing
+        at it. Cancel first, then delete.
+
+        Rows go by cascade — results, artifacts and analyses all hang off the
+        run. The screenshots and videos on disk do not, so they are removed
+        here or they stay forever as unreferenced megabytes.
+        """
+        run = self.get(run_id, user)
+
+        if run.status in (RunStatus.QUEUED, RunStatus.RUNNING):
+            raise ValidationError(
+                "This run is still going. Stop it before deleting it."
+            )
+
+        directory = (settings.storage_dir / "runs" / str(run_id)).resolve()
+        root = settings.storage_dir.resolve()
+
+        self.runs.delete(run)
+        self.db.commit()
+
+        # After the commit: if removing the files fails, the run is still gone
+        # and the leftovers are only wasted disk. Doing it first would risk
+        # deleting the evidence and then failing to delete the run.
+        if directory.is_relative_to(root) and directory.is_dir():
+            try:
+                shutil.rmtree(directory)
+            except OSError:
+                logger.warning("Deleted run %s but could not remove %s", run_id, directory)
 
     def list_runs(
         self,

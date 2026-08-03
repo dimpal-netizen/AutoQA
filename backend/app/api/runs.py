@@ -80,6 +80,16 @@ def cancel_run(run_id: int, db: DbSession, user: CurrentUser) -> RunRead:
     return RunRead.model_validate(ExecutionService(db).cancel(run_id, user))
 
 
+@router.delete(
+    "/runs/{run_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+def delete_run(run_id: int, db: DbSession, user: CurrentUser) -> None:
+    """Remove a run, its results, and the screenshots and videos it produced."""
+    ExecutionService(db).delete_run(run_id, user)
+
+
 @router.get("/results/{result_id}/artifacts", response_model=list[ResultRead])
 def get_result(result_id: int, db: DbSession, user: CurrentUser) -> list[ResultRead]:
     result = TestResultRepository(db).get_full(result_id)

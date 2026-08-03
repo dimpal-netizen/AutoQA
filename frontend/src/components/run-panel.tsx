@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Eye, Play, RefreshCw, Square } from "lucide-react";
+import { Download, Eye, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { api, downloadReport } from "@/lib/api";
 import {
   BROWSER_LABEL,
@@ -36,7 +36,19 @@ import { ResultMatrix } from "@/components/result-matrix";
 const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
 const POLL_MS = 2000;
 
-export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: number }) {
+export function RunPanel({
+  suiteId,
+  caseCount,
+  selectedCaseIds = [],
+  onDeleted,
+}: {
+  suiteId: number;
+  caseCount: number;
+  /** Ticked in the table below. Empty means the whole suite. */
+  selectedCaseIds?: number[];
+  /** A run was deleted, so anything showing it needs to refresh. */
+  onDeleted?: () => void;
+}) {
   const [browsers, setBrowsers] = useState<Browser[]>(["chromium"]);
   const [headless, setHeadless] = useState(true);
   const [slowMo, setSlowMo] = useState(WATCH_SPEEDS[1].ms);
@@ -44,6 +56,7 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [building, setBuilding] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TestRun[]>([]);
 
@@ -107,6 +120,9 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
         browsers,
         headless,
         slow_mo_ms: slowMo,
+        // Omitted entirely when nothing is ticked — the API reads an absent
+        // case_ids as "the whole suite", and sending [] would mean "no tests".
+        ...(selectedCaseIds.length > 0 ? { case_ids: selectedCaseIds } : {}),
       });
       setStopping(false);
       setRun({ ...started, results: [] });
@@ -115,6 +131,35 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
       setError(err instanceof Error ? err.message : "Could not start the run");
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function removeRun() {
+    if (!runId) return;
+
+    const confirmed = window.confirm(
+      `Delete run #${runId}?
+
+` +
+        `Its results and any screenshots, video and traces it produced are ` +
+        `removed from disk. This cannot be undone.
+
+` +
+        `The tests themselves are not touched.`,
+    );
+    if (!confirmed) return;
+
+    setRemoving(true);
+    setError(null);
+    try {
+      await api.runs.remove(runId);
+      setRun(null);
+      await loadHistory();
+      onDeleted?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete this run");
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -161,9 +206,11 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
           Run tests
         </CardTitle>
         <CardDescription>
-          {caseCount === 1
-            ? "1 test case"
-            : `${caseCount} test cases`}{" "}
+          {selectedCaseIds.length > 0
+            ? `${selectedCaseIds.length} of ${caseCount} test cases selected`
+            : caseCount === 1
+              ? "1 test case"
+              : `${caseCount} test cases`}{" "}
           · runs in every browser you pick, all at the same time
         </CardDescription>
       </CardHeader>
@@ -252,7 +299,13 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
               ) : (
                 <Play className="size-4" />
               )}
-              {active ? "Running…" : starting ? "Starting…" : "Run tests"}
+              {active
+                ? "Running…"
+                : starting
+                  ? "Starting…"
+                  : selectedCaseIds.length > 0
+                    ? `Run ${selectedCaseIds.length} selected`
+                    : "Run tests"}
             </Button>
           </div>
         </div>
@@ -268,7 +321,29 @@ export function RunPanel({ suiteId, caseCount }: { suiteId: number; caseCount: n
         )}
         {error && <Alert>{error}</Alert>}
 
-        {run && <RunSummary run={run} />}
+        {run && (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <RunSummary run={run} />
+            </div>
+            {/* Deleting is only offered once the run has stopped. Removing one
+                mid-flight would leave the worker writing screenshots into a
+                directory with nothing pointing at it, which is why the API
+                refuses it too. */}
+            {!active && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={removing}
+                onClick={removeRun}
+                className="shrink-0 text-muted-foreground hover:bg-destructive-subtle hover:text-destructive"
+              >
+                <Trash2 className="size-3.5" />
+                {removing ? "Deleting…" : "Delete run"}
+              </Button>
+            )}
+          </div>
+        )}
         {run && run.results.length > 0 && <ResultMatrix results={run.results} />}
 
         {run && run.error_message && (

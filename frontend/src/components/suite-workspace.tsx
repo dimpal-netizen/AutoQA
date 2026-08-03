@@ -68,6 +68,9 @@ export function SuiteWorkspace({
   const [tab, setTab] = useState("cases");
   const [regenerating, setRegenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Ticked in the table, read by the Run panel. Lives here because it is the
+  // only place both can see.
+  const [picked, setPicked] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
 
   const user = useAuthStore((s) => s.user);
@@ -287,7 +290,12 @@ export function SuiteWorkspace({
               {/* Running belongs with the tests being run. It was its own tab,
                   which meant generating cases and then running them was two
                   places for one continuous thought. */}
-              <RunPanel suiteId={suite.id} caseCount={suite.cases.length} />
+              <RunPanel
+                suiteId={suite.id}
+                caseCount={suite.cases.length}
+                selectedCaseIds={[...picked]}
+                onDeleted={() => void onChange(suite)}
+              />
 
               <div className="rounded-lg border border-dashed border-border bg-muted/40 p-4">
                 <GenerateCases
@@ -307,7 +315,11 @@ export function SuiteWorkspace({
                 </Alert>
               )}
 
-              <TestCaseList cases={suite.cases} />
+              <TestCaseList
+                cases={suite.cases}
+                selected={picked}
+                onSelectedChange={setPicked}
+              />
             </div>
           )}
 

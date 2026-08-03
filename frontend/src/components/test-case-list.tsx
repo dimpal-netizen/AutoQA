@@ -32,7 +32,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
-export function TestCaseList({ cases }: { cases: TestCase[] }) {
+export function TestCaseList({
+  cases,
+  selected,
+  onSelectedChange,
+}: {
+  cases: TestCase[];
+  /** Ticked cases, owned by the parent so the Run panel can read them. */
+  selected?: Set<number>;
+  onSelectedChange?: (next: Set<number>) => void;
+}) {
   // The recording is not a test case, it is the session every case came from —
   // one row of 33 steps sitting above a list of focused three-step checks,
   // answering a different question and skewing every column it appears in. It
@@ -70,6 +79,23 @@ export function TestCaseList({ cases }: { cases: TestCase[] }) {
     testCases.filter((c) => c.category === category),
   );
 
+  const picked = selected ?? new Set<number>();
+  const selectable = Boolean(onSelectedChange);
+  const allPicked = ordered.length > 0 && ordered.every((c) => picked.has(c.id));
+
+  function toggleOne(id: number) {
+    const next = new Set(picked);
+    if (!next.delete(id)) next.add(id);
+    onSelectedChange?.(next);
+  }
+
+  function toggleAll() {
+    // Ticking everything and ticking nothing are the same instruction to the
+    // runner — an empty selection already means the whole suite — so clearing
+    // is the honest result of unticking the header.
+    onSelectedChange?.(allPicked ? new Set() : new Set(ordered.map((c) => c.id)));
+  }
+
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       {/* The table needs a minimum width to stay readable; below that it
@@ -78,6 +104,17 @@ export function TestCaseList({ cases }: { cases: TestCase[] }) {
         <table className="w-full min-w-[46rem] border-collapse text-left">
           <thead>
             <tr className="border-b border-border bg-muted/50 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {selectable && (
+                <th scope="col" className="w-9 pl-3">
+                  <input
+                    type="checkbox"
+                    checked={allPicked}
+                    onChange={toggleAll}
+                    aria-label="Select every test case"
+                    className="size-3.5 cursor-pointer accent-[var(--primary)]"
+                  />
+                </th>
+              )}
               <th scope="col" className="w-8" />
               <th scope="col" className="px-3 py-2.5 font-semibold">
                 Test case
@@ -101,6 +138,9 @@ export function TestCaseList({ cases }: { cases: TestCase[] }) {
                 testCase={testCase}
                 open={open.has(testCase.id)}
                 onToggle={() => toggle(testCase.id)}
+                selectable={selectable}
+                picked={picked.has(testCase.id)}
+                onPick={() => toggleOne(testCase.id)}
               />
             ))}
           </tbody>
@@ -116,10 +156,16 @@ function CaseRows({
   testCase,
   open,
   onToggle,
+  selectable,
+  picked,
+  onPick,
 }: {
   testCase: TestCase;
   open: boolean;
   onToggle: () => void;
+  selectable: boolean;
+  picked: boolean;
+  onPick: () => void;
 }) {
   const fragile = testCase.steps.filter(isFragile);
 
@@ -131,6 +177,18 @@ function CaseRows({
           open ? "bg-accent/40" : ""
         }`}
       >
+        {selectable && (
+          <td className="pl-3" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={picked}
+              onChange={onPick}
+              aria-label={`Select ${testCase.name}`}
+              className="size-3.5 cursor-pointer accent-[var(--primary)]"
+            />
+          </td>
+        )}
+
         <td className="pl-3">
           <button
             type="button"
@@ -196,7 +254,7 @@ function CaseRows({
 
       {open && (
         <tr className="border-b border-border bg-muted/30">
-          <td colSpan={5} className="px-4 py-4">
+          <td colSpan={selectable ? 6 : 5} className="px-4 py-4">
             <Steps steps={testCase.steps} />
           </td>
         </tr>

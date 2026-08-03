@@ -242,6 +242,9 @@ export const api = {
     results: (id: number) => request<TestResult[]>(`/runs/${id}/results`),
 
     cancel: (id: number) => request<TestRun>(`/runs/${id}/cancel`, { method: "POST" }),
+
+    /** Removes the run, its results, and the screenshots and videos on disk. */
+    remove: (id: number) => request<void>(`/runs/${id}`, { method: "DELETE" }),
   },
 
   analysis: {
