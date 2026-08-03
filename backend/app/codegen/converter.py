@@ -27,9 +27,20 @@ from app.codegen.selectors import (
     frame_root,
     locator_expression,
     py_str,
+    scoped_root,
     snake_case,
 )
-from app.models.enums import ActionType
+from app.models.enums import ActionType, SelectorStrategy
+
+#: Locators that find an element by what it is called. These are the ones that
+#: collide across a header and a footer, so these are the ones worth scoping to
+#: a landmark.
+_NAME_BASED = {
+    SelectorStrategy.ROLE_NAME,
+    SelectorStrategy.TEXT,
+    SelectorStrategy.LABEL,
+    SelectorStrategy.PLACEHOLDER,
+}
 
 MAX_IDENT = 60
 
@@ -389,7 +400,19 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
 
     frame_path = action.get("frame_path") or []
     root = frame_root(frame_path, "self.page")
-    expression = locator_expression(selector, root)
+
+    # Scope name-based locators to the landmark they were recorded in. A site's
+    # nav links usually appear in both the header and the footer, so
+    # `get_by_role("link", name="Home")` finds two elements and Playwright
+    # refuses to guess. Test ids and element ids are already unique by
+    # definition and are left alone.
+    scoped = False
+    if selector.strategy in _NAME_BASED:
+        narrowed = scoped_root(action.get("selectors") or [], root)
+        scoped = narrowed != root
+        root = narrowed
+
+    expression = locator_expression(selector, root, scoped=scoped)
 
     # Rank the candidates ourselves rather than trusting input order, and drop
     # the one we actually used — listing the primary as its own fallback is

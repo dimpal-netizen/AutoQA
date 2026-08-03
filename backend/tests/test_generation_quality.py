@@ -21,7 +21,9 @@ from app.codegen.selectors import (
     Selector,
     best_selector,
     clip_words,
+    landmark_role,
     locator_expression,
+    scoped_root,
     snake_case,
 )
 from app.codegen.synth import module_for
@@ -300,3 +302,84 @@ def test_generated_function_names_are_valid_python_identifiers():
     ]:
         function_name, _ = module_for(name, taken)
         assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function_name), function_name
+
+
+# ---------------------------------------------------------------------------
+# 4. Landmark scoping — the header/footer collision
+# ---------------------------------------------------------------------------
+# Every selector below is copied from the recording that produced
+#     strict mode violation: get_by_role("link", name="Home", exact=True)
+#         resolved to 2 elements
+#       1) <a class="" href="/">Home</a>   in the header
+#       2) <a href="/">Home</a>            in the footer
+HOME_LINK = [
+    sel("role_name", "link|Home", unique=True, score=95),
+    sel("text", "Home", unique=True, score=70),
+    sel(
+        "css",
+        "header.Navbar-module__Sl14ZG__navbar div.Navbar-module__Sl14ZG__navRight "
+        "ul.Navbar-module__Sl14ZG__menu li a",
+        unique=True,
+        score=40,
+    ),
+    sel("xpath", "//body/header[1]/div[2]/ul[1]/li[1]/a[1]", unique=True, score=20),
+]
+
+
+def test_landmark_is_read_back_out_of_the_recorded_xpath():
+    """No re-recording needed — the path was captured all along."""
+    assert landmark_role(HOME_LINK) == "banner"
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("//body/header[1]/div[2]/a[1]", "banner"),
+        ("//body/footer[1]/ul[1]/li[3]/a[1]", "contentinfo"),
+        ("//nav[1]/a[2]", "navigation"),
+        ("//body/aside[1]/a[1]", "complementary"),
+        # `main` is deliberately not a landmark we scope to.
+        ("//body/main[1]/div[1]/a[1]", None),
+        ("//body/div[1]/span[2]", None),
+    ],
+)
+def test_landmark_detected_from_xpath(path, expected):
+    assert landmark_role([sel("xpath", path)]) == expected
+
+
+@pytest.mark.parametrize(
+    "css,expected",
+    [
+        ("header.Navbar div.navRight ul li a", "banner"),
+        ("footer.site-footer nav ul li a", "contentinfo"),
+        ("div.wrapper header a", None),  # not the root — could be anything
+    ],
+)
+def test_landmark_detected_from_css(css, expected):
+    assert landmark_role([sel("css", css)]) == expected
+
+
+def test_a_header_link_is_scoped_to_the_banner():
+    """The generated locator Playwright itself recommended in the error."""
+    assert scoped_root(HOME_LINK, "page") == "page.get_by_role('banner')"
+
+
+def test_scoping_composes_with_the_frame_root():
+    """Inside an iframe the landmark must hang off the frame, not the page."""
+    root = scoped_root(HOME_LINK, "self.page.frame_locator('#checkout')")
+    assert root == "self.page.frame_locator('#checkout').get_by_role('banner')"
+
+
+def test_an_element_outside_a_landmark_is_left_alone():
+    """Scoping where it cannot help would only add a way to break."""
+    plain = [sel("role_name", "button|Submit"), sel("xpath", "//body/div[4]/button[1]")]
+    assert scoped_root(plain, "page") == "page"
+
+
+def test_the_full_home_link_expression_is_now_unambiguous():
+    chosen = best_selector(HOME_LINK)
+    assert chosen is not None
+    expression = locator_expression(chosen, scoped_root(HOME_LINK, "page"), scoped=True)
+    assert expression == (
+        "page.get_by_role('banner').get_by_role('link', name='Home', exact=True)"
+    )

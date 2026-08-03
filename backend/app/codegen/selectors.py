@@ -87,6 +87,75 @@ def best_selector(raw_selectors: list[dict[str, Any]]) -> Selector | None:
     )
 
 
+#: HTML elements that are landmarks, and the ARIA role Playwright knows them by.
+#:
+#: Only the "page chrome" landmarks are listed. A site's navigation is routinely
+#: repeated in the header and the footer — that duplication is the single most
+#: common cause of a strict mode violation on a recorded test. `main` is
+#: deliberately absent: its contents are rarely duplicated, so scoping to it
+#: would add a way to break without removing one.
+_LANDMARKS = {
+    "header": "banner",
+    "footer": "contentinfo",
+    "nav": "navigation",
+    "aside": "complementary",
+}
+
+#: `//body/header[1]/div[2]/...` or `header.Navbar div.navRight ul li a`
+_XPATH_LANDMARK = re.compile(r"^(?://)?(?:html/)?(?:body/)?(header|footer|nav|aside)\b")
+_CSS_LANDMARK = re.compile(r"^\s*(header|footer|nav|aside)\b")
+
+
+def landmark_role(raw_selectors: list[dict[str, Any]]) -> str | None:
+    """Which landmark the recorded element sits in, if we can tell.
+
+    The recorder never captured this directly, but it did capture a CSS path and
+    an XPath for every element, and both start at the landmark:
+
+        //body/header[1]/div[2]/ul[1]/li[1]/a[1]
+
+    Reading it back out means existing recordings get the benefit without being
+    re-recorded, which matters — asking someone to walk through their app again
+    to fix a bug in our generator is a poor trade.
+    """
+    for raw in raw_selectors:
+        try:
+            strategy = SelectorStrategy(raw["strategy"])
+        except ValueError:
+            continue
+
+        value = str(raw.get("value", ""))
+        if strategy is SelectorStrategy.XPATH:
+            match = _XPATH_LANDMARK.match(value.removeprefix("xpath=").lstrip("/"))
+        elif strategy is SelectorStrategy.CSS:
+            match = _CSS_LANDMARK.match(value)
+        else:
+            continue
+
+        if match:
+            return _LANDMARKS[match.group(1)]
+
+    return None
+
+
+def scoped_root(raw_selectors: list[dict[str, Any]], root: str = "page") -> str:
+    """`page` -> `page.get_by_role('banner')` when the element is in the header.
+
+    This is what turns
+
+        get_by_role("link", name="Home")            -> 2 elements, test dies
+
+    into
+
+        get_by_role("banner").get_by_role("link", name="Home")
+
+    which is exactly what Playwright suggests in the strict mode error, and what
+    a person would say out loud: the Home link *in the header*.
+    """
+    role = landmark_role(raw_selectors)
+    return f"{root}.get_by_role({py_str(role)})" if role else root
+
+
 def py_str(value: str) -> str:
     """A Python string literal that is always safe to paste into generated code.
 
@@ -97,17 +166,44 @@ def py_str(value: str) -> str:
     return repr(value)
 
 
-def locator_expression(selector: Selector, root: str = "page") -> str:
+#: Locators naming something a visitor can see. Sites duplicate these freely —
+#: a desktop and a mobile copy of the same link, a call-to-action repeated in
+#: two sections — and the duplicate is often absent when the recording is made.
+_VISIBLE_NAME = {SelectorStrategy.ROLE_NAME, SelectorStrategy.TEXT}
+
+
+def locator_expression(
+    selector: Selector, root: str = "page", *, scoped: bool = False
+) -> str:
     """Render one selector as a Playwright call on `root`.
 
-    A selector that matched several elements gets `.first` appended. That only
-    happens when *every* recorded candidate was ambiguous — `best_selector`
-    prefers unique ones — and it is the difference between a test that picks
-    the first match and one that raises a strict mode violation on every run.
-    The page object flags it, so the ambiguity is visible rather than silently
-    papered over.
+    `.first` is appended when the locator names a visible element and nothing
+    has already disambiguated it. This is a deliberate reversal of an earlier,
+    stricter position, and the reason is that record-time uniqueness turned out
+    not to survive to run time:
+
+        get_by_role("link", name="See All Properties") resolved to 2 elements
+          1) <a href="/properties" class="...seeAllDesktop">
+          2) <a href="/properties?listing-type=NEW_PROJECT">
+
+    The recorder counted one match on the page in front of it. By the time the
+    test ran, a second section had loaded carrying the same link. No amount of
+    counting at record time can prevent that.
+
+    `.first` on a locator that really does match one element is a no-op, so the
+    cost is nothing in the common case, and in the uncommon case it is the
+    difference between a test that runs and a test that raises every time. It
+    is not applied when `scoped=True` — a landmark has already narrowed the
+    search, and that is a sharper answer than "whichever comes first".
+
+    Labels and placeholders are left strict on purpose. Two form fields sharing
+    a label is a real accessibility defect, and a test that fails on it is
+    doing its job.
     """
-    return _render(selector, root) + ("" if selector.unique else ".first")
+    ambiguous = not selector.unique or (
+        selector.strategy in _VISIBLE_NAME and not scoped
+    )
+    return _render(selector, root) + (".first" if ambiguous else "")
 
 
 def _render(selector: Selector, root: str) -> str:

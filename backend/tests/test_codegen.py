@@ -46,12 +46,12 @@ def generated(sample: dict) -> list[GeneratedFileSpec]:
         (
             "role_name",
             "button|Sign in",
-            "page.get_by_role('button', name='Sign in', exact=True)",
+            "page.get_by_role('button', name='Sign in', exact=True).first",
         ),
-        ("role_name", "navigation", "page.get_by_role('navigation')"),
+        ("role_name", "navigation", "page.get_by_role('navigation').first"),
         ("label", "Email address", "page.get_by_label('Email address', exact=True)"),
         ("placeholder", "you@x.com", "page.get_by_placeholder('you@x.com', exact=True)"),
-        ("text", "Sign in", "page.get_by_text('Sign in', exact=True)"),
+        ("text", "Sign in", "page.get_by_text('Sign in', exact=True).first"),
         ("css_id", "#email", "page.locator('#email')"),
         ("css", "form input", "page.locator('form input')"),
         ("xpath", "//div[1]", "page.locator('xpath=//div[1]')"),
@@ -104,7 +104,7 @@ def test_a_role_without_a_name_needs_no_exact() -> None:
     expression = locator_expression(
         Selector(strategy=SelectorStrategy.ROLE_NAME, value="button", unique=True)
     )
-    assert expression == "page.get_by_role('button')"
+    assert expression == "page.get_by_role('button').first"
 
 
 def test_a_unique_selector_beats_a_better_ranked_ambiguous_one() -> None:
