@@ -19,6 +19,7 @@ from app.models.enums import (
     CasePriority,
     CaseSource,
     CaseStatus,
+    FileType,
     RecordingStatus,
 )
 from app.models.test_case import TestSuite
@@ -273,10 +274,70 @@ class CodegenService:
         for synthesised in outcome.cases:
             self._store_case(suite, synthesised, browser_info, outcome.model)
 
+        self._refresh_files(suite, recorded_ir)
+
         self.db.commit()
         suite = self.suites.get_full(suite.id)  # type: ignore[assignment]
         self._rewrite_folder(suite)
         return suite, outcome
+
+    def _refresh_files(self, suite: TestSuite, ir: TestIR) -> None:
+        """Re-render the page objects and config from the IR the cases used.
+
+        Without this, the two halves of a suite come from two different runs of
+        the generator. The cases are synthesised from an IR rebuilt just now;
+        the page objects are whatever was stored the day the suite was first
+        created. Any change to how page objects are named desynchronises them,
+        and the result is not a subtle mismatch — the test module cannot be
+        imported at all:
+
+            ImportError: No module named 'pages.agent_details_page'
+            (on disk: pages/agent_details_cmru9ht1z001a01l61v2hpc2u_page.py)
+
+        pytest reports that as `collection failure`, which says nothing about
+        the cause and takes the whole run down with it.
+
+        A conftest the user has edited is left alone. Regenerating cases should
+        not silently discard someone's fixtures.
+        """
+        try:
+            rendered = render(ir)
+        except GeneratedCodeError:
+            logger.exception("Could not re-render supporting files for suite %s", suite.id)
+            return
+
+        existing = {f.path: f for f in suite.files}
+
+        for spec in rendered:
+            if spec.path == ir.file_path:
+                continue  # the recorded test lives on its case, not as a file
+
+            current = existing.get(spec.path)
+            if current is None:
+                self.files.create(
+                    suite_id=suite.id,
+                    project_id=suite.project_id,
+                    file_type=spec.file_type,
+                    path=spec.path,
+                    content=spec.content,
+                    language="python" if spec.path.endswith(".py") else "ini",
+                    version=1,
+                    meta={},
+                )
+            elif current.file_type is not FileType.CONFTEST:
+                self.files.update(
+                    current, content=spec.content, version=current.version + 1
+                )
+
+        # Page objects for pages that no longer exist would still be written to
+        # disk and imported by nothing — harmless, but they are the same stale
+        # files this method exists to remove.
+        fresh = {spec.path for spec in rendered}
+        for path, stored in existing.items():
+            if path not in fresh and stored.file_type is FileType.PAGE_OBJECT:
+                self.files.delete(stored)
+
+        self.db.flush()
 
     def _recorded_ir(self, suite: TestSuite) -> TestIR | None:
         """Rebuild the IR for the recording behind this suite.

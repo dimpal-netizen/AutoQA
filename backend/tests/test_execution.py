@@ -371,3 +371,48 @@ def test_the_workspace_is_deleted_afterwards(monkeypatch, tmp_path: Path):
     )
 
     assert not (workspaces / "run_2" / "chromium").exists()
+
+
+# ---------------------------------------------------------------------------
+# "collection failure" is not an error message
+# ---------------------------------------------------------------------------
+COLLECTION_ERROR = """<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="pytest" errors="1" failures="0" skipped="0" tests="1">
+    <testcase classname="" name="tests/test_verify_agents_link.py" time="0.0">
+      <error message="collection failure">ImportError while importing test module.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests\test_verify_agents_link.py:11: in &lt;module&gt;
+    from pages.agent_details_page import AgentDetailsPage
+E   ModuleNotFoundError: No module named 'pages.agent_details_page'
+</error>
+    </testcase>
+  </testsuite>
+</testsuites>
+"""
+
+
+def test_a_collection_failure_reports_the_real_cause(tmp_path: Path):
+    """`collection failure` names neither the module nor the reason.
+
+    It was the only thing shown for a run where every test went red, because
+    one uncollectable module takes the whole run with it.
+    """
+    path = tmp_path / "collection.xml"
+    path.write_text(COLLECTION_ERROR, encoding="utf-8")
+
+    result = parse_junit(path)[0]
+
+    assert result.status is ResultStatus.ERROR
+    assert result.error_message == (
+        "ModuleNotFoundError: No module named 'pages.agent_details_page'"
+    )
+    # The full traceback is still there for anyone who opens it.
+    assert "ImportError while importing test module" in result.stack_trace
+
+
+def test_a_real_error_message_is_left_alone(report: Path):
+    """Only pytest's non-answers get replaced."""
+    results = {r.function_name: r for r in parse_junit(report)}
+    assert results["test_broken_fixture"].error_message == "fixture 'thing' not found"

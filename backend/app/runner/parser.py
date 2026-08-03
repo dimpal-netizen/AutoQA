@@ -97,12 +97,13 @@ def _parse_case(case) -> ParsedResult:
         # A test that could not run at all: a fixture blew up, an import
         # failed, the browser is not installed. Distinct from a failed
         # assertion because the fix is completely different.
+        trace = (error.text or "").strip() or None
         return ParsedResult(
             function_name=function_name,
             status=ResultStatus.ERROR,
             duration_ms=duration_ms,
-            error_message=_summarise(error.get("message")),
-            stack_trace=(error.text or "").strip() or None,
+            error_message=_error_summary(error.get("message"), trace),
+            stack_trace=trace,
         )
 
     if skipped is not None:
@@ -131,6 +132,44 @@ def _summarise(message: str | None) -> str | None:
         if line:
             return line[:500]
     return None
+
+
+#: pytest's own words for "this file would not import". They are accurate and
+#: say nothing — neither which module, nor why.
+_USELESS_ERRORS = {"collection failure", "collection error", "error"}
+
+#: pytest marks the raised exception with a leading `E`. Taking the last one
+#: matters: an import failure opens with the prose "ImportError while importing
+#: test module." and only names the missing module several lines later.
+_RAISED = re.compile(r"^E\s+(\S.*)$", re.M)
+
+#: No `E` marker — a bare traceback. Same rule: the exception is at the bottom.
+_EXCEPTION = re.compile(r"^(\w*(?:Error|Exception|Warning)\b.*)$", re.M)
+
+
+def _error_summary(message: str | None, trace: str | None) -> str | None:
+    """The reason a test could not run, rather than pytest's label for it.
+
+    A module that fails to import is reported as `collection failure`, which is
+    what the UI then shows next to a red test. It names neither the file nor the
+    cause, and one uncollectable module fails the whole run — so that one
+    unhelpful string is often the only thing on screen for a dozen tests.
+
+    The traceback underneath does say why:
+
+        E   ModuleNotFoundError: No module named 'pages.agent_details_page'
+
+    so when the message is one of pytest's non-answers, take that line instead.
+    """
+    summary = _summarise(message)
+
+    if trace and (summary is None or summary.strip().lower() in _USELESS_ERRORS):
+        for pattern in (_RAISED, _EXCEPTION):
+            found = pattern.findall(trace)
+            if found:
+                return found[-1].strip()[:500]
+
+    return summary
 
 
 def _failed_step(trace: str) -> int | None:
