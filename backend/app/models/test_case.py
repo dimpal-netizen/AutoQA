@@ -151,6 +151,11 @@ class TestStep(Base):
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
 
     action: Mapped[ActionType] = mapped_column(_enum(ActionType, "action_type"), nullable=False)
+    # The word from the synthesiser's vocabulary this step was authored with.
+    # `action` cannot stand in for it: seven distinct assertions all store as
+    # ActionType.ASSERT, so a step read back for editing would lose which one it
+    # was. Null on recorded steps, which were never authored from a vocabulary.
+    verb: Mapped[str | None] = mapped_column(String(32))
     description: Mapped[str] = mapped_column(Text, nullable=False)
     # The locator expression this step compiles to, e.g. get_by_test_id("x").
     locator: Mapped[str | None] = mapped_column(String(1024))

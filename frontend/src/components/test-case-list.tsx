@@ -21,7 +21,9 @@ import {
   ChevronRight,
   FileCode2,
   LoaderCircle,
+  Pencil,
   Play,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import {
@@ -45,12 +47,18 @@ import { Card, CardContent } from "@/components/ui/card";
 export function TestCaseList({
   cases,
   onRunCase,
+  onEditCase,
+  onDeleteCase,
   runningCaseIds = null,
   statusByCase,
 }: {
   cases: TestCase[];
   /** Run this one case on its own. Absent where the list is read-only. */
   onRunCase?: (caseId: number) => void;
+  /** Open this case in the step editor. Absent where the list is read-only. */
+  onEditCase?: (testCase: TestCase) => void;
+  /** Remove this case entirely. Absent where the list is read-only. */
+  onDeleteCase?: (testCase: TestCase) => void;
   /** Where each case currently stands — its newest result, from any run. */
   statusByCase?: Map<number, TestResult[]>;
   /** null when nothing is running; the ids of a running run otherwise, with
@@ -81,7 +89,7 @@ export function TestCaseList({
       <Card>
         <CardContent className="py-10 text-center text-sm text-muted-foreground">
           {cases.length > 0
-            ? "No test cases yet — generate them from your recording above."
+            ? "No test cases yet — generate them from your recording above, or write one yourself."
             : "No test cases yet."}
         </CardContent>
       </Card>
@@ -97,7 +105,11 @@ export function TestCaseList({
     items: testCases.filter((c) => c.category === category),
   })).filter((group) => group.items.length > 0);
 
-  const columns = onRunCase ? 5 : 4;
+  // Run, edit and delete share one trailing cell rather than taking a column
+  // each — three columns of icons would push the name and status columns into
+  // the narrow half of the table for buttons most rows never use.
+  const hasActions = Boolean(onRunCase || onEditCase || onDeleteCase);
+  const columns = hasActions ? 5 : 4;
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
@@ -120,7 +132,7 @@ export function TestCaseList({
               <th scope="col" className="px-3 py-2.5 font-semibold">
                 File
               </th>
-              {onRunCase && <th scope="col" className="w-14" />}
+              {hasActions && <th scope="col" className="w-28" />}
             </tr>
           </thead>
 
@@ -151,10 +163,13 @@ export function TestCaseList({
                 key={testCase.id}
                 testCase={testCase}
                 columns={columns}
+                hasActions={hasActions}
                 results={statusByCase?.get(testCase.id) ?? []}
                 open={open.has(testCase.id)}
                 onToggle={() => toggle(testCase.id)}
                 onRun={onRunCase && (() => onRunCase(testCase.id))}
+                onEdit={onEditCase && (() => onEditCase(testCase))}
+                onDelete={onDeleteCase && (() => onDeleteCase(testCase))}
                 // Empty means the whole suite is running, so every row is.
                 running={
                   runningCaseIds !== null &&
@@ -179,17 +194,23 @@ function CaseRows({
   open,
   onToggle,
   onRun,
+  onEdit,
+  onDelete,
   running = false,
   busy = false,
   columns,
+  hasActions,
   results,
 }: {
   testCase: TestCase;
   columns: number;
+  hasActions: boolean;
   results: TestResult[];
   open: boolean;
   onToggle: () => void;
   onRun?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
   running?: boolean;
   busy?: boolean;
 }) {
@@ -263,28 +284,55 @@ function CaseRows({
           </span>
         </td>
 
-        {/* Run this one case. It replaced a column of checkboxes: ticking
-            boxes and then finding the button is two steps and a scroll for
-            what is nearly always "run this one". The click must not also
-            expand the row. */}
-        {onRun && (
-          <td className="pr-3 text-right" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              onClick={onRun}
-              disabled={busy}
-              aria-label={
-                running ? `${testCase.name} is running` : `Run ${testCase.name}`
-              }
-              title={running ? "Running…" : "Run this test case"}
-              className="inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-            >
-              {running ? (
-                <LoaderCircle className="size-4 animate-spin text-primary" />
-              ) : (
-                <Play className="size-4" />
+        {/* Run, edit and delete this one case. Running replaced a column of
+            checkboxes: ticking boxes and then finding the button is two steps
+            and a scroll for what is nearly always "run this one". None of
+            these clicks should also expand the row. */}
+        {hasActions && (
+          <td className="pr-3" onClick={(e) => e.stopPropagation()}>
+            <span className="flex items-center justify-end">
+              {onRun && (
+                <RowButton
+                  onClick={onRun}
+                  disabled={busy}
+                  label={
+                    running
+                      ? `${testCase.name} is running`
+                      : `Run ${testCase.name}`
+                  }
+                  title={running ? "Running…" : "Run this test case"}
+                >
+                  {running ? (
+                    <LoaderCircle className="size-4 animate-spin text-primary" />
+                  ) : (
+                    <Play className="size-4" />
+                  )}
+                </RowButton>
               )}
-            </button>
+
+              {onEdit && (
+                <RowButton
+                  onClick={onEdit}
+                  disabled={busy}
+                  label={`Edit ${testCase.name}`}
+                  title="Edit this test case"
+                >
+                  <Pencil className="size-4" />
+                </RowButton>
+              )}
+
+              {onDelete && (
+                <RowButton
+                  onClick={onDelete}
+                  disabled={busy}
+                  label={`Delete ${testCase.name}`}
+                  title="Delete this test case"
+                  className="hover:bg-destructive-subtle hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </RowButton>
+              )}
+            </span>
           </td>
         )}
       </tr>
@@ -297,6 +345,36 @@ function CaseRows({
         </tr>
       )}
     </>
+  );
+}
+
+/** One icon in the row's trailing action cell. */
+function RowButton({
+  onClick,
+  disabled,
+  label,
+  title,
+  className,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  label: string;
+  title: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={title}
+      className={`inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40 ${className ?? ""}`}
+    >
+      {children}
+    </button>
   );
 }
 

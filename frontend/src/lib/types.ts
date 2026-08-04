@@ -118,11 +118,66 @@ export interface TestStep {
   id: number;
   sequence: number;
   action: ActionType;
+  /** Which word from the authoring vocabulary this step was written with.
+   *  `action` cannot stand in for it — seven assertions share ActionType
+   *  "assert" — so a step without it cannot be loaded into the editor. */
+  verb: string | null;
   description: string;
   locator: string | null;
   input_data: string | null;
   expected_result: string | null;
   selector_strategy: SelectorStrategy | null;
+}
+
+// ---------------------------------------------------------------------------
+// Authoring a case by hand
+//
+// The editor offers a fixed list of actions and a fixed list of elements,
+// both served by the backend. There is no field for code anywhere in here,
+// and that is the safeguard: a hand-written case is compiled by the same
+// converter as a generated one, so it cannot do anything a generated one
+// could not.
+// ---------------------------------------------------------------------------
+export interface Verb {
+  name: string;
+  label: string;
+  needs_target: boolean;
+  needs_value: boolean;
+  allows_empty: boolean;
+  is_assertion: boolean;
+}
+
+export interface ElementChoice {
+  /** How a step names it: `login_page.email_input`. */
+  target: string;
+  label: string;
+  page: string;
+  page_url: string;
+  strategy: SelectorStrategy;
+  fragile: boolean;
+  ambiguous: boolean;
+}
+
+export interface CaseVocabulary {
+  verbs: Verb[];
+  elements: ElementChoice[];
+  placeholders: { token: string; label: string }[];
+  max_steps: number;
+}
+
+export interface CaseStepWrite {
+  action: string;
+  target?: string | null;
+  value?: string | null;
+  description?: string | null;
+}
+
+export interface CaseWrite {
+  name: string;
+  description?: string | null;
+  category: CaseCategory;
+  priority: CasePriority;
+  steps: CaseStepWrite[];
 }
 
 export interface TestCase {

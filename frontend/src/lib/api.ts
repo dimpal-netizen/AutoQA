@@ -11,11 +11,14 @@ import type {
   Browser,
   BugReport,
   BugStatus,
+  CaseVocabulary,
+  CaseWrite,
   GenerateCasesResult,
   Project,
   ProjectCreate,
   RecordingSession,
   RecordingSessionDetail,
+  TestCase,
   TestResult,
   TestRun,
   TestRunDetail,
@@ -210,6 +213,34 @@ export const api = {
       }),
 
     remove: (id: number) => request<void>(`/suites/${id}`, { method: "DELETE" }),
+  },
+
+  cases: {
+    /** Every action and element a case in this suite can be built from.
+     *
+     *  Fetched rather than hardcoded: the elements come from the recording, so
+     *  they differ per suite, and the actions are the backend's list — a copy
+     *  in the browser would drift the day a verb is added. */
+    vocabulary: (suiteId: number) =>
+      request<CaseVocabulary>(`/suites/${suiteId}/vocabulary`),
+
+    create: (suiteId: number, data: CaseWrite) =>
+      request<TestCase>(`/suites/${suiteId}/cases`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    /** A whole replacement, not a patch — the steps are an ordered list, and
+     *  "delete step 4, swap 2 and 3" is more ways to be wrong than sending
+     *  the list you want. */
+    update: (caseId: number, data: CaseWrite) =>
+      request<TestCase>(`/cases/${caseId}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+
+    remove: (caseId: number) =>
+      request<void>(`/cases/${caseId}`, { method: "DELETE" }),
   },
 
   runs: {

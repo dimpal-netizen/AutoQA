@@ -5,9 +5,12 @@ from fastapi import APIRouter, Depends, Response, status
 from app.api.deps import CurrentUser, DbSession, require_role
 from app.models.enums import UserRole
 from app.schemas.test_case import (
+    CaseVocabulary,
+    CaseWrite,
     GenerateCasesRequest,
     GenerateCasesResult,
     GenerateRequest,
+    TestCaseDetail,
     TestSuiteDetail,
     TestSuiteRead,
 )
@@ -117,3 +120,91 @@ def export_testcases(
 )
 def delete_suite(suite_id: int, db: DbSession, user: CurrentUser) -> None:
     CodegenService(db).delete_suite(suite_id, user)
+
+
+# ---------------------------------------------------------------------------
+# Writing a case by hand
+#
+# A generated suite is where a tester starts, not where they finish. They know
+# the application and will think of a case the model missed, or spot one it got
+# subtly wrong — and until now the only answers were "regenerate and hope" or
+# "give up and write Playwright yourself".
+#
+# What a person may write is exactly what the model may write: an action from
+# the fixed vocabulary, an element that already exists, a value. There is no
+# route that accepts code, because generated tests run in a subprocess on
+# someone's machine and unreviewed Python arriving over HTTP has no business
+# going anywhere near it.
+# ---------------------------------------------------------------------------
+@router.get("/suites/{suite_id}/vocabulary", response_model=CaseVocabulary)
+def case_vocabulary(suite_id: int, db: DbSession, user: CurrentUser) -> CaseVocabulary:
+    """Every action and element a case in this suite can be built from.
+
+    The element list comes from the recording, so it differs per suite; the
+    actions are the same everywhere. Both are served rather than hardcoded in
+    the browser, so the dropdown cannot drift from what the backend accepts.
+    """
+    return CaseVocabulary.model_validate(CodegenService(db).case_vocabulary(suite_id, user))
+
+
+@router.post(
+    "/suites/{suite_id}/cases",
+    response_model=TestCaseDetail,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+def create_case(
+    suite_id: int, data: CaseWrite, db: DbSession, user: CurrentUser
+) -> TestCaseDetail:
+    """Add a test case nobody generated.
+
+    Compiled by the same converter as every other case, and held to the same
+    rules — a case that never asserts anything, or never opens a page, is
+    refused with the reason rather than saved as a test that cannot fail.
+    """
+    case = CodegenService(db).create_case(
+        suite_id,
+        user,
+        name=data.name,
+        description=data.description,
+        category=data.category,
+        priority=data.priority,
+        steps=data.steps,
+    )
+    return TestCaseDetail.model_validate(case)
+
+
+@router.put(
+    "/cases/{case_id}",
+    response_model=TestCaseDetail,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+def update_case(
+    case_id: int, data: CaseWrite, db: DbSession, user: CurrentUser
+) -> TestCaseDetail:
+    """Rewrite a case's steps, name, category or priority.
+
+    A whole replacement rather than a patch: the steps are an ordered list, and
+    expressing "delete step 4 and swap 2 with 3" as a partial update is more
+    ways to be wrong than sending the list you want.
+    """
+    case = CodegenService(db).update_case(
+        case_id,
+        user,
+        name=data.name,
+        description=data.description,
+        category=data.category,
+        priority=data.priority,
+        steps=data.steps,
+    )
+    return TestCaseDetail.model_validate(case)
+
+
+@router.delete(
+    "/cases/{case_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+def delete_case(case_id: int, db: DbSession, user: CurrentUser) -> None:
+    """Drop one case. The recorded one is refused — it is the session itself."""
+    CodegenService(db).delete_case(case_id, user)

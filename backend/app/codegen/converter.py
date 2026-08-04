@@ -118,6 +118,12 @@ class StepSpec:
     expected_result: str | None = None
     strategy: str | None = None
     fragile: bool = False
+    # Which word from the synthesiser's vocabulary produced this step, when one
+    # did. `action` alone cannot be edited back: seven different assertions all
+    # arrive as ActionType.ASSERT, so a step loaded into the editor would come
+    # back as whichever of them happened to be listed first. Empty for recorded
+    # steps, which come from the recording rather than from a vocabulary.
+    verb: str | None = None
 
 
 @dataclass

@@ -22,6 +22,7 @@ import {
   FileSpreadsheet,
   FlaskConical,
   FolderOpen,
+  Plus,
   RefreshCw,
   Trash2,
   Video,
@@ -34,12 +35,14 @@ import {
   formatDuration,
   formatRelative,
   hasRole,
+  type TestCase,
   type TestResult,
   type TestRun,
   type TestSuite,
   type TestSuiteDetail,
 } from "@/lib/types";
 import { useAuthStore } from "@/stores/auth-store";
+import { CaseEditor } from "@/components/case-editor";
 import { GenerateCases } from "@/components/generate-cases";
 import { RunPanel } from "@/components/run-panel";
 import { ScriptLocation } from "@/components/script-location";
@@ -119,8 +122,44 @@ export function SuiteWorkspace({
   ).length;
   const [error, setError] = useState<string | null>(null);
 
+  // The case editor, or null when it is closed. `testCase: null` inside it
+  // means "write a new one" — the same panel does both, because creating and
+  // editing a case are the same form with a different starting point.
+  const [editing, setEditing] = useState<{ testCase: TestCase | null } | null>(
+    null,
+  );
+
   const user = useAuthStore((s) => s.user);
-  const canDelete = hasRole(user, "qa_engineer");
+  // Writing a case and deleting a suite are the same permission: both change
+  // what this suite will run the next time somebody presses go.
+  const canEdit = hasRole(user, "qa_engineer");
+
+  async function reload() {
+    try {
+      onChange(await api.suites.get(suite.id));
+      // Saving a case can discard the runs that tested the old version of it.
+      setStatusToken((n) => n + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reload the suite");
+    }
+  }
+
+  async function removeCase(testCase: TestCase) {
+    const confirmed = window.confirm(
+      `Delete "${testCase.name}"?\n\n` +
+        `Its ${testCase.steps.length} step(s) and its script go with it. ` +
+        `This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    try {
+      await api.cases.remove(testCase.id);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete this case");
+    }
+  }
 
   // Names collide when the same site is recorded twice; the pills then need a
   // date to tell them apart.
@@ -246,7 +285,7 @@ export function SuiteWorkspace({
             </>
           )}
 
-          {canDelete && (
+          {canEdit && (
             <Button
               variant="ghost"
               size="sm"
@@ -379,6 +418,27 @@ export function SuiteWorkspace({
                 </Alert>
               )}
 
+              {/* The generated cases are a starting point. A tester who knows
+                  the application will always think of one the model missed —
+                  and until this button existed the only answer was to
+                  regenerate and hope it appeared. */}
+              {canEdit && (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    Missing a case? Write one — same actions and elements the
+                    generated tests are built from.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditing({ testCase: null })}
+                  >
+                    <Plus />
+                    Add test case
+                  </Button>
+                </div>
+              )}
+
               <TestCaseList
                 cases={suite.cases}
                 runningCaseIds={runningCaseIds}
@@ -390,6 +450,10 @@ export function SuiteWorkspace({
                   // spinner has to appear on the press, not after a round trip.
                   setRunningCaseIds([caseId]);
                 }}
+                onEditCase={
+                  canEdit ? (testCase) => setEditing({ testCase }) : undefined
+                }
+                onDeleteCase={canEdit ? removeCase : undefined}
               />
             </div>
           )}
@@ -399,6 +463,18 @@ export function SuiteWorkspace({
           )}
         </div>
       </div>
+
+      {editing && (
+        <CaseEditor
+          suiteId={suite.id}
+          testCase={editing.testCase}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            void reload();
+          }}
+        />
+      )}
     </section>
   );
 }

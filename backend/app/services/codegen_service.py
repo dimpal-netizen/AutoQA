@@ -11,6 +11,7 @@ from app.ai.case_generator import DEFAULT_COUNT, GenerationOutcome, generate_cas
 from app.ai.enhancer import enhance
 from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
+from app.codegen.synth import SynthesisError, module_for, synthesise, vocabulary
 from app.codegen.writer import remove_suite_directory, suite_directory, write_suite
 from app.core.config import settings
 from app.models.enums import (
@@ -39,6 +40,19 @@ from app.services.recording_service import RecordingService
 logger = logging.getLogger(__name__)
 
 GENERATOR = "deterministic_v1"
+
+
+class _Authored:
+    """What `synthesise` reads off a case: a name and a list of steps.
+
+    It takes anything with those attributes — the AI's suggestion object in one
+    caller, this in the other — so a hand-written case travels the identical
+    path with no branch anywhere along it.
+    """
+
+    def __init__(self, *, name: str, steps: list) -> None:
+        self.name = name
+        self.steps = steps
 
 
 class CodegenService:
@@ -410,32 +424,78 @@ class CodegenService:
     def _store_case(
         self, suite: TestSuite, synthesised, browser_info: dict, model: str
     ) -> None:
-        rendered = render(synthesised.ir, browser_info=browser_info)
-        module = next(f for f in rendered if f.path == synthesised.ir.file_path)
-
-        case = self.cases.create(
-            suite_id=suite.id,
-            project_id=suite.project_id,
+        self._persist_case(
+            suite,
+            ir=synthesised.ir,
             name=synthesised.name,
             description=synthesised.description,
-            function_name=synthesised.ir.function_name,
-            file_path=synthesised.ir.file_path,
-            code=module.content,
-            source=CaseSource.RECORDING,
-            status=CaseStatus.DRAFT,
             category=synthesised.category,
             priority=synthesised.priority,
             generated_by=model or "ai",
-            tags=[synthesised.category.value],
-            is_enabled=True,
-            version=1,
+            browser_info=browser_info,
         )
 
-        for step in synthesised.ir.steps:
+    def _persist_case(
+        self,
+        suite: TestSuite,
+        *,
+        ir: TestIR,
+        name: str,
+        description: str | None,
+        category: CaseCategory,
+        priority: CasePriority,
+        generated_by: str,
+        browser_info: dict,
+        case=None,
+    ):
+        """Render an IR and save it as a case, replacing one if given.
+
+        Create and edit differ only in whether a row already exists, and the
+        rendering either side of that is identical — which is the point. A case
+        a person edited is compiled by the same code as one the model invented,
+        so there is no second path where a hand-written test could turn into
+        something the generated ones cannot be.
+        """
+        rendered = render(ir, browser_info=browser_info)
+        module = next(f for f in rendered if f.path == ir.file_path)
+
+        values = {
+            "name": name,
+            "description": description,
+            "function_name": ir.function_name,
+            "file_path": ir.file_path,
+            "code": module.content,
+            "category": category,
+            "priority": priority,
+            "generated_by": generated_by,
+            "tags": [category.value],
+        }
+
+        if case is None:
+            case = self.cases.create(
+                suite_id=suite.id,
+                project_id=suite.project_id,
+                source=CaseSource.RECORDING,
+                status=CaseStatus.DRAFT,
+                is_enabled=True,
+                version=1,
+                **values,
+            )
+        else:
+            # The steps are about to be rewritten, and orphan rows would keep
+            # their sequence numbers — colliding with the new ones on the unique
+            # constraint the moment the new list is shorter.
+            for step in list(case.steps):
+                self.db.delete(step)
+            self.db.flush()
+            self.cases.update(case, version=case.version + 1, **values)
+
+        for step in ir.steps:
             self.cases.add_step(
                 test_case_id=case.id,
                 sequence=step.sequence,
                 action=step.action,
+                verb=step.verb,
                 description=step.description,
                 locator=(
                     f"{step.page_var}.{step.locator_name}"
@@ -446,6 +506,8 @@ class CodegenService:
                 expected_result=step.expected_result,
                 selector_strategy=step.strategy,
             )
+
+        return case
 
     def _rewrite_folder(self, suite: TestSuite) -> None:
         """Refresh the folder on disk so every case has a file to open."""
@@ -460,6 +522,197 @@ class CodegenService:
             write_suite(Path(suite.output_dir), bundle)
         except OSError:
             logger.exception("Could not refresh %s", suite.output_dir)
+
+    # ------------------------------------------------------------------
+    # Hand-authored cases
+    #
+    # A generated suite is a starting point, not a finished one. The tester who
+    # knows the application will always think of a case the model did not, and
+    # will always find one it got slightly wrong. Without a way to fix either,
+    # the only options are to regenerate and hope, or to abandon the tool and go
+    # back to writing Playwright by hand.
+    #
+    # What a person may write is exactly what the model may write: a verb from
+    # the vocabulary, an element that already exists, a value. Every check in
+    # `synthesise` applies unchanged. Nobody types Python — a free-text code box
+    # would put unreviewed code straight into a subprocess.
+    # ------------------------------------------------------------------
+    def case_vocabulary(self, suite_id: int, user: User) -> dict[str, object]:
+        """Every action and element a case in this suite may be built from."""
+        suite = self.get_suite(suite_id, user)
+        return vocabulary(self._pages_for(suite))
+
+    def create_case(
+        self,
+        suite_id: int,
+        user: User,
+        *,
+        name: str,
+        description: str | None,
+        category: CaseCategory,
+        priority: CasePriority,
+        steps: list,
+    ):
+        suite = self.get_suite(suite_id, user)
+        pages = self._pages_for(suite)
+
+        taken = {case.function_name for case in suite.cases}
+        module_name, function_name = module_for(name, taken)
+
+        ir = self._authored_ir(
+            suite,
+            pages=pages,
+            steps=steps,
+            name=name,
+            module_name=module_name,
+            function_name=function_name,
+        )
+
+        case = self._persist_case(
+            suite,
+            ir=ir,
+            name=name,
+            description=description,
+            category=category,
+            priority=priority,
+            generated_by="manual",
+            browser_info=suite.recording.browser_info if suite.recording else {},
+        )
+
+        self._discard_runs(suite)
+        self.db.commit()
+        self._rewrite_folder(self.suites.get_full(suite.id))
+        return self.cases.get_with_steps(case.id)
+
+    def update_case(
+        self,
+        case_id: int,
+        user: User,
+        *,
+        name: str,
+        description: str | None,
+        category: CaseCategory,
+        priority: CasePriority,
+        steps: list,
+    ):
+        case = self.cases.get_with_steps(case_id)
+        if case is None:
+            raise NotFound(f"Test case {case_id} not found")
+
+        suite = self.get_suite(case.suite_id, user)
+        pages = self._pages_for(suite)
+
+        # The module keeps the name it was created with even when the case is
+        # renamed. Moving the file would leave the old one on disk to be
+        # collected and run by pytest — a duplicate of a test that no longer
+        # exists, failing for reasons nobody can trace back to anything.
+        ir = self._authored_ir(
+            suite,
+            pages=pages,
+            steps=steps,
+            name=name,
+            module_name=Path(case.file_path).stem,
+            function_name=case.function_name,
+        )
+
+        before = case.code
+        self._persist_case(
+            suite,
+            ir=ir,
+            name=name,
+            description=description,
+            category=category,
+            priority=priority,
+            generated_by=case.generated_by,
+            browser_info=suite.recording.browser_info if suite.recording else {},
+            case=case,
+        )
+
+        # Renaming a case or moving it from medium to high priority changes what
+        # the row says, not what it does. Throwing away the run history for that
+        # would punish tidying up — so the verdicts are only discarded when the
+        # code that earned them is genuinely no longer the code that would run.
+        if case.code != before:
+            self._discard_runs(suite)
+
+        self.db.commit()
+        self._rewrite_folder(self.suites.get_full(suite.id))
+        return self.cases.get_with_steps(case.id)
+
+    def delete_case(self, case_id: int, user: User) -> None:
+        case = self.cases.get_with_steps(case_id)
+        if case is None:
+            raise NotFound(f"Test case {case_id} not found")
+
+        suite = self.get_suite(case.suite_id, user)
+        if case.category is CaseCategory.RECORDED:
+            raise ValidationError(
+                "The recorded case is the session every other case was built "
+                "from. Delete the recording itself if you no longer want it."
+            )
+
+        # Read before the delete: after the commit the instance is expired, and
+        # touching an attribute on it would go back to a row that is gone.
+        file_path = case.file_path
+
+        self.cases.delete(case)
+        self._discard_runs(suite)
+        self.db.commit()
+
+        suite = self.suites.get_full(suite.id)
+        self._rewrite_folder(suite)
+        # The module is gone from the database but still on disk, where pytest
+        # would happily collect and run it — a test that no longer exists,
+        # failing for reasons nothing on screen could explain.
+        if suite and suite.output_dir:
+            try:
+                (Path(suite.output_dir) / file_path).unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Could not remove %s", file_path)
+
+    def _pages_for(self, suite: TestSuite) -> list:
+        """The page objects a case in this suite may point at.
+
+        Rebuilt from the recording for the same reason `generate_cases` does it:
+        an IR is derived data, and the page objects on disk are only a rendering
+        of it. Editing has to work against the same element list the generator
+        used, or a hand-written step could name something that no longer exists.
+        """
+        ir = self._recorded_ir(suite)
+        if ir is None:
+            raise ValidationError(
+                "This suite has no recording behind it, so there are no "
+                "elements a test case could refer to."
+            )
+        return ir.pages
+
+    def _authored_ir(
+        self,
+        suite: TestSuite,
+        *,
+        pages: list,
+        steps: list,
+        name: str,
+        module_name: str,
+        function_name: str,
+    ) -> TestIR:
+        """Compile authored steps, turning a rejection into a readable message.
+
+        `synthesise` says "step 3: unknown element 'LoginPage.submit'", which is
+        precisely right and phrased for a log. The person reading it is looking
+        at a form they just filled in, so it arrives as a 422 next to the step
+        that caused it rather than as a stack trace.
+        """
+        try:
+            return synthesise(
+                _Authored(name=name, steps=steps),
+                pages=pages,
+                start_url=suite.recording.start_url if suite.recording else "",
+                module_name=module_name,
+                function_name=function_name,
+            )
+        except SynthesisError as exc:
+            raise ValidationError(str(exc)) from exc
 
     # ------------------------------------------------------------------
     # Reading

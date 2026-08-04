@@ -9,6 +9,13 @@ writes code. It picks an action from a fixed vocabulary and points at a locator
 that already exists on a page object we generated ourselves. Every reference is
 checked before a line is emitted, so a hallucinated element becomes a dropped
 step — never a test that crashes on a property that was never there.
+
+The same rule is what makes a *person* able to author a test here. A QA engineer
+editing a case picks from the identical vocabulary and the identical element
+list, and the identical checks run over what they picked. Nobody writes Python:
+not the model, not the tester. That is the only reason it is safe to let a case
+be edited at all — a free-text code box would put unreviewed Python into a
+subprocess on someone's machine.
 """
 
 from __future__ import annotations
@@ -93,6 +100,44 @@ VERBS: dict[str, Verb] = {
     ),
 }
 
+# What each verb is called in the editor. Kept beside the vocabulary rather than
+# in the UI so the two cannot drift: a verb added here shows up in the dropdown
+# with a name, and one added without a label is caught by a test rather than
+# shipping as a raw identifier.
+VERB_LABEL: dict[str, str] = {
+    "goto": "Go to URL",
+    "fill": "Type into",
+    "click": "Click",
+    "check": "Tick",
+    "uncheck": "Untick",
+    "select": "Choose from dropdown",
+    "press": "Press key",
+    "expect_visible": "Should be visible",
+    "expect_hidden": "Should not be on the page",
+    "expect_text": "Should contain text",
+    "expect_url": "URL should contain",
+    "expect_not_url": "URL should not contain",
+    "expect_masked": "Should be hidden behind dots",
+    "expect_not_masked": "Should be readable, not dots",
+}
+
+#: The verb behind a stored step, where the action names it beyond doubt.
+#:
+#: Every case saved before the editor existed has no verb recorded. Most can be
+#: recovered from the action alone, which is the difference between those cases
+#: being editable and being frozen until someone regenerates them. ASSERT is
+#: deliberately absent — seven verbs share it, and a wrong guess would silently
+#: change what a test checks, which is worse than declining to guess.
+VERB_FOR_ACTION: dict[ActionType, str] = {
+    ActionType.NAVIGATE: "goto",
+    ActionType.INPUT: "fill",
+    ActionType.CLICK: "click",
+    ActionType.CHECK: "check",
+    ActionType.UNCHECK: "uncheck",
+    ActionType.SELECT: "select",
+    ActionType.KEY_PRESS: "press",
+}
+
 # Actions that only observe. A case made of nothing but these passes trivially.
 _ASSERTIONS = {
     "expect_visible",
@@ -125,6 +170,16 @@ _UNIQUE_VALUES = {
     "{{unique}}": "uuid4().hex[:10]",
 }
 
+#: What each placeholder is for, in the editor's own words. A tester writing a
+#: sign-up test has no way to guess that a literal address will pass once and
+#: then be red forever; offering these by name is how they find out.
+PLACEHOLDER_LABEL: dict[str, str] = {
+    "{{unique_email}}": "A fresh email address, different every run",
+    "{{unique_phone}}": "A fresh phone number, different every run",
+    "{{unique_name}}": "A fresh name, different every run",
+    "{{unique}}": "A short random string, different every run",
+}
+
 
 def synthesise(
     case: object,
@@ -146,8 +201,8 @@ def synthesise(
     if len(steps_in) > MAX_STEPS:
         raise SynthesisError(f"{len(steps_in)} steps is beyond the {MAX_STEPS} limit")
 
-    locators = _locator_index(pages)
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
+    locators = _locator_index(pages, variable_of)
 
     steps: list[StepSpec] = []
     used_pages: set[str] = set()
@@ -219,6 +274,7 @@ def synthesise(
             StepSpec(
                 sequence=len(steps),
                 action=verb.action,
+                verb=action,
                 code=[line],
                 description=_clean(getattr(raw, "description", "") or str(raw.action)),
                 page_var=page_var,
@@ -253,23 +309,93 @@ def page_variables_for(pages: list[PageSpec]) -> list[tuple[str, str]]:
     return page_variables(TestIR(suite_name="", function_name="", module_name="", start_url="", pages=pages))
 
 
-def _locator_index(pages: list[PageSpec]) -> dict[str, tuple[str, str]]:
+def _locator_index(
+    pages: list[PageSpec], variables: dict[str, str] | None = None
+) -> dict[str, tuple[str, str]]:
     """Every addressable locator, keyed the way the model is told to write it.
 
     Matching is case-insensitive and ignores spaces, because "LoginPage.email"
     and "loginpage.email_input" are the same intent expressed sloppily, and
     rejecting the second helps nobody.
+
+    `variables` adds the form a *step* is stored in — `login_page.email_input`,
+    the variable rather than the class. Without it a saved step cannot be read
+    back in and re-saved, because the name it was written down under is not one
+    this index answers to.
     """
     index: dict[str, tuple[str, str]] = {}
     for page in pages:
+        variable = (variables or {}).get(page.class_name)
         for locator in page.locators:
-            for key in (
+            keys = [
                 f"{page.class_name}.{locator.name}",
                 f"{page.class_name}.{locator.name}".lower(),
                 locator.name.lower(),
-            ):
+            ]
+            if variable:
+                keys.append(f"{variable}.{locator.name}".lower())
+            for key in keys:
                 index.setdefault(key.replace(" ", ""), (page.class_name, locator.name))
     return index
+
+
+def elements(pages: list[PageSpec]) -> list[dict[str, object]]:
+    """Every element a step is allowed to point at, for the editor's dropdown.
+
+    Returned in the `page_var.locator_name` form steps are stored in, so what
+    the editor sends back is what comes out of the database next time.
+    """
+    variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
+    out: list[dict[str, object]] = []
+
+    for page in pages:
+        variable = variable_of.get(page.class_name)
+        if variable is None:
+            continue
+        for locator in page.locators:
+            out.append(
+                {
+                    "target": f"{variable}.{locator.name}",
+                    "label": locator.name.replace("_", " "),
+                    "page": page.class_name,
+                    "page_url": page.url,
+                    "strategy": locator.strategy,
+                    # Both are worth a warning next to the choice rather than a
+                    # surprise in a failure report three days later.
+                    "fragile": locator.fragile,
+                    "ambiguous": locator.ambiguous,
+                }
+            )
+    return out
+
+
+def vocabulary(pages: list[PageSpec]) -> dict[str, object]:
+    """Everything a person needs to author a step, and nothing else.
+
+    The editor cannot offer a free-text action or a free-text element, because
+    this is the whole list of both. Anything outside it is not expressible, and
+    that limit is the feature — it is what makes a hand-written case as safe as
+    a generated one.
+    """
+    return {
+        "verbs": [
+            {
+                "name": name,
+                "label": VERB_LABEL.get(name, name),
+                "needs_target": verb.needs_target,
+                "needs_value": verb.needs_value,
+                "allows_empty": verb.allows_empty,
+                "is_assertion": name in _ASSERTIONS,
+            }
+            for name, verb in VERBS.items()
+        ],
+        "elements": elements(pages),
+        "placeholders": [
+            {"token": token, "label": PLACEHOLDER_LABEL.get(token, token)}
+            for token in _UNIQUE_VALUES
+        ],
+        "max_steps": MAX_STEPS,
+    }
 
 
 def _assert_meaningful(steps: list[object]) -> None:
