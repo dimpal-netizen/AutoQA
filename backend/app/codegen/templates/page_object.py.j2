@@ -6,6 +6,10 @@ rather than an edit in every test that touches the element.
 """
 
 from playwright.sync_api import Locator, Page
+{% if needs_healing %}
+
+from pages._healing import heal
+{% endif %}
 
 
 class {{ page.class_name }}:
@@ -35,6 +39,14 @@ class {{ page.class_name }}:
 {% endfor %}
 {% endif %}
         """
+{% if locator.candidates | length > 1 %}
+        return heal({{ locator.name | pystr }}, [
+{% for strategy, expression in locator.candidates %}
+            ({{ strategy | pystr }}, lambda: {{ expression }}),
+{% endfor %}
+        ])
+{% else %}
         return {{ locator.expression }}
+{% endif %}
 
 {% endfor %}

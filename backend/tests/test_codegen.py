@@ -298,7 +298,15 @@ def test_expected_files_are_produced(generated) -> None:
     assert any(p.startswith("pages/") for p in paths)
 
     kinds = {spec.file_type for spec in generated}
-    assert kinds == {FileType.TEST, FileType.PAGE_OBJECT, FileType.CONFTEST, FileType.CONFIG}
+    # HELPER is pages/_healing.py, emitted only when an element has more than
+    # one recorded way of being found - which this fixture does.
+    assert kinds == {
+        FileType.TEST,
+        FileType.PAGE_OBJECT,
+        FileType.CONFTEST,
+        FileType.CONFIG,
+        FileType.HELPER,
+    }
 
 
 def test_generated_files_are_ascii(generated) -> None:

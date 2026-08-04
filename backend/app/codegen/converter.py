@@ -57,6 +57,11 @@ class LocatorSpec:
     strategy: str
     fragile: bool
     fallbacks: list[str] = field(default_factory=list)
+    # Every recorded way of finding this element, best first, as runnable
+    # expressions. `fallbacks` above is the same information written for a
+    # human to read in the docstring; this is the version the test can execute
+    # when the first one stops matching.
+    candidates: list[tuple[str, str]] = field(default_factory=list)
     # Every recorded candidate matched more than one element, so the expression
     # ends in `.first`. Worth saying out loud: the test will run, but it may be
     # driving the wrong element.
@@ -92,6 +97,7 @@ class PageSpec:
                 strategy=locator.strategy,
                 fragile=locator.fragile,
                 fallbacks=locator.fallbacks,
+                candidates=locator.candidates,
                 ambiguous=locator.ambiguous,
             )
         )
@@ -425,11 +431,18 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         (Selector.from_dict(s) for s in (action.get("selectors") or [])),
         key=lambda s: (s.rank, -s.score),
     )
-    fallbacks = [
-        f"{s.strategy.value}: {s.value}"
-        for s in ranked
+    spares = [
+        s for s in ranked
         if (s.strategy, s.value) != (selector.strategy, selector.value)
     ][:3]
+    fallbacks = [f"{s.strategy.value}: {s.value}" for s in spares]
+
+    # The chosen selector first, then the spares in rank order. A positional
+    # spare is deliberately kept: when the descriptive one has stopped matching,
+    # a path through the DOM is worth trying before giving up.
+    candidates = [(selector.strategy.value, expression)] + [
+        (s.strategy.value, locator_expression(s, root)) for s in spares
+    ]
     name = page_spec.add(
         LocatorSpec(
             name=element_name(selector, element),
@@ -437,6 +450,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             strategy=selector.strategy.value,
             fragile=selector.is_fragile,
             fallbacks=fallbacks,
+            candidates=candidates,
             ambiguous=not selector.unique,
         )
     )

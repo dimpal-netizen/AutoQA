@@ -67,12 +67,30 @@ def render(ir: TestIR, *, browser_info: dict[str, Any] | None = None) -> list[Ge
         )
     ]
 
+    def healable(page) -> bool:
+        """Has any element more than one recorded way of being found?"""
+        return any(len(locator.candidates) > 1 for locator in page.locators)
+
     for page in ir.pages:
         files.append(
             GeneratedFileSpec(
                 path=f"pages/{page.module}.py",
-                content=env.get_template("page_object.py.j2").render(page=page),
+                content=env.get_template("page_object.py.j2").render(
+                    page=page, needs_healing=healable(page)
+                ),
                 file_type=FileType.PAGE_OBJECT,
+            )
+        )
+
+    # One helper shared by every page object. Emitted only when something can
+    # actually heal, so a suite of unique test ids does not carry code it never
+    # calls.
+    if any(healable(page) for page in ir.pages):
+        files.append(
+            GeneratedFileSpec(
+                path="pages/_healing.py",
+                content=env.get_template("healing.py.j2").render(),
+                file_type=FileType.HELPER,
             )
         )
 
