@@ -204,6 +204,33 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 result[-1] = action
                 continue
 
+            # Enter, and then the submit button, on the same page. Both were
+            # recorded because a person pressed Enter and clicked before the
+            # browser had finished leaving — but only one of them can happen
+            # twice. Replayed, Enter submits, the page navigates, and the click
+            # waits thirty seconds for a button that is no longer there:
+            #
+            #   Locator.click: Timeout 30000ms exceeded.
+            #     waiting for locator("#login-button")
+            #
+            # which is the recorded test failing on every run despite recording
+            # a flow that worked. The click is the one to keep: clicking a
+            # submit button always submits, while Enter only does on some forms,
+            # so keeping the click is right whichever of the two did the work.
+            #
+            # Same URL is what makes this safe. If Enter had been the thing that
+            # navigated, the following click would have been recorded on the
+            # next page, and dropping the Enter would strand the test on this
+            # one.
+            if (
+                prev_kind is ActionType.KEY_PRESS
+                and kind in (ActionType.CLICK, ActionType.DOUBLE_CLICK)
+                and _is_submit_key(previous)
+                and previous.get("url") == action.get("url")
+            ):
+                result[-1] = action
+                continue
+
             # A click that navigates records both; the navigation becomes a
             # wait attached to the click rather than a separate step.
             if kind is ActionType.NAVIGATE and prev_kind in (
@@ -239,6 +266,16 @@ def _scroll_distance(action: dict[str, Any]) -> int:
     """How far a scroll actually moved, in pixels."""
     payload = action.get("payload") or {}
     return abs(int(payload.get("x") or 0)) + abs(int(payload.get("y") or 0))
+
+
+#: Keys that submit a form. Only these can make a following click redundant —
+#: Tab or Escape change focus and leave the button exactly where it was.
+_SUBMIT_KEYS = {"enter", "numpadenter", "return"}
+
+
+def _is_submit_key(action: dict[str, Any]) -> bool:
+    key = ((action.get("payload") or {}).get("key") or "").strip().lower()
+    return key.replace(" ", "") in _SUBMIT_KEYS
 
 
 def _same_element(a: dict[str, Any], b: dict[str, Any]) -> bool:

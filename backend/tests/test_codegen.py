@@ -256,6 +256,55 @@ def test_navigation_after_a_click_becomes_a_wait() -> None:
     assert result[0]["_navigates_to"] == "https://x.test/next"
 
 
+def test_enter_then_the_submit_button_keeps_only_the_click() -> None:
+    """The bug that made every recorded saucedemo test fail.
+
+    A person typed the password, pressed Enter, and clicked Login before the
+    browser had finished leaving the page — so both were recorded, both on the
+    login page. Replayed, Enter submits, the page navigates, and the click waits
+    thirty seconds for a button that no longer exists.
+
+    The click survives rather than the Enter: clicking a submit button always
+    submits, Enter only does on some forms.
+    """
+    actions = [
+        _action(0, "input", payload={"value": "secret_sauce"}),
+        _action(1, "key_press", payload={"key": "Enter"}),
+        _action(2, "click", selectors=[
+            {"strategy": "css", "value": "#login-button", "unique": True, "score": 50}
+        ]),
+    ]
+    result = normalise(actions)
+
+    assert [a["action_type"] for a in result] == ["input", "click"]
+    assert result[-1]["selectors"][0]["value"] == "#login-button"
+
+
+def test_enter_that_did_the_navigating_is_kept() -> None:
+    """Nothing was clicked on the login page, so Enter is what submitted it.
+
+    Dropping it here would strand the test on the first page — which is why the
+    rule only fires when the click was recorded at the same URL.
+    """
+    actions = [
+        _action(0, "key_press", payload={"key": "Enter"}),
+        _action(1, "click", url="https://x.test/inventory"),
+    ]
+    result = normalise(actions)
+
+    assert [a["action_type"] for a in result] == ["key_press", "click"]
+
+
+def test_a_key_that_does_not_submit_leaves_the_click_alone() -> None:
+    """Tab moves focus. The button is still there and still needs clicking."""
+    actions = [
+        _action(0, "key_press", payload={"key": "Tab"}),
+        _action(1, "click"),
+    ]
+
+    assert [a["action_type"] for a in normalise(actions)] == ["key_press", "click"]
+
+
 def test_ignored_actions_are_dropped() -> None:
     actions = [_action(0, "click", is_ignored=True), _action(1, "click")]
 
