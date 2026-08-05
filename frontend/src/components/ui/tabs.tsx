@@ -36,7 +36,7 @@ export function Tabs({
     <div
       role="tablist"
       className={cn(
-        "inline-flex flex-wrap items-center gap-1 rounded-full border border-border bg-muted/60 p-1",
+        "flex flex-wrap items-center gap-5",
         className,
       )}
     >
@@ -50,11 +50,11 @@ export function Tabs({
             type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
-              "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-all",
+              "flex items-center gap-2 border-b-2 pb-2.5 text-sm transition-colors",
               "[&_svg]:size-4",
               selected
-                ? "bg-card text-primary shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                ? "border-primary font-semibold text-primary"
+                : "border-transparent font-medium text-muted-foreground hover:text-foreground",
             )}
           >
             {tab.icon}
@@ -62,10 +62,10 @@ export function Tabs({
             {tab.count !== undefined && (
               <span
                 className={cn(
-                  "tabular rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                  "tabular text-xs font-normal",
                   selected
-                    ? "bg-primary-subtle text-primary"
-                    : "bg-card text-muted-foreground",
+                    ? "text-primary/60"
+                    : "text-muted-foreground/60",
                 )}
               >
                 {tab.count}

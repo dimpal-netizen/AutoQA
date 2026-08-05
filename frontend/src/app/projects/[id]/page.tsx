@@ -239,9 +239,16 @@ function ProjectWorkspace({ id }: { id: number }) {
             </a>
           </div>
 
-          <Button size="lg" onClick={() => setRecording((v) => !v)}>
+          <Button variant="secondary" onClick={() => setRecording((v) => !v)}>
             <Video />
-            {recording ? "Close" : "Record a session"}
+            {/* "Record a session" on a project that already has several reads
+                like nothing has been done yet, and hides that this adds to
+                them rather than replacing them. */}
+            {recording
+              ? "Close"
+              : suites.length > 0
+                ? "Record another session"
+                : "Record a session"}
           </Button>
         </div>
       </header>
