@@ -12,7 +12,7 @@ import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, Pencil, Video } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Project, TestRun, TestSuite, TestSuiteDetail } from "@/lib/types";
+import type { Project, TestSuite, TestSuiteDetail } from "@/lib/types";
 import { useAuthStore } from "@/stores/auth-store";
 import { AppShell } from "@/components/app-shell";
 import { RequireAuth } from "@/components/auth-provider";
@@ -144,7 +144,6 @@ function ProjectWorkspace({ id }: { id: number }) {
   const [suites, setSuites] = useState<TestSuite[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [detail, setDetail] = useState<TestSuiteDetail | null>(null);
-  const [lastRun, setLastRun] = useState<TestRun | null>(null);
   const [recording, setRecording] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -177,13 +176,13 @@ function ProjectWorkspace({ id }: { id: number }) {
     let cancelled = false;
     void (async () => {
       try {
-        const [found, runs] = await Promise.all([
-          api.suites.get(selected),
-          api.runs.list({ suiteId: selected }).catch(() => [] as TestRun[]),
-        ]);
+        // The run list was fetched here only to show "last run 2h ago" above
+        // the table. That line is gone, and the run panel loads its own
+        // history, so this is one request per suite selection that nobody was
+        // waiting for.
+        const found = await api.suites.get(selected);
         if (cancelled) return;
         setDetail(found);
-        setLastRun(runs[0] ?? null);
       } catch {
         /* keep what is on screen; the id check below hides a stale one */
       }
@@ -255,6 +254,11 @@ function ProjectWorkspace({ id }: { id: number }) {
           onChanged={() => {
             void load();
           }}
+          // The recording is over, so the panel offering to start one closes.
+          // Leaving it open put an empty "Record a new session" form at the top
+          // of the page at the moment the answer is "no — show me what I just
+          // recorded".
+          onFinished={() => setRecording(false)}
         />
       )}
 
@@ -274,7 +278,6 @@ function ProjectWorkspace({ id }: { id: number }) {
         <SuiteWorkspace
           suite={current}
           suites={suites}
-          lastRun={lastRun}
           onSelect={setSelected}
           onChange={(updated) => {
             setDetail(updated);
@@ -286,7 +289,6 @@ function ProjectWorkspace({ id }: { id: number }) {
             // would leave the workspace stuck on a suite that is gone.
             setSelected(null);
             setDetail(null);
-            setLastRun(null);
             void load();
           }}
         />

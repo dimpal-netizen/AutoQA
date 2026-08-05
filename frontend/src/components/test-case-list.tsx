@@ -65,11 +65,19 @@ export function TestCaseList({
    *  an empty array meaning the whole suite. */
   runningCaseIds?: number[] | null;
 }) {
-  // The recording is not a test case, it is the session every case came from —
-  // one row of 33 steps sitting above a list of focused three-step checks,
-  // answering a different question and skewing every column it appears in. It
-  // has its own place: the Recording link in the suite header.
-  const testCases = cases.filter((c) => c.category !== "recorded");
+  // The recorded case is in this list, and it was not always.
+  //
+  // It was hidden on the argument that a recording is the session every case
+  // came from rather than a case itself. That argument does not survive
+  // contact with a run: it executes with the others, it can fail with the
+  // others, and its verdict appears in the results — where it was the only row
+  // you could not find anywhere else. A test you cannot see, open, or run on
+  // its own, but which can turn your suite red, is the worst of both.
+  //
+  // It lands in its own "Recorded" section at the top of the table rather than
+  // mixed in, so a 33-step regression test still reads as a different thing
+  // from a focused three-step check.
+  const testCases = cases;
 
   // One case is the one you came to read; a suite of fifteen is a list to scan.
   const [open, setOpen] = useState<Set<number>>(
@@ -109,6 +117,10 @@ export function TestCaseList({
   // each — three columns of icons would push the name and status columns into
   // the narrow half of the table for buttons most rows never use.
   const hasActions = Boolean(onRunCase || onEditCase || onDeleteCase);
+  // Count them: the chevron, the name, Status, Priority, and the actions cell.
+  // This was one short, so every full-width row — each category heading and
+  // every expanded step list — stopped before the last column and left a seam
+  // down the right edge of the table.
   const columns = hasActions ? 5 : 4;
 
   return (
@@ -129,9 +141,13 @@ export function TestCaseList({
               <th scope="col" className="px-3 py-2.5 font-semibold">
                 Priority
               </th>
-              <th scope="col" className="px-3 py-2.5 font-semibold">
-                File
-              </th>
+              {/* The File column was here. Two rows in a row read
+                  `test_registering_a_new_buyer_acc…`, truncated at the same
+                  point and so indistinguishable — a column that could not do
+                  the one thing it was for. The filename is the case name with
+                  underscores, so it was also the first column again, spelled
+                  worse, for readers who do not open .py files. It is on the
+                  expanded row now, where you have asked for detail. */}
               {hasActions && <th scope="col" className="w-28" />}
             </tr>
           </thead>
@@ -275,15 +291,6 @@ function CaseRows({
           </Badge>
         </td>
 
-        <td className="px-3 py-2.5">
-          <span className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
-            <FileCode2 className="size-3 shrink-0" />
-            <span className="max-w-[15rem] truncate" title={testCase.file_path}>
-              {testCase.file_path.replace(/^tests\//, "")}
-            </span>
-          </span>
-        </td>
-
         {/* Run, edit and delete this one case. Running replaced a column of
             checkboxes: ticking boxes and then finding the button is two steps
             and a scroll for what is nearly always "run this one". None of
@@ -321,7 +328,11 @@ function CaseRows({
                 </RowButton>
               )}
 
-              {onDelete && (
+              {/* No delete on the recorded case. The API refuses it — it is
+                  the session every other case was built from, and deleting
+                  the recording is how you get rid of it — so offering the
+                  button here would only produce an error. */}
+              {onDelete && testCase.category !== "recorded" && (
                 <RowButton
                   onClick={onDelete}
                   disabled={busy}
@@ -341,6 +352,18 @@ function CaseRows({
         <tr className="border-b border-border bg-muted/30">
           <td colSpan={columns} className="px-4 py-4">
             <Steps steps={testCase.steps} />
+
+            {/* Which file this is on disk. Useful to exactly one person — the
+                one about to open it in VS Code — and only once they have asked
+                to see this case in detail. Not worth a column of its own on
+                every row. */}
+            <p
+              className="mt-3 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground"
+              title={testCase.file_path}
+            >
+              <FileCode2 className="size-3 shrink-0" />
+              <span className="truncate">{testCase.file_path}</span>
+            </p>
           </td>
         </tr>
       )}

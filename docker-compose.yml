@@ -18,6 +18,37 @@ services:
       timeout: 5s
       retries: 10
 
+  # A web UI for the database, so the port link in Docker Desktop opens
+  # something you can read.
+  #
+  # Postgres cannot do this itself. It speaks its own binary protocol on 5432,
+  # so a browser pointed there sends "GET / HTTP/1.1", gets no reply it can
+  # parse, and reports "localhost didn't send any data". Docker Desktop shows
+  # every published port as a link regardless of what is behind it.
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: autoqa-pgadmin
+    restart: unless-stopped
+    ports:
+      # 80 inside the container; 5050 on your machine, because 80 is usually
+      # spoken for.
+      - "${PGADMIN_PORT:-5050}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@autoqa.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-autoqa}
+      # Desktop mode: one user, no login screen and no master-password prompt.
+      # pgAdmin defaults to a multi-user server install, which means signing in
+      # to a tool running on your own laptop to look at your own database.
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      # Keeps registered servers and preferences across restarts. Without it
+      # you re-add the connection every time the container is recreated.
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   redis:
     image: redis:7-alpine
     container_name: autoqa-redis
@@ -35,3 +66,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  pgadmin_data:

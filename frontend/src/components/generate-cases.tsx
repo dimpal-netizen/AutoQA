@@ -9,94 +9,72 @@
 import { useState } from "react";
 import { Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
-import type { GenerateCasesResult, TestSuiteDetail } from "@/lib/types";
+import type { TestSuiteDetail } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Alert } from "@/components/ui/card";
 
+/** Just the button.
+ *
+ *  It used to carry its own progress line, error and result underneath, which
+ *  was fine when it sat in a box of its own. It now lives in a row of buttons
+ *  above the table, and anything it renders below itself makes that row two
+ *  lines tall and pushes the table down — while generating, which is exactly
+ *  when you are watching the table.
+ *
+ *  So it reports outcomes upward and the parent decides where they go. What it
+ *  had to say while busy is gone entirely: the button already reads "Writing
+ *  test cases…", is disabled, and its icon is pulsing. A sentence explaining
+ *  that it usually takes 15-30 seconds is read once and then in the way.
+ */
 export function GenerateCases({
   suiteId,
   hasGenerated,
   onGenerated,
+  onOutcome,
 }: {
   suiteId: number;
   hasGenerated: boolean;
   onGenerated: (suite: TestSuiteDetail) => void;
+  /** Why it failed, or null when it did not. Success says nothing: the table
+   *  fills with the new cases and the tab badge changes to match, so a banner
+   *  announcing it is the same news a third time and the only copy you have to
+   *  dismiss. */
+  onOutcome?: (error: string | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<GenerateCasesResult | null>(null);
 
   async function generate() {
     setBusy(true);
-    setError(null);
-    setResult(null);
+    onOutcome?.(null);
     try {
       const response = await api.suites.generateCases(suiteId);
-      setResult(response);
       onGenerated(response.suite);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not generate test cases");
+      onOutcome?.(
+        err instanceof Error ? err.message : "Could not generate test cases",
+      );
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={generate} disabled={busy} variant={hasGenerated ? "outline" : "default"}>
-          <Sparkles className={busy ? "animate-pulse" : ""} />
-          {busy
-            ? "Writing test cases…"
-            : hasGenerated
-              ? "Regenerate cases"
-              : "Generate test cases"}
-        </Button>
-
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          {hasGenerated
-            ? "Replaces the generated cases. Your recorded test is never touched."
-            : "Positive, negative, edge and security cases built around this recording."}
-        </p>
-      </div>
-
-      {busy && (
-        <p className="text-xs text-muted-foreground">
-          Usually 15–30 seconds. Each suggestion is checked against elements that
-          actually exist before it becomes a file.
-        </p>
-      )}
-
-      {error && <Alert>{error}</Alert>}
-
-      {result && (
-        <Alert variant="info">
-          Added {result.generated} test case{result.generated === 1 ? "" : "s"}
-          {result.cost_usd > 0 && (
-            <>
-              {" "}
-              · {result.tokens.toLocaleString()} tokens · $
-              {result.cost_usd.toFixed(4)}
-            </>
-          )}
-          {result.rejected.length > 0 && (
-            <details className="mt-1.5">
-              <summary className="cursor-pointer text-xs">
-                {result.rejected.length} suggestion
-                {result.rejected.length === 1 ? "" : "s"} rejected
-              </summary>
-              {/* Shown rather than swallowed: a case dropped for referencing a
-                  missing element is a fact about the recording, not a defect
-                  to hide. */}
-              <ul className="mt-1 flex flex-col gap-0.5 text-xs opacity-80">
-                {result.rejected.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </Alert>
-      )}
-    </div>
+    <Button
+      onClick={generate}
+      disabled={busy}
+      size="sm"
+      variant={hasGenerated ? "outline" : "default"}
+      title={
+        hasGenerated
+          ? "Replaces every case except your recording — including any you wrote by hand. Usually 15-30 seconds."
+          : "Positive, negative, edge and security cases built around this recording. Usually 15-30 seconds."
+      }
+    >
+      <Sparkles className={busy ? "animate-pulse" : ""} />
+      {busy
+        ? "Writing test cases…"
+        : hasGenerated
+          ? "Regenerate cases"
+          : "Generate test cases"}
+    </Button>
   );
 }

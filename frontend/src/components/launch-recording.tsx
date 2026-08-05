@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Circle, ExternalLink, Loader2, Square } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Project, RecordingSession } from "@/lib/types";
@@ -22,9 +22,14 @@ import {
  *  backend launches Chromium with Playwright and injects it from outside. */
 export function LaunchRecording({
   onChanged,
+  onFinished,
   project,
 }: {
   onChanged: () => void;
+  /** The recording is over — by the Stop button or by closing the browser
+   *  window. The panel invites you to start another one, which is not what
+   *  anyone wants at the moment they finished the first. */
+  onFinished?: () => void;
   /** When recording from inside a project, the project is context rather than
    *  a choice — asking again is a question with one answer. */
   project?: Project;
@@ -63,6 +68,14 @@ export function LaunchRecording({
     };
   }, [project]);
 
+  // In a ref so the polling effect below keeps the dependencies it already has.
+  // The parent passes a fresh arrow on every render, and adding that to the
+  // deps would tear down and rebuild the interval each time.
+  const notifyFinished = useRef(onFinished);
+  useEffect(() => {
+    notifyFinished.current = onFinished;
+  }, [onFinished]);
+
   // While a window is open, poll so the action count ticks up here too, and so
   // we notice the user closing the browser window directly.
   useEffect(() => {
@@ -72,8 +85,12 @@ export function LaunchRecording({
         const sessions = await api.recordings.list();
         const current = sessions.find((s) => s.id === live.id);
         onChanged();
-        if (!current?.browser_open) setLive(null);
-        else setLive(current);
+        if (!current?.browser_open) {
+          setLive(null);
+          // Closing the window is how most recordings end — the Stop button is
+          // the other one, and both mean the same thing to whoever is watching.
+          notifyFinished.current?.();
+        } else setLive(current);
       } catch {
         /* transient — keep polling */
       }
@@ -107,6 +124,7 @@ export function LaunchRecording({
       await api.recordings.close(live.id);
       setLive(null);
       onChanged();
+      onFinished?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not stop the recording");
     } finally {
