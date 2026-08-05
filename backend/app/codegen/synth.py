@@ -466,6 +466,12 @@ def _assert_meaningful(steps: list[object]) -> None:
     if not (actions - _ASSERTIONS):
         raise SynthesisError("only assertions; the test never opens or does anything")
 
+    # A case whose entire evidence is a URL is weak — "did not reach
+    # /properties" is true of every page but one — and it is asked for in the
+    # prompt instead of refused here. Weak is not the same as provably wrong,
+    # and a suite that silently shrinks whenever the model phrases a check
+    # loosely is worse than one carrying a check that could be sharper.
+
 
 def _drop_unverifiable(
     steps: list[object], start_url: str, *, name: str = "?"

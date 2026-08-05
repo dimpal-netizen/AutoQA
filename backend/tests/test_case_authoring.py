@@ -466,6 +466,33 @@ def test_a_success_destination_is_still_a_valid_thing_to_deny(pages):
     assert "not_to_have_url" in source
 
 
+def test_a_negative_case_can_check_the_form_is_still_there(pages):
+    """The shape the prompt now asks for.
+
+    From a real suite, the check was `expect_not_url /properties` and nothing
+    else — green if the injection had logged the attacker in and landed on the
+    home page, because "not /properties" is true of every page but one. The
+    email field is gone on success and present on failure, which is the
+    difference the case is actually about.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="fill", target="LoginPage.email_input",
+                     value="' OR '1'='1", description="Inject"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_not_url", value="/properties",
+                     description="Must not get in"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="Still on the login form"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "to_be_visible" in source
+
+
 def test_a_hand_written_case_compiles_to_valid_python(pages):
     source = compile_case(
         [
