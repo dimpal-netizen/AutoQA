@@ -170,6 +170,52 @@ _UNIQUE_VALUES = {
     "{{unique}}": "uuid4().hex[:10]",
 }
 
+#: A placeholder anywhere in a value, written either way round.
+#:
+#: Two things had to be tolerated, because both are what actually arrives. The
+#: model writes `{unique_name}` as often as `{{unique_name}}` — one set of braces
+#: is the more natural way to write a placeholder, and the prompt asking for two
+#: does not reliably get two. And it composes them: `{{unique_name}}First` is a
+#: sensible thing to want in a first-name field.
+#:
+#: Matching the whole value exactly, as this once did, silently failed both. The
+#: value did not equal any key, so it was emitted as a string literal and the
+#: form was filled in with `{unique_name}First` — every run, identically, which
+#: is exactly the collision the placeholders exist to prevent.
+#:
+#: Longest alternative first: `unique` would otherwise match the start of
+#: `unique_email` and leave `_email}}` behind as literal text.
+_PLACEHOLDER = re.compile(
+    r"\{\{?(unique_email|unique_phone|unique_name|unique)\}?\}"
+)
+
+
+def unique_expression(value: object) -> str | None:
+    """A Python expression for `value`, or None if it holds no placeholder.
+
+    The whole value is a placeholder in the ordinary case and the expression is
+    returned on its own. A placeholder embedded in surrounding text becomes a
+    concatenation — plainer in the generated file than a nested f-string, and
+    valid Python whatever the literal parts contain.
+    """
+    text = str(value)
+    if not _PLACEHOLDER.search(text):
+        return None
+
+    parts: list[str] = []
+    position = 0
+    for match in _PLACEHOLDER.finditer(text):
+        if match.start() > position:
+            parts.append(py_str(text[position : match.start()]))
+        parts.append(_UNIQUE_VALUES[f"{{{{{match.group(1)}}}}}"])
+        position = match.end()
+
+    if position < len(text):
+        parts.append(py_str(text[position:]))
+
+    return parts[0] if len(parts) == 1 else " + ".join(parts)
+
+
 #: What each placeholder is for, in the editor's own words. A tester writing a
 #: sign-up test has no way to guess that a literal address will pass once and
 #: then be red forever; offering these by name is how they find out.
@@ -259,7 +305,7 @@ def synthesise(
 
         # A unique value renders as the expression that produces one, so it is
         # evaluated per run rather than baked in as a literal.
-        unique = _UNIQUE_VALUES.get(str(value).strip()) if value is not None else None
+        unique = unique_expression(value) if value is not None else None
         if unique is not None:
             needs_uuid = True
 

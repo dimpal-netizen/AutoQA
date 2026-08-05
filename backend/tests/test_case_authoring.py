@@ -28,6 +28,7 @@ from app.codegen.synth import (
     elements,
     page_variables_for,
     synthesise,
+    unique_expression,
     vocabulary,
 )
 from app.models.enums import ActionType
@@ -234,6 +235,68 @@ def test_an_action_outside_the_vocabulary_is_refused(pages):
             ],
             pages,
         )
+
+
+# ---------------------------------------------------------------------------
+# Values that must differ on every run
+#
+# From a real suite, where all three of these were typed into the form exactly
+# as written because only an exact whole-value match was substituted:
+#
+#    5. input  = '{unique_name}First'
+#    6. input  = '{unique_name}Last'
+#    8. input  = '{unique_phone}'
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "value",
+    ["{{unique_email}}", "{unique_email}", "{{unique_phone}}", "{unique_phone}"],
+)
+def test_a_placeholder_written_either_way_is_substituted(value):
+    """One brace or two. The model writes both and the prompt cannot stop it."""
+    expression = unique_expression(value)
+
+    assert expression is not None
+    assert "unique_" not in expression
+    assert "uuid4()" in expression
+
+
+def test_a_placeholder_inside_a_longer_value_is_substituted():
+    """`{unique_name}First` is a reasonable thing to want in a first-name field,
+    and used to be typed in literally — identical on every run, which is the
+    collision the placeholder exists to prevent."""
+    expression = unique_expression("{unique_name}First")
+
+    assert expression == "f'AutoQA {uuid4().hex[:6]}' + 'First'"
+
+
+def test_several_placeholders_in_one_value():
+    expression = unique_expression("user-{unique}@mail.com")
+
+    assert expression == "'user-' + uuid4().hex[:10] + '@mail.com'"
+
+
+def test_an_ordinary_value_is_left_alone():
+    """Anything without a placeholder must stay a plain literal."""
+    assert unique_expression("Test@1234") is None
+    assert unique_expression("") is None
+
+
+def test_a_substituted_value_compiles(pages):
+    """The composed form has to be valid Python, not just look right."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="fill", target="LoginPage.email_input",
+                     value="{unique_name}First", description="A fresh first name"),
+            CaseStep(action="expect_visible", target="LoginPage.login_button",
+                     description="Still there"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "{unique_name}First" not in source
+    assert "uuid4()" in source
 
 
 def test_a_hand_written_case_compiles_to_valid_python(pages):
