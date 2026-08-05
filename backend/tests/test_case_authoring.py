@@ -299,6 +299,95 @@ def test_a_substituted_value_compiles(pages):
     assert "uuid4()" in source
 
 
+# ---------------------------------------------------------------------------
+# Claims about a URL the test set itself
+#
+# All four below came out of one real run, where ten of thirteen tests were red
+# and eight of those were the test's fault rather than the application's.
+# ---------------------------------------------------------------------------
+def test_asserting_the_url_you_just_navigated_to_is_refused(pages):
+    """`goto X` then `expect_not_url X` is a contradiction.
+
+    The application rendered "Agent not found." at that address, which is
+    correct, and the test called it a failure on every run.
+    """
+    with pytest.raises(SynthesisError, match="navigated to"):
+        compile_case(
+            [
+                CaseStep(action="goto", value="https://x.test/properties/invalid",
+                         description="Open a bad URL"),
+                CaseStep(action="expect_not_url", value="https://x.test/properties/invalid",
+                         description="Should not stay here"),
+            ],
+            pages,
+        )
+
+
+def test_expecting_the_url_you_just_navigated_to_is_refused(pages):
+    """The mirror image, and vacuous rather than impossible: true before the
+    test does anything, and still true if the page is an error."""
+    with pytest.raises(SynthesisError, match="navigated to"):
+        compile_case(
+            [
+                CaseStep(action="goto", value="https://x.test/login",
+                         description="Open the login page"),
+                CaseStep(action="expect_url", value="https://x.test/login",
+                         description="Confirm we are on login"),
+            ],
+            pages,
+        )
+
+
+def test_coming_back_to_a_page_is_still_allowed(pages):
+    """Open a page, click away, come back, assert you are back.
+
+    A real journey worth testing. A blunter rule — "never assert a URL you ever
+    navigated to" — would have thrown this out with the broken ones.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="click", target="LoginPage.login_button",
+                     description="Go somewhere else"),
+            CaseStep(action="expect_url", value="https://x.test/login",
+                     description="Back on login"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+
+
+def test_navigating_off_the_application_is_refused(pages):
+    """A made-up subdomain does not resolve, so the browser raises before any
+    assertion runs and the test errors instead of reporting anything."""
+    with pytest.raises(SynthesisError, match="not the application under test"):
+        compile_case(
+            [
+                CaseStep(action="goto", value="https://nonexistent.x.test/",
+                         description="Open a subdomain that does not exist"),
+                CaseStep(action="expect_not_url", value="https://x.test/",
+                         description="Should not reach the app"),
+            ],
+            pages,
+        )
+
+
+def test_a_relative_path_stays_on_the_site(pages):
+    """A bare path cannot leave the application, so it is never refused."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="Still showing the form"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+
+
 def test_a_hand_written_case_compiles_to_valid_python(pages):
     source = compile_case(
         [

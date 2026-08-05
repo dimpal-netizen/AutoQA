@@ -67,10 +67,30 @@ Rules, all of which matter:
   the recording gives you no evidence of what a bad URL or a rejected input
   actually shows, use `expect_not_url` for where it must not end up, and write
   nothing else.
-- For a negative case, use `expect_not_url` with the path a SUCCESS would
-  reach. Do not guess the wording of an error message you have not seen.
+- For a negative case that SUBMITS something, use `expect_not_url` with the path
+  a success would reach. Do not guess the wording of an error message you have
+  not seen.
 
-  Do not assert `expect_url` of the page the test is already on. That is where
+  This does not apply to a case that reaches a bad address with `goto`. `goto`
+  puts the browser at that address, so asserting afterwards that the URL is not
+  that address is a contradiction and the test can only ever be red:
+
+      goto            /properties/invalid-segment
+      expect_not_url  /properties/invalid-segment    <- always false
+
+  Do not assume a bad URL redirects. Plenty of sites render "Not found" at the
+  address you asked for, and that is correct behaviour. Unless the recording
+  shows a redirect, a bad-URL case asserts what the page SHOWS —
+  `expect_text` on the message, or `expect_visible` on an element that is there
+  — or it is not worth writing.
+- Never `goto` a host other than the application's own. A made-up subdomain does
+  not resolve, so the browser raises before any assertion runs and the test
+  errors instead of reporting anything.
+- Never put a database identifier from the recording into an `expect_url`. A
+  value like `agent-details/cmru9ht1z001a01l61v2hpc2u` is one row on one server
+  on one day, not a fact about the application. Assert the part of the path that
+  is stable.
+- Do not assert `expect_url` of the page the test is already on. That is where
   it started, so the assertion is true before the test does anything and stays
   true if the button is dead, the form never submits, or the server returns an
   error page at the same address. It reports green for all of them. Name the

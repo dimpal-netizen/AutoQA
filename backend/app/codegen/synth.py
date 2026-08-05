@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from app.codegen.converter import PageSpec, StepSpec, TestIR, page_variables
 from app.codegen.selectors import clip_words, py_str, snake_case
@@ -334,6 +335,8 @@ def synthesise(
         )
 
     _assert_meaningful(steps_in)
+    _assert_url_claims(steps_in)
+    _assert_same_site(steps_in, start_url)
 
     ir = TestIR(
         suite_name=_clean(getattr(case, "name", "Generated test")),
@@ -461,6 +464,90 @@ def _assert_meaningful(steps: list[object]) -> None:
 
     if not (actions - _ASSERTIONS):
         raise SynthesisError("only assertions; the test never opens or does anything")
+
+
+def _assert_url_claims(steps: list[object]) -> None:
+    """Refuse a case that asserts on a URL it navigated to itself.
+
+    From a real generated suite, and it could never have passed:
+
+        0. goto            .../properties/invalid-segment
+        1. expect_not_url  .../properties/invalid-segment
+        2. expect_url      .../
+
+    `goto` puts the browser at that address. Claiming afterwards that the URL is
+    not that address is a contradiction, and the run said so:
+
+        Page URL expected not to be '.../agent-details/invalid!id@format'
+        Actual value:               '.../agent-details/invalid!id@format'
+
+    The application was right. It renders "Agent not found." at that address,
+    which is a normal thing for a site to do; the test had invented a redirect
+    nobody ever observed. A red test on correct behaviour is the most expensive
+    kind of wrong, because it spends a tester's afternoon before it is dismissed.
+
+    Only the URL the browser is *still* on is refused. Navigating to a page,
+    clicking away and coming back is a real journey worth asserting, so the
+    check looks at the most recent step that could have moved the browser: when
+    that is the `goto` itself, nothing has happened since to change the address.
+    """
+    moved_by: object | None = None  # the last step that could have navigated
+
+    for index, step in enumerate(steps):
+        action = str(getattr(step, "action", "")).strip().lower()
+        value = str(getattr(step, "value", "") or "").strip()
+
+        if action in _URL_ASSERTIONS:
+            if moved_by is None or value == "":
+                continue
+            target = str(getattr(moved_by, "value", "") or "").strip()
+            if (
+                str(getattr(moved_by, "action", "")).strip().lower() == "goto"
+                and target
+                and (value in target or target in value)
+            ):
+                raise SynthesisError(
+                    f"step {index}: '{action}' names the address step "
+                    f"{steps.index(moved_by)} navigated to, so it is either "
+                    "vacuously true or a contradiction. Assert what the page "
+                    "shows instead."
+                )
+            continue
+
+        if action != "goto" and action in _ASSERTIONS:
+            continue  # an observation cannot move the browser
+        moved_by = step
+
+
+def _assert_same_site(steps: list[object], start_url: str) -> None:
+    """Refuse a `goto` that leaves the application under test.
+
+        0. goto  https://nonexistent.homeske-dev.betaeserver.com/
+
+    was generated to prove a subdomain does not exist. It cannot: the name does
+    not resolve, so the browser raises before any assertion runs and the test
+    reports an error rather than a result. A missing host is a DNS question and
+    a browser is the wrong instrument for it.
+
+    Skipped when the suite has no start URL, which is the case for hand-built
+    fixtures in the tests.
+    """
+    host = urlparse(start_url).hostname if start_url else None
+    if not host:
+        return
+
+    for index, step in enumerate(steps):
+        if str(getattr(step, "action", "")).strip().lower() != "goto":
+            continue
+        value = str(getattr(step, "value", "") or "").strip()
+        if not value.lower().startswith(("http://", "https://")):
+            continue  # a bare path stays on this site by construction
+        target = urlparse(value).hostname
+        if target and target.lower() != host.lower():
+            raise SynthesisError(
+                f"step {index}: navigates to {target}, which is not the "
+                f"application under test ({host})"
+            )
 
 
 def _clean(text: str) -> str:
