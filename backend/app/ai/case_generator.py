@@ -106,7 +106,11 @@ def generate_cases(
             ),
             GeneratedCases,
             system=SYSTEM,
-            max_tokens=16000,
+            # Room for the answer with the thinking budget alongside it. The
+            # answer for twelve cases measured 7482 tokens, so this is headroom
+            # for roughly double that plus everything the model thinks first —
+            # the old 16000 had to cover both and left 149 tokens spare.
+            max_tokens=32000,
         )
     except LLMError as exc:
         logger.warning("Case generation unavailable: %s", exc)

@@ -43,6 +43,25 @@ T = TypeVar("T", bound=BaseModel)
 # version with GEMINI_MODEL when you want one.
 DEFAULT_MODEL = "gemini-flash-latest"
 
+# Thinking is billed as output and counted against max_output_tokens, so an
+# unbounded budget competes with the answer for the same ceiling — and wins,
+# because it happens first. Measured on a twelve-case generation:
+#
+#     prompt      2097
+#     thinking    8369   <- more than half the ceiling, and invisible
+#     answer      7482
+#     total      17948   (16000 limit: 149 tokens of headroom)
+#
+# That run finished. One that thought a little longer did not, and a response
+# cut off mid-JSON does not parse, which surfaced as "Gemini hit the 16000
+# token limit before finishing its GeneratedCases response" — intermittently,
+# because how long it thinks varies run to run.
+#
+# Bounded rather than disabled (thinking_budget=0). These tasks are structured
+# rewrites, but the model still has to decide what is worth testing, and that
+# is the part thinking is for.
+THINKING_BUDGET = 4000
+
 # Per million tokens, for the cost ledger only. Matched on the model id because
 # the model is configurable: quoting pro prices for a flash run would overstate
 # spend by an order of magnitude. Longest prefix wins, and the fallback is the
@@ -105,9 +124,12 @@ class GeminiClient(LLMClient):
             # Truncation is the usual cause: a response cut off at the token
             # limit is not valid JSON, so nothing parses. Say which it was.
             if _finish_reason(response) is types.FinishReason.MAX_TOKENS:
+                # Say how the ceiling was spent. "Hit the limit" on its own
+                # invites raising the limit, when the answer to this has twice
+                # been that thinking ate it before the answer began.
                 raise LLMError(
                     f"Gemini hit the {max_tokens} token limit before finishing its "
-                    f"{schema.__name__} response"
+                    f"{schema.__name__} response{_token_split(response)}"
                 )
             raise LLMError(f"Gemini returned no output matching {schema.__name__}")
 
@@ -120,6 +142,7 @@ class GeminiClient(LLMClient):
         return types.GenerateContentConfig(
             system_instruction=system or None,
             max_output_tokens=max_tokens,
+            thinking_config=types.ThinkingConfig(thinking_budget=THINKING_BUDGET),
         )
 
     def _generate(
@@ -172,6 +195,23 @@ class GeminiClient(LLMClient):
 def _finish_reason(response: types.GenerateContentResponse):
     candidates = getattr(response, "candidates", None) or []
     return getattr(candidates[0], "finish_reason", None) if candidates else None
+
+
+def _token_split(response: types.GenerateContentResponse) -> str:
+    """" — 8369 spent thinking, 7482 on the answer", when the numbers are there.
+
+    Empty when they are not, so the message reads as a sentence either way.
+    """
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return ""
+
+    thoughts = getattr(usage, "thoughts_token_count", None) or 0
+    answer = getattr(usage, "candidates_token_count", None) or 0
+    if not thoughts and not answer:
+        return ""
+
+    return f" - {thoughts} spent thinking, {answer} on the answer"
 
 
 def _guard_refusal(response: types.GenerateContentResponse) -> None:
