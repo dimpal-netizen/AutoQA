@@ -56,7 +56,13 @@ class OpenAIClient(LLMClient):
         return self._to_response(response, text=choice.message.content or "", started=started)
 
     def complete_model(
-        self, prompt: str, schema: type[T], *, system: str = "", max_tokens: int = 8000
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        system: str = "",
+        max_tokens: int = 8000,
+        image: bytes | None = None,  # noqa: ARG002 - this provider does not look
     ) -> LLMResponse:
         started = time.monotonic()
         messages = ([{"role": "system", "content": system}] if system else []) + [

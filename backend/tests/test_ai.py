@@ -38,7 +38,11 @@ class FakeLLM(LLMClient):
             raise self.error
         return LLMResponse(text="ok", provider=self.provider, model=self.model)
 
-    def complete_model(self, prompt, schema, *, system="", max_tokens=8000) -> LLMResponse:
+    def complete_model(
+        self, prompt, schema, *, system="", max_tokens=8000, image=None
+    ) -> LLMResponse:
+        # Recorded so a test can assert the screenshot reached the model.
+        self.image = image
         self.calls.append(prompt)
         if self.error:
             raise self.error

@@ -70,7 +70,13 @@ class ClaudeClient(LLMClient):
 
     # ------------------------------------------------------------------
     def complete_model(
-        self, prompt: str, schema: type[T], *, system: str = "", max_tokens: int = 8000
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        system: str = "",
+        max_tokens: int = 8000,
+        image: bytes | None = None,  # noqa: ARG002 - this provider does not look
     ) -> LLMResponse:
         started = time.monotonic()
         try:

@@ -56,6 +56,7 @@ def analyse(
     siblings: list = (),
     steps: list = (),
     base_url: str | None = None,
+    screenshot: bytes | None = None,
     client: LLMClient | None = None,
 ) -> AnalysisOutcome:
     """Explain one failed result. Never raises.
@@ -103,6 +104,7 @@ def analyse(
             # the same budget as the answer. At 4000 a third of these analyses
             # were truncated mid-JSON and thrown away after being paid for.
             max_tokens=12000,
+            image=screenshot,
         )
     except LLMError as exc:
         logger.warning("Failure analysis unavailable: %s", exc)

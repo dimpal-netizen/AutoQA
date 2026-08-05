@@ -110,14 +110,27 @@ class GeminiClient(LLMClient):
 
     # ------------------------------------------------------------------
     def complete_model(
-        self, prompt: str, schema: type[T], *, system: str = "", max_tokens: int = 8000
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        system: str = "",
+        max_tokens: int = 8000,
+        image: bytes | None = None,
     ) -> LLMResponse:
         started = time.monotonic()
         config = self._config(system, max_tokens)
         config.response_mime_type = "application/json"
         config.response_schema = schema
 
-        response = self._generate(prompt, config)
+        # The image goes first. A model that reads the question before looking
+        # tends to answer from the text and treat the picture as decoration.
+        contents = (
+            [types.Part.from_bytes(data=image, mime_type="image/png"), prompt]
+            if image
+            else prompt
+        )
+        response = self._generate(contents, config)
 
         parsed = getattr(response, "parsed", None)
         if not isinstance(parsed, schema):
@@ -146,7 +159,7 @@ class GeminiClient(LLMClient):
         )
 
     def _generate(
-        self, prompt: str, config: types.GenerateContentConfig
+        self, prompt: str | list, config: types.GenerateContentConfig
     ) -> types.GenerateContentResponse:
         try:
             response = self._client.models.generate_content(
