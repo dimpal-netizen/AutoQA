@@ -18,6 +18,7 @@ import {
   BROWSER_LABEL,
   RESULT_BADGE,
   formatDuration,
+  plainError,
   type Artifact,
   type Browser,
   type ResultStatus,
@@ -156,10 +157,26 @@ function FailureDetail({ results }: { results: TestResult[] }) {
             {result.failed_step !== null && ` · failed at step ${result.failed_step}`}
           </p>
 
+          {/* What happened, in words, before the words the test framework
+              chose. A Manual QA Engineer reading "Locator.click: Timeout
+              30000ms exceeded" learns nothing they can act on, and they are
+              the audience this tool exists for. The technical text stays
+              underneath — it is what you paste to a developer. */}
           {result.error_message && (
-            <p className="rounded-md border border-destructive/25 bg-destructive-subtle px-2.5 py-2 font-mono text-xs leading-relaxed text-destructive">
-              {result.error_message}
-            </p>
+            <div className="rounded-md border border-destructive/25 bg-destructive-subtle px-2.5 py-2">
+              {plainError(result.error_message) && (
+                <p className="text-[13px] leading-relaxed text-destructive">
+                  {plainError(result.error_message)}
+                </p>
+              )}
+              <p
+                className={`font-mono text-xs leading-relaxed text-destructive ${
+                  plainError(result.error_message) ? "mt-1.5 opacity-70" : ""
+                }`}
+              >
+                {result.error_message}
+              </p>
+            </div>
           )}
 
           <FailureAnalysis resultId={result.id} />

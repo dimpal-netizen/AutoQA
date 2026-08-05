@@ -598,3 +598,76 @@ export function bugAsText(bug: BugReport): string {
     `Severity: ${bug.severity} · Priority: ${bug.priority}`,
   ].join("\n");
 }
+
+/** One plain sentence for a Playwright error, or null when we have no better
+ *  words than the ones already there.
+ *
+ *  The raw message is written for whoever wrote the test:
+ *
+ *      playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms
+ *      exceeded. Call log: waiting for get_by_role("link", name="Home").first
+ *
+ *  A Manual QA Engineer reads that and learns nothing they can act on, which is
+ *  the whole audience this tool exists for. The technical text is kept below —
+ *  it is what you paste to a developer — but it should not be the first thing
+ *  on screen.
+ */
+export function plainError(message: string): string | null {
+  const thing = elementIn(message);
+
+  if (/strict mode violation/i.test(message)) {
+    const count = /resolved to (\d+) elements/i.exec(message);
+    return sentence(
+      `${thing} matches ${count ? count[1] : "more than one"} things on the page, so the test could not tell which one to use.`,
+    );
+  }
+  if (/Timeout .*exceeded/i.test(message) && /waiting for/i.test(message)) {
+    return sentence(`${thing} never appeared. The test waited and then gave up.`);
+  }
+  if (/expected not to be|not_to_have_url/i.test(message)) {
+    return "The page address was the one the test said it should not be.";
+  }
+  if (/to_have_url|Page URL expected/i.test(message)) {
+    return "The page address was not the one the test expected.";
+  }
+  if (/expected to be visible/i.test(message)) {
+    return sentence(`${thing} was not visible on the page.`);
+  }
+  if (/expected to be hidden/i.test(message)) {
+    return sentence(
+      `${thing} was still on the page when the test expected it to be gone.`,
+    );
+  }
+  if (/to_contain_text|expected to contain text/i.test(message)) {
+    return "The text on the page was not the text the test expected.";
+  }
+  if (/ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|net::ERR/i.test(message)) {
+    return "The page could not be reached at all — the address did not respond.";
+  }
+  if (/ModuleNotFoundError|ImportError/i.test(message)) {
+    return "The test file could not be loaded. Regenerate the suite.";
+  }
+  return null;
+}
+
+/** What the test was looking for, named the way it appears on screen.
+ *
+ *  `name=` first, and that ordering is the whole point:
+ *  `get_by_role("link", name="See All Properties")` describes a link called
+ *  "See All Properties", and taking the first quoted string instead reports
+ *  that `"link"` never appeared — true of nothing anyone can look for. */
+function elementIn(message: string): string {
+  const byName = /(?:name|text)=["']([^"']+)["']/.exec(message);
+  if (byName) return `"${byName[1]}"`;
+
+  const byLookup =
+    /get_by_(?:label|placeholder|text|test_id)\(\s*["']([^"']+)["']/.exec(message);
+  if (byLookup) return `"${byLookup[1]}"`;
+
+  return "the element it needed";
+}
+
+/** Capitalise, since these read as prose and can begin with a quoted label. */
+function sentence(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

@@ -248,6 +248,8 @@ def synthesise(
     if len(steps_in) > MAX_STEPS:
         raise SynthesisError(f"{len(steps_in)} steps is beyond the {MAX_STEPS} limit")
 
+    steps_in = _drop_unverifiable(steps_in, start_url, name=getattr(case, "name", "?"))
+
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
     locators = _locator_index(pages, variable_of)
 
@@ -335,8 +337,6 @@ def synthesise(
         )
 
     _assert_meaningful(steps_in)
-    _assert_url_claims(steps_in)
-    _assert_same_site(steps_in, start_url)
 
     ir = TestIR(
         suite_name=_clean(getattr(case, "name", "Generated test")),
@@ -466,88 +466,83 @@ def _assert_meaningful(steps: list[object]) -> None:
         raise SynthesisError("only assertions; the test never opens or does anything")
 
 
-def _assert_url_claims(steps: list[object]) -> None:
-    """Refuse a case that asserts on a URL it navigated to itself.
+def _drop_unverifiable(
+    steps: list[object], start_url: str, *, name: str = "?"
+) -> list[object]:
+    """Remove the steps whose verdict could not mean anything, keep the case.
 
-    From a real generated suite, and it could never have passed:
+    A step that can only ever report one answer is not a check. It is noise that
+    reports as a failure, and it is worse than having no step there at all —
+    because a red test on correct behaviour costs a tester an afternoon, and
+    teaches them to dismiss the next red test faster.
 
-        0. goto            .../properties/invalid-segment
-        1. expect_not_url  .../properties/invalid-segment
-        2. expect_url      .../
+    Dropping the step rather than the case is deliberate. The rest of the case
+    is usually fine, and a suite that quietly shrinks every time the model
+    phrases one assertion badly is a suite nobody can reason about. What is left
+    still has to pass `_assert_meaningful`, so a case that was *only* the bad
+    step still goes — but by the existing rule, not a new one.
 
-    `goto` puts the browser at that address. Claiming afterwards that the URL is
-    not that address is a contradiction, and the run said so:
+    Two kinds go:
+
+    **An assertion about the address the browser is still on.** From a real
+    suite, red on every run:
+
+        0. goto            .../agent-details/invalid!id@format
+        1. expect_not_url  .../agent-details/invalid!id@format
 
         Page URL expected not to be '.../agent-details/invalid!id@format'
         Actual value:               '.../agent-details/invalid!id@format'
+        - main:
+          - paragraph: Agent not found.
 
-    The application was right. It renders "Agent not found." at that address,
-    which is a normal thing for a site to do; the test had invented a redirect
-    nobody ever observed. A red test on correct behaviour is the most expensive
-    kind of wrong, because it spends a tester's afternoon before it is dismissed.
+    `goto` puts the browser at that address, so the claim is a contradiction and
+    the application was right all along — it renders "Agent not found." where
+    you asked, which is a normal thing for a site to do. Only the address the
+    browser is *still* on is dropped: opening a page, clicking away and coming
+    back is a real journey worth asserting, so this looks at the last step that
+    could have moved the browser rather than at every `goto` in the case.
 
-    Only the URL the browser is *still* on is refused. Navigating to a page,
-    clicking away and coming back is a real journey worth asserting, so the
-    check looks at the most recent step that could have moved the browser: when
-    that is the `goto` itself, nothing has happened since to change the address.
+    **A `goto` that leaves the application.** A made-up subdomain does not
+    resolve, so the browser raises before any assertion runs and the test errors
+    instead of reporting anything. A missing host is a DNS question and a
+    browser is the wrong instrument for it.
     """
-    moved_by: object | None = None  # the last step that could have navigated
+    host = urlparse(start_url).hostname if start_url else None
+    kept: list[object] = []
+    moved_by: object | None = None
 
-    for index, step in enumerate(steps):
+    for step in steps:
         action = str(getattr(step, "action", "")).strip().lower()
         value = str(getattr(step, "value", "") or "").strip()
 
-        if action in _URL_ASSERTIONS:
-            if moved_by is None or value == "":
+        if action == "goto" and host and value.lower().startswith(("http://", "https://")):
+            target = urlparse(value).hostname
+            if target and target.lower() != host.lower():
+                logger.info(
+                    "%s: dropped a step opening %s - not the application under test (%s)",
+                    name, target, host,
+                )
                 continue
-            target = str(getattr(moved_by, "value", "") or "").strip()
+
+        if action in _URL_ASSERTIONS and value and moved_by is not None:
+            was = str(getattr(moved_by, "value", "") or "").strip()
             if (
                 str(getattr(moved_by, "action", "")).strip().lower() == "goto"
-                and target
-                and (value in target or target in value)
+                and was
+                and (value in was or was in value)
             ):
-                raise SynthesisError(
-                    f"step {index}: '{action}' names the address step "
-                    f"{steps.index(moved_by)} navigated to, so it is either "
-                    "vacuously true or a contradiction. Assert what the page "
-                    "shows instead."
+                logger.info(
+                    "%s: dropped '%s %s' - the browser is still on that address, "
+                    "so the answer is fixed before the test runs",
+                    name, action, value[:80],
                 )
-            continue
+                continue
 
-        if action != "goto" and action in _ASSERTIONS:
-            continue  # an observation cannot move the browser
-        moved_by = step
+        kept.append(step)
+        if not (action in _ASSERTIONS and action != "goto"):
+            moved_by = step  # an observation cannot move the browser
 
-
-def _assert_same_site(steps: list[object], start_url: str) -> None:
-    """Refuse a `goto` that leaves the application under test.
-
-        0. goto  https://nonexistent.homeske-dev.betaeserver.com/
-
-    was generated to prove a subdomain does not exist. It cannot: the name does
-    not resolve, so the browser raises before any assertion runs and the test
-    reports an error rather than a result. A missing host is a DNS question and
-    a browser is the wrong instrument for it.
-
-    Skipped when the suite has no start URL, which is the case for hand-built
-    fixtures in the tests.
-    """
-    host = urlparse(start_url).hostname if start_url else None
-    if not host:
-        return
-
-    for index, step in enumerate(steps):
-        if str(getattr(step, "action", "")).strip().lower() != "goto":
-            continue
-        value = str(getattr(step, "value", "") or "").strip()
-        if not value.lower().startswith(("http://", "https://")):
-            continue  # a bare path stays on this site by construction
-        target = urlparse(value).hostname
-        if target and target.lower() != host.lower():
-            raise SynthesisError(
-                f"step {index}: navigates to {target}, which is not the "
-                f"application under test ({host})"
-            )
+    return kept
 
 
 def _clean(text: str) -> str:
