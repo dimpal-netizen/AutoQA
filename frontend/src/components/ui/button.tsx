@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
    that carry weight through colour and size alone. The only motion left is a
    colour change and a soft glow on hover. */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-semibold " +
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold " +
     "transition-all duration-150 outline-none " +
     "focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background " +
     "disabled:pointer-events-none disabled:opacity-45 " +

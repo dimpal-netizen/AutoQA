@@ -63,14 +63,64 @@ Rules, all of which matter:
   displayed" is `expect_masked`, never `expect_hidden`. If the form has a
   reveal toggle, clicking it and then asserting `expect_not_masked` is a
   separate test case.
-- Never assert a page is broken by expecting a normal element to be gone. If
-  the recording gives you no evidence of what a bad URL or a rejected input
-  actually shows, use `expect_not_url` for where it must not end up, and write
-  nothing else.
-- For a negative case, use `expect_not_url` with the path a SUCCESS would
-  reach. Do not guess the wording of an error message you have not seen.
+- **Assert on an element before you assert on a URL.** In a single-page
+  application the address is the least reliable thing on screen: it is set by
+  the router, it can lag the render, and the same page is reachable at more
+  than one path. An element is what the user actually sees.
 
-  Do not assert `expect_url` of the page the test is already on. That is where
+  A recording that logs in and lands on /properties does not prove the
+  application always goes there. It proves it went there once. Every assertion
+  built on that guess fails the day it goes somewhere else — and it will.
+
+  Prefer, in this order:
+    1. `expect_visible` / `expect_hidden` on an element the recording showed
+    2. `expect_text` on an element whose text the recording showed
+    3. `expect_url`, only when the path itself is the point
+
+- **A negative case must assert the app STAYED, not merely that it went
+  elsewhere.** "Did not reach /properties" is true of every page in existence
+  except one, so it passes when the wrong thing happens:
+
+      fill email with "' OR '1'='1"  ->  click Login  ->  expect_not_url /properties
+
+  If that injection had logged the attacker in and landed on the home page,
+  this test would be green. It claims to verify a rejection and verifies almost
+  nothing.
+
+  Assert instead that the thing you submitted is still in front of you — the
+  email field, the password field, the submit button. Those are gone on
+  success and present on failure, which is exactly the difference the case is
+  about. `expect_not_url` may accompany that; it must not be the only check.
+
+- Never assert a page is broken by expecting a normal element to be gone. Site
+  navigation in particular is on every page, including error pages.
+- Do not guess the wording of an error message you have not seen.
+
+- **One case tests one thing.** A case that logs in with a bad value, then logs
+  in again with a good one to check something unrelated, is two cases wearing
+  one name — and when it fails you cannot tell which half broke. Four to eight
+  steps is normal; if you are writing twelve, you have written two tests.
+
+  This does not apply to a case that reaches a bad address with `goto`. `goto`
+  puts the browser at that address, so asserting afterwards that the URL is not
+  that address is a contradiction and the test can only ever be red:
+
+      goto            /properties/invalid-segment
+      expect_not_url  /properties/invalid-segment    <- always false
+
+  Do not assume a bad URL redirects. Plenty of sites render "Not found" at the
+  address you asked for, and that is correct behaviour. Unless the recording
+  shows a redirect, a bad-URL case asserts what the page SHOWS —
+  `expect_text` on the message, or `expect_visible` on an element that is there
+  — or it is not worth writing.
+- Never `goto` a host other than the application's own. A made-up subdomain does
+  not resolve, so the browser raises before any assertion runs and the test
+  errors instead of reporting anything.
+- Never put a database identifier from the recording into an `expect_url`. A
+  value like `agent-details/cmru9ht1z001a01l61v2hpc2u` is one row on one server
+  on one day, not a fact about the application. Assert the part of the path that
+  is stable.
+- Do not assert `expect_url` of the page the test is already on. That is where
   it started, so the assertion is true before the test does anything and stays
   true if the button is dead, the form never submits, or the server returns an
   error page at the same address. It reports green for all of them. Name the

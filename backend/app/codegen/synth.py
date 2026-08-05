@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from app.codegen.converter import PageSpec, StepSpec, TestIR, page_variables
 from app.codegen.selectors import clip_words, py_str, snake_case
@@ -247,6 +248,9 @@ def synthesise(
     if len(steps_in) > MAX_STEPS:
         raise SynthesisError(f"{len(steps_in)} steps is beyond the {MAX_STEPS} limit")
 
+    steps_in = _drop_unverifiable(steps_in, start_url, name=getattr(case, "name", "?"))
+    steps_in = _drop_leaving_claims(steps_in, pages, name=getattr(case, "name", "?"))
+
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
     locators = _locator_index(pages, variable_of)
 
@@ -461,6 +465,146 @@ def _assert_meaningful(steps: list[object]) -> None:
 
     if not (actions - _ASSERTIONS):
         raise SynthesisError("only assertions; the test never opens or does anything")
+
+    # A case whose entire evidence is a URL is weak — "did not reach
+    # /properties" is true of every page but one — and it is asked for in the
+    # prompt instead of refused here. Weak is not the same as provably wrong,
+    # and a suite that silently shrinks whenever the model phrases a check
+    # loosely is worse than one carrying a check that could be sharper.
+
+
+def _drop_unverifiable(
+    steps: list[object], start_url: str, *, name: str = "?"
+) -> list[object]:
+    """Remove the steps whose verdict could not mean anything, keep the case.
+
+    A step that can only ever report one answer is not a check. It is noise that
+    reports as a failure, and it is worse than having no step there at all —
+    because a red test on correct behaviour costs a tester an afternoon, and
+    teaches them to dismiss the next red test faster.
+
+    Dropping the step rather than the case is deliberate. The rest of the case
+    is usually fine, and a suite that quietly shrinks every time the model
+    phrases one assertion badly is a suite nobody can reason about. What is left
+    still has to pass `_assert_meaningful`, so a case that was *only* the bad
+    step still goes — but by the existing rule, not a new one.
+
+    Two kinds go:
+
+    **An assertion about the address the browser is still on.** From a real
+    suite, red on every run:
+
+        0. goto            .../agent-details/invalid!id@format
+        1. expect_not_url  .../agent-details/invalid!id@format
+
+        Page URL expected not to be '.../agent-details/invalid!id@format'
+        Actual value:               '.../agent-details/invalid!id@format'
+        - main:
+          - paragraph: Agent not found.
+
+    `goto` puts the browser at that address, so the claim is a contradiction and
+    the application was right all along — it renders "Agent not found." where
+    you asked, which is a normal thing for a site to do. Only the address the
+    browser is *still* on is dropped: opening a page, clicking away and coming
+    back is a real journey worth asserting, so this looks at the last step that
+    could have moved the browser rather than at every `goto` in the case.
+
+    **A `goto` that leaves the application.** A made-up subdomain does not
+    resolve, so the browser raises before any assertion runs and the test errors
+    instead of reporting anything. A missing host is a DNS question and a
+    browser is the wrong instrument for it.
+    """
+    host = urlparse(start_url).hostname if start_url else None
+    kept: list[object] = []
+    moved_by: object | None = None
+
+    for step in steps:
+        action = str(getattr(step, "action", "")).strip().lower()
+        value = str(getattr(step, "value", "") or "").strip()
+
+        if action == "goto" and host and value.lower().startswith(("http://", "https://")):
+            target = urlparse(value).hostname
+            if target and target.lower() != host.lower():
+                logger.info(
+                    "%s: dropped a step opening %s - not the application under test (%s)",
+                    name, target, host,
+                )
+                continue
+
+        if action in _URL_ASSERTIONS and value and moved_by is not None:
+            was = str(getattr(moved_by, "value", "") or "").strip()
+            if (
+                str(getattr(moved_by, "action", "")).strip().lower() == "goto"
+                and was
+                and (value in was or was in value)
+            ):
+                logger.info(
+                    "%s: dropped '%s %s' - the browser is still on that address, "
+                    "so the answer is fixed before the test runs",
+                    name, action, value[:80],
+                )
+                continue
+
+        kept.append(step)
+        if not (action in _ASSERTIONS and action != "goto"):
+            moved_by = step  # an observation cannot move the browser
+
+    return kept
+
+
+def _drop_leaving_claims(
+    steps: list[object], pages: list[PageSpec], *, name: str = "?"
+) -> list[object]:
+    """Remove "we must have left this page" when the page is the one in use.
+
+    Five negative registration tests failed on the same line:
+
+        11. click           'Create Account'
+        12. expect_not_url  /register/buyer      <- always false
+        13. expect_hidden   the OTP modal        <- the real check
+
+    The form rejects an empty email and stays put, which is what a form should
+    do. The test called staying a failure. The application was right five times
+    over and the run was red five times over.
+
+    `_drop_unverifiable` cannot see this one: the browser reached that page by
+    clicking, not by `goto`, so there is no matching navigation to compare
+    against. What gives it away instead is the elements — every step before the
+    assertion drives `register_buyer.*`, and that page object's own URL is
+    `/register/buyer`. A test cannot be filling in a page it has left.
+
+    For a negative case the URL worth naming is the one a *success* would
+    reach. That claim has content; this one had none, and step 13 was carrying
+    the case on its own the whole time.
+    """
+    urls = {page.class_name: (page.url or "") for page in pages}
+    index = _locator_index(pages)
+    kept: list[object] = []
+    on_page: str | None = None  # the page whose elements are being driven
+
+    for step in steps:
+        action = str(getattr(step, "action", "")).strip().lower()
+        value = str(getattr(step, "value", "") or "").strip()
+
+        if action == "expect_not_url" and value and on_page:
+            here = urls.get(on_page, "")
+            if here and (value in here or here in value):
+                logger.info(
+                    "%s: dropped 'expect_not_url %s' - the test is driving %s, "
+                    "which is that page",
+                    name, value[:60], on_page,
+                )
+                continue
+
+        target = str(getattr(step, "target", "") or "").strip()
+        if target:
+            found = index.get(target) or index.get(target.lower().replace(" ", ""))
+            if found:
+                on_page = found[0]
+
+        kept.append(step)
+
+    return kept
 
 
 def _clean(text: str) -> str:

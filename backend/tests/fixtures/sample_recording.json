@@ -162,7 +162,12 @@
       "element": {
         "tag": "li",
         "text": "Shop",
-        "attributes": { "class": "nav-item has-dropdown" }
+        "role": "menuitem",
+        "attributes": {
+          "class": "nav-item has-dropdown",
+          "aria-haspopup": "true",
+          "aria-expanded": "false"
+        }
       },
       "payload": {}
     },

@@ -13,16 +13,21 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.ai.analyser import analyse, category_of, confidence_of, severity_of
+from app.core.config import settings
 from app.models.ai_analysis import AIAnalysis
-from app.models.enums import ResultStatus
+from app.models.enums import ArtifactType, ResultStatus
 from app.models.user import User
 from app.repositories.analysis_repo import AnalysisRepository
 from app.repositories.test_case_repo import TestCaseRepository
-from app.repositories.test_run_repo import TestResultRepository
+from app.repositories.test_run_repo import ArtifactRepository, TestResultRepository
 from app.services.exceptions import NotFound, ValidationError
 from app.services.execution_service import ExecutionService
 
 logger = logging.getLogger(__name__)
+
+#: A full-page screenshot of a long page can run to several megabytes, and the
+#: cost of sending one is charged per image regardless of what it shows.
+MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024
 
 
 class AnalysisService:
@@ -55,6 +60,7 @@ class AnalysisService:
             siblings=self.results.list_for_run(result.run_id),
             steps=self._steps_for(result),
             base_url=run.project.base_url if run.project else None,
+            screenshot=self._screenshot_for(result),
         )
         if outcome.skipped:
             raise ValidationError(outcome.skipped)
@@ -115,6 +121,35 @@ class AnalysisService:
                 f"Could not analyse {len(reasons)} failure(s): {reasons[0]}"
             )
         raise ValidationError("Every failure in this run has already been analysed.")
+
+    # ------------------------------------------------------------------
+    def _screenshot_for(self, result) -> bytes | None:
+        """The page as it looked when the test gave up, for the model to read.
+
+        Never raises and never blocks the analysis: an explanation from the
+        traceback alone is what we had before, so a missing or unreadable file
+        costs nothing.
+        """
+        for artifact in ArtifactRepository(self.db).list_for_result(result.id):
+            if artifact.type is not ArtifactType.SCREENSHOT:
+                continue
+
+            path = (settings.storage_dir / artifact.file_path).resolve()
+            root = settings.storage_dir.resolve()
+            # The stored path is data. Treating it as a filesystem instruction
+            # without this check turns a database read into an arbitrary file
+            # read.
+            if not path.is_relative_to(root) or not path.is_file():
+                continue
+            if path.stat().st_size > MAX_SCREENSHOT_BYTES:
+                logger.info("Screenshot for result %s is too large to send", result.id)
+                continue
+
+            try:
+                return path.read_bytes()
+            except OSError:
+                logger.exception("Could not read %s", path)
+        return None
 
     # ------------------------------------------------------------------
     def get_for_result(self, result_id: int, user: User) -> AIAnalysis | None:

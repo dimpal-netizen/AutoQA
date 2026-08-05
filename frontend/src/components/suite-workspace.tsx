@@ -17,11 +17,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle,
-  Download,
   FileSpreadsheet,
   FlaskConical,
   FolderOpen,
+  MoreHorizontal,
+  Play,
   Plus,
   RefreshCw,
   Trash2,
@@ -30,14 +30,10 @@ import {
 import Link from "next/link";
 import { api, downloadTestCaseSheet } from "@/lib/api";
 import {
-  RELIABLE_RANK,
-  SELECTOR_RANK,
-  formatDuration,
   formatRelative,
   hasRole,
   type TestCase,
   type TestResult,
-  type TestRun,
   type TestSuite,
   type TestSuiteDetail,
 } from "@/lib/types";
@@ -58,7 +54,6 @@ export function SuiteWorkspace({
   onSelect,
   onChange,
   onDeleted,
-  lastRun,
 }: {
   suite: TestSuiteDetail;
   suites: TestSuite[];
@@ -67,7 +62,6 @@ export function SuiteWorkspace({
   /** The suite is gone — the parent owns the list, so it reloads and picks
    *  whatever is left. */
   onDeleted: () => void;
-  lastRun: TestRun | null;
 }) {
   const [tab, setTab] = useState("cases");
   const [regenerating, setRegenerating] = useState(false);
@@ -112,15 +106,12 @@ export function SuiteWorkspace({
     statusByCase.set(result.test_case_id, list);
   }
 
-  // A case counts as passing only if every browser it ran on passed. Counting
-  // results rather than cases would let a case green in Chrome and red in
-  // Firefox add one to each column.
-  const judged = [...statusByCase.values()];
-  const passed = judged.filter((rs) => rs.every((r) => r.status === "passed")).length;
-  const failed = judged.filter((rs) =>
-    rs.some((r) => r.status === "failed" || r.status === "error"),
-  ).length;
   const [error, setError] = useState<string | null>(null);
+
+  // Why the last generation failed, when it did. Held here rather than inside
+  // the button, because anything that button renders beneath itself grows the
+  // toolbar row it sits in and knocks the buttons beside it out of line.
+  const [generateOutcome, setGenerateOutcome] = useState<string | null>(null);
 
   // The case editor, or null when it is closed. `testCase: null` inside it
   // means "write a new one" — the same panel does both, because creating and
@@ -207,10 +198,6 @@ export function SuiteWorkspace({
     }
   }
 
-  const steps = suite.cases.flatMap((c) => c.steps);
-  const fragile = steps.filter(
-    (s) => s.selector_strategy && SELECTOR_RANK[s.selector_strategy] > RELIABLE_RANK,
-  );
   const generated = suite.cases.filter((c) => c.category !== "recorded").length;
   const paths = [
     ...suite.cases.map((c) => c.file_path),
@@ -252,193 +239,160 @@ export function SuiteWorkspace({
         </div>
       )}
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="truncate text-lg font-bold tracking-tight">
-            {suite.name}
-          </h2>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            {suite.description
-              ? suite.description
-              : `Created ${formatRelative(suite.created_at)}`}
-          </p>
-        </div>
+      {/* One line, not a banded row of four figures.
 
-        <div className="flex shrink-0 items-center gap-2">
-          {suite.recording_id && (
-            <>
-              <Link href={`/recordings/${suite.recording_id}`}>
-                <Button variant="ghost" size="sm">
-                  <Video />
-                  Recording
-                </Button>
-              </Link>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={regenerating}
-                onClick={regenerate}
-              >
-                <RefreshCw className={regenerating ? "animate-spin" : ""} />
-                {regenerating ? "Regenerating…" : "Regenerate"}
-              </Button>
-            </>
-          )}
+          "Test cases 15" went first: the tab beside it already says 14, because
+          the tab counts the generated cases and the figure counted the
+          recording too. Two numbers under the same word on one screen is worse
+          than saying it once.
 
-          {canEdit && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={deleting}
-              onClick={remove}
-              className="text-muted-foreground hover:bg-destructive-subtle hover:text-destructive"
-            >
-              <Trash2 />
-              {deleting ? "Deleting…" : "Delete"}
-            </Button>
-          )}
-        </div>
-      </div>
+          What is left is the part that is genuinely nowhere else. Passed and
+          failed here are across the whole suite, not the last run — running one
+          case makes a run of one, and reading these off it once said "0 passed"
+          while a dozen cases sat there green from earlier. And the count is
+          meaningless without the date: "14 passed" from three weeks ago and
+          from two minutes ago are very different facts.
 
-      {/* One banded row of figures rather than four separate boxes. Four
-          equally-weighted cards is four things shouting at the same volume;
-          hairline dividers group them as one reading instead. */}
-      <div className="sheen grid grid-cols-2 divide-border rounded-xl border border-border bg-card sm:divide-x lg:grid-cols-4">
-        <Figure
-          label="Test cases"
-          value={suite.cases.length}
-          hint={generated ? `1 recorded · ${generated} generated` : "from your recording"}
-        />
-        {/* Across the suite, not just the last run. Running one case makes a
-            run of one, and reading these off it said "0 passed" while a dozen
-            cases sat there green from earlier. */}
-        <Figure
-          label="Passed"
-          value={judged.length ? passed : "—"}
-          tone={judged.length && passed > 0 ? "success" : "muted"}
-          hint={
-            judged.length
-              ? `of ${judged.length} case${judged.length === 1 ? "" : "s"} ever run`
-              : "not run yet"
-          }
-        />
-        <Figure
-          label="Failed"
-          value={judged.length ? failed : "—"}
-          tone={!judged.length ? "muted" : failed > 0 ? "danger" : "success"}
-          hint={
-            !judged.length
-              ? "not run yet"
-              : failed > 0
-                ? "needs attention"
-                : "nothing failing"
-          }
-        />
-        {/* When, not what. Passed and failed are meaningless without it —
-            "12 passed" from three weeks ago and from two minutes ago are very
-            different facts, and only this card tells them apart. The fragile
-            step count it replaces is still on the banner above the table and
-            on every row that has one, so nothing was lost. */}
-        <Figure
-          label="Last run"
-          value={
-            lastRun ? formatRelative(lastRun.finished_at ?? lastRun.created_at) : "—"
-          }
-          tone={lastRun ? "default" : "muted"}
-          hint={
-            lastRun
-              ? `${lastRun.status}${lastRun.duration_ms ? ` · ${formatDuration(lastRun.duration_ms)}` : ""}`
-              : "no runs yet"
-          }
-        />
-      </div>
+          A quarter of the height, and every number on it is one you cannot get
+          by looking at the table. */}
 
       {error && <Alert>{error}</Alert>}
 
       <div>
-        <Tabs
-          active={tab}
-          onChange={setTab}
-          tabs={[
-            {
-              id: "cases",
-              label: "Test cases",
-              // The generated cases, matching the rows in the table. The
-              // recording is counted in the stat strip above, not here.
-              count: generated,
-              icon: <FlaskConical />,
-            },
-            {
-              id: "scripts",
-              label: "Scripts",
-              count: paths.length,
-              icon: <FolderOpen />,
-            },
-          ]}
-        />
+        {/* The suite's heading row used to sit above the figures: its title
+            restated the project's own URL, its subtitle was the recording id
+            and an action count, and the only part anyone used was these three
+            buttons. They sit opposite the tabs now, and the row is gone. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Tabs
+            active={tab}
+            onChange={setTab}
+            tabs={[
+              {
+                id: "cases",
+                label: "Test cases",
+                // Every case, matching the rows in the table exactly. It used
+                // to count only the generated ones while the table hid the
+                // recorded one, which agreed; now the table shows it, so a
+                // badge saying 14 above a table of 15 would be a small lie.
+                count: suite.cases.length,
+                icon: <FlaskConical />,
+              },
+              // Its own section. Running used to sit above the table, and the
+              // result matrix lists every test case again as it executes — so
+              // thirteen rows became twenty-six, the same names twice on one
+              // screen. What tests exist and what happened when they ran are
+              // different questions, asked at different moments.
+              {
+                id: "runs",
+                label: "Runs",
+                icon: <Play />,
+              },
+              {
+                id: "scripts",
+                label: "Scripts",
+                count: paths.length,
+                icon: <FolderOpen />,
+              },
+            ]}
+          />
 
-        <div className="mt-4">
-          {tab === "cases" && (
-            <div className="flex flex-col gap-5">
-              {/* Running belongs with the tests being run. It was its own tab,
-                  which meant generating cases and then running them was two
-                  places for one continuous thought. */}
-              <RunPanel
-                suiteId={suite.id}
-                caseCount={suite.cases.length}
-                request={runRequest}
-                reloadToken={statusToken}
-                onDeleted={() => void onChange(suite)}
-                onRunningChange={(ids) => {
-                  setRunningCaseIds(ids);
-                  // A finished run changes where cases stand.
-                  if (ids === null) setStatusToken((n) => n + 1);
-                }}
-              />
-
-              <div className="rounded-lg border border-dashed border-border bg-muted/40 p-4">
+          {/* One row. The three you press constantly are here, labelled; the
+              three you rarely press — one of which deletes the suite — are a
+              click away in the menu. They belong to the Test cases tab, so
+              they are absent on the other two rather than sitting there
+              inert. */}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {tab === "cases" && (
+              <>
                 <GenerateCases
                   suiteId={suite.id}
                   hasGenerated={generated > 0}
+                  onOutcome={setGenerateOutcome}
                   onGenerated={(updated) => {
                     onChange(updated);
                     // The old runs tested the cases this just replaced.
                     setStatusToken((n) => n + 1);
                   }}
                 />
-              </div>
 
-              <ExportSheet suite={suite} />
-
-              {fragile.length > 0 && (
-                <Alert variant="warning">
-                  <AlertTriangle className="mr-1 inline size-4" />
-                  {fragile.length} of {steps.length} steps rely on a fragile
-                  selector — the ones most likely to break when the UI changes.
-                </Alert>
-              )}
-
-              {/* The generated cases are a starting point. A tester who knows
-                  the application will always think of one the model missed —
-                  and until this button existed the only answer was to
-                  regenerate and hope it appeared. */}
-              {canEdit && (
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground">
-                    Missing a case? Write one — same actions and elements the
-                    generated tests are built from.
-                  </p>
+                {canEdit && (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setEditing({ testCase: null })}
+                    title="Write a case the model did not think of, using the same actions and elements the generated tests are built from."
                   >
                     <Plus />
                     Add test case
                   </Button>
-                </div>
+                )}
+
+                <ExportSheet suite={suite} />
+              </>
+            )}
+
+            <SuiteMenu>
+              {suite.recording_id && (
+                <>
+                  <MenuItem icon={<Video />} href={`/recordings/${suite.recording_id}`}>
+                    View the recording
+                  </MenuItem>
+                  {/* Not "Regenerate". A second button used to say that too,
+                      and the two do very different things: that one swaps the
+                      invented cases, this one throws the whole suite away and
+                      builds it again. One label for a reversible action and a
+                      destructive one is a trap. */}
+                  <MenuItem
+                    icon={<RefreshCw className={regenerating ? "animate-spin" : ""} />}
+                    onClick={regenerate}
+                    disabled={regenerating}
+                    title="Throws away every test in this suite, including any you wrote by hand, and builds it again from the recording."
+                  >
+                    {regenerating ? "Rebuilding…" : "Rebuild from recording"}
+                  </MenuItem>
+                </>
               )}
 
+              {canEdit && (
+                <MenuItem
+                  icon={<Trash2 />}
+                  onClick={remove}
+                  disabled={deleting}
+                  danger
+                  title={`Delete "${suite.name}", its test cases and its run history`}
+                >
+                  {deleting ? "Deleting…" : "Delete suite"}
+                </MenuItem>
+              )}
+            </SuiteMenu>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          {tab === "cases" && (
+            <div className="flex flex-col gap-4">
+              {/* Nothing between the tabs and the table any more. This held
+                  three stacked rows in three different containers — a dashed
+                  box, a bordered card and a bare line — each with a sentence
+                  you read once and scrolled past forever after, plus a
+                  full-width amber banner repeating a warning every affected
+                  row already carries beside its own name.
+
+                  The buttons moved up beside the tabs; the sentences moved
+                  onto the buttons. */}
+
+              {/* Only when it went wrong. The success banner said "Added 12
+                  test cases · 11,482 tokens · $0.0235" above a table that had
+                  just filled with twelve new rows and a tab badge that had
+                  just changed to match — the same news three times, and the
+                  only copy of it you had to dismiss. A failure still has to be
+                  said, because nothing else on the page would show it. */}
+              {generateOutcome && <Alert>{generateOutcome}</Alert>}
+
+              {/* The pass/fail summary was here. Every row already carries its
+                  own verdict in the Status column, and the Runs tab carries
+                  the run itself. */}
               <TestCaseList
                 cases={suite.cases}
                 runningCaseIds={runningCaseIds}
@@ -449,6 +403,10 @@ export function SuiteWorkspace({
                   // Optimistic: the panel confirms a moment later, but the
                   // spinner has to appear on the press, not after a round trip.
                   setRunningCaseIds([caseId]);
+                  // You pressed run, so show the run. Without this the press
+                  // looks like it did nothing, because what it started is on
+                  // the tab you are not looking at.
+                  setTab("runs");
                 }}
                 onEditCase={
                   canEdit ? (testCase) => setEditing({ testCase }) : undefined
@@ -457,6 +415,26 @@ export function SuiteWorkspace({
               />
             </div>
           )}
+
+          {/* Hidden rather than unmounted, and that is load-bearing: this panel
+              owns the polling, the live progress and the "a run finished"
+              callback that refreshes every row's status. Unmounting it to
+              switch tabs would abandon a run still in flight and leave the
+              rows spinning for good. */}
+          <div className={tab === "runs" ? "" : "hidden"}>
+            <RunPanel
+              suiteId={suite.id}
+              caseCount={suite.cases.length}
+              request={runRequest}
+              reloadToken={statusToken}
+              onDeleted={() => void onChange(suite)}
+              onRunningChange={(ids) => {
+                setRunningCaseIds(ids);
+                // A finished run changes where cases stand.
+                if (ids === null) setStatusToken((n) => n + 1);
+              }}
+            />
+          </div>
 
           {tab === "scripts" && (
             <ScriptLocation outputDir={suite.output_dir} paths={paths} />
@@ -479,51 +457,103 @@ export function SuiteWorkspace({
   );
 }
 
-/** One figure in the banded row. Blue by default, like the reference's stat
- *  strip — the status colours are kept for the two figures that carry a
- *  verdict, so a colour here always means something. */
-function Figure({
-  label,
-  value,
-  hint,
-  tone = "default",
-}: {
-  label: string;
-  value: React.ReactNode;
-  hint?: string;
-  tone?: "default" | "success" | "danger" | "warning" | "muted";
-}) {
-  const colour = {
-    default: "text-primary",
-    success: "text-success",
-    danger: "text-destructive",
-    warning: "text-warning",
-    muted: "text-muted-foreground",
-  }[tone];
+/** The suite's own actions, folded away.
+ *
+ *  Recording is a link you follow now and then; Rebuild and Delete both destroy
+ *  work and are pressed rarely. Three labelled buttons for those, permanently
+ *  on screen beside three you press constantly, is what made this area read as
+ *  two toolbars stacked. Behind a menu they cost one click and no width.
+ */
+function SuiteMenu({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
 
-  // "yesterday" cannot be set at the size of "5" and still fit the column, so
-  // word-shaped values step down. Numbers keep the display size that makes the
-  // row scannable.
-  const wordy = typeof value === "string" && value.length > 5;
+  useEffect(() => {
+    if (!open) return;
+    function away(event: PointerEvent) {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    // pointerdown, not click: a menu that waits for mouseup stays open under
+    // the cursor while you are already dragging a selection somewhere else.
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
 
   return (
-    <div className="px-5 py-4">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </p>
-      <p
-        className={cn(
-          "mt-1.5 font-extrabold leading-none tracking-tight",
-          wordy ? "text-lg" : "text-2xl",
-          colour,
-        )}
+    <div ref={box} className="relative">
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Suite actions"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((v) => !v)}
       >
-        {value}
-      </p>
-      {hint && (
-        <p className="mt-1.5 truncate text-xs text-muted-foreground">{hint}</p>
+        <MoreHorizontal />
+      </Button>
+
+      {open && (
+        <div
+          role="menu"
+          onClick={() => setOpen(false)}
+          className="absolute right-0 z-20 mt-1 w-60 overflow-hidden rounded-xl border border-border bg-card p-1 shadow-lg"
+        >
+          {children}
+        </div>
       )}
     </div>
+  );
+}
+
+/** One line in that menu. A button or a link, styled the same either way. */
+function MenuItem({
+  icon,
+  onClick,
+  href,
+  danger,
+  disabled,
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  onClick?: () => void;
+  href?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  const style = cn(
+    "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors",
+    "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
+    disabled
+      ? "pointer-events-none opacity-45"
+      : danger
+        ? "text-destructive hover:bg-destructive-subtle [&_svg]:text-destructive"
+        : "text-foreground hover:bg-accent",
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className={style} role="menuitem" title={title}>
+        {icon}
+        {children}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" role="menuitem" onClick={onClick} disabled={disabled} title={title} className={style}>
+      {icon}
+      {children}
+    </button>
   );
 }
 
@@ -551,27 +581,24 @@ function ExportSheet({ suite }: { suite: TestSuiteDetail }) {
     }
   }
 
+  // A button, not a card. What it produces fits in a tooltip, and a paragraph
+  // describing a spreadsheet was taking a full row above the table.
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
-      <FileSpreadsheet className="size-4 shrink-0 text-primary" />
-      <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-semibold">Test case sheet</p>
-        <p className="text-xs text-muted-foreground">
-          All {suite.cases.length} cases as an Excel workbook — ID, priority,
-          positive/negative, steps, expected result. The execution columns are
-          filled in from the latest run.
-        </p>
-      </div>
-      {error && <span className="text-xs text-destructive">{error}</span>}
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleExport}
-        disabled={busy || suite.cases.length === 0}
-      >
-        <Download />
-        {busy ? "Exporting…" : "Export Excel"}
-      </Button>
-    </div>
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={handleExport}
+      disabled={busy || suite.cases.length === 0}
+      title={
+        error ??
+        `All ${suite.cases.length} cases as an Excel workbook — ID, priority, ` +
+          "positive/negative, steps, expected result. The execution columns are " +
+          "filled in from the latest run."
+      }
+      className={error ? "border-destructive/40 text-destructive" : undefined}
+    >
+      <FileSpreadsheet />
+      {busy ? "Exporting…" : error ? "Export failed" : "Export Excel"}
+    </Button>
   );
 }

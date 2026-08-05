@@ -299,6 +299,200 @@ def test_a_substituted_value_compiles(pages):
     assert "uuid4()" in source
 
 
+# ---------------------------------------------------------------------------
+# Claims about a URL the test set itself
+#
+# All four below came out of one real run, where ten of thirteen tests were red
+# and eight of those were the test's fault rather than the application's.
+# ---------------------------------------------------------------------------
+def test_the_contradictory_step_goes_and_the_case_stays(pages):
+    """`goto X` then `expect_not_url X` is a contradiction.
+
+    The application rendered "Agent not found." at that address, which is
+    correct, and the test called it a failure on every run. The impossible step
+    is removed; the rest of the case is fine and is kept.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/properties/invalid",
+                     description="Open a bad URL"),
+            CaseStep(action="expect_not_url", value="https://x.test/properties/invalid",
+                     description="Should not stay here"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="The site is still working"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "not_to_have_url" not in source
+    assert "to_be_visible" in source          # the real check survived
+
+
+def test_a_vacuous_url_assertion_goes_too(pages):
+    """The mirror image: true before the test does anything, and still true if
+    the page is a server error at the same address."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="expect_url", value="https://x.test/login",
+                     description="Confirm we are on login"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="The form is there"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "to_have_url" not in source
+
+
+def test_a_case_that_was_only_the_bad_step_still_goes(pages):
+    """Nothing worth running is left, so the existing "no assertion" rule takes
+    it — by the rule that already existed, not a new one."""
+    with pytest.raises(SynthesisError, match="no assertion"):
+        compile_case(
+            [
+                CaseStep(action="goto", value="https://x.test/bad", description="Open"),
+                CaseStep(action="expect_not_url", value="https://x.test/bad",
+                         description="Should not stay"),
+            ],
+            pages,
+        )
+
+
+def test_coming_back_to_a_page_is_still_allowed(pages):
+    """Open a page, click away, come back, assert you are back.
+
+    A real journey worth testing. A blunter rule — "never assert a URL you ever
+    navigated to" — would have thrown this out with the broken ones.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="click", target="LoginPage.login_button",
+                     description="Go somewhere else"),
+            CaseStep(action="expect_url", value="https://x.test/login",
+                     description="Back on login"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+
+
+def test_navigating_off_the_application_is_dropped(pages):
+    """A made-up subdomain does not resolve, so the browser raises before any
+    assertion runs and the test errors instead of reporting anything.
+
+    The step goes and the case keeps whatever else it had.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://nonexistent.x.test/",
+                     description="Open a subdomain that does not exist"),
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="The form is there"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "nonexistent.x.test" not in source
+    assert "https://x.test/login" in source
+
+
+def test_a_relative_path_stays_on_the_site(pages):
+    """A bare path cannot leave the application, so it is never refused."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="Still showing the form"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+
+
+def test_claiming_to_have_left_the_page_you_are_driving_is_dropped(pages):
+    """Five negative registration tests failed on exactly this line.
+
+        11. click           'Create Account'
+        12. expect_not_url  /register/buyer     <- always false
+        13. expect_hidden   the OTP modal       <- the real check
+
+    The form rejects bad input and stays put, which is correct. The browser got
+    there by clicking rather than `goto`, so there is no navigation to compare
+    against — what gives it away is that every step before the assertion drives
+    elements belonging to that very page.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/", description="Open the site"),
+            CaseStep(action="fill", target="LoginPage.email_input", value="",
+                     description="Leave the email empty"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_not_url", value="https://x.test/login",
+                     description="Should have left the form"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="The form is still showing"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "not_to_have_url" not in source
+    assert "to_be_visible" in source        # the check that means something survived
+
+
+def test_a_success_destination_is_still_a_valid_thing_to_deny(pages):
+    """The URL a negative case *should* name: where success would have gone,
+    and nowhere this test has been."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_not_url", value="/dashboard",
+                     description="Must not reach the dashboard"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "not_to_have_url" in source
+
+
+def test_a_negative_case_can_check_the_form_is_still_there(pages):
+    """The shape the prompt now asks for.
+
+    From a real suite, the check was `expect_not_url /properties` and nothing
+    else — green if the injection had logged the attacker in and landed on the
+    home page, because "not /properties" is true of every page but one. The
+    email field is gone on success and present on failure, which is the
+    difference the case is actually about.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="fill", target="LoginPage.email_input",
+                     value="' OR '1'='1", description="Inject"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_not_url", value="/properties",
+                     description="Must not get in"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="Still on the login form"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "to_be_visible" in source
+
+
 def test_a_hand_written_case_compiles_to_valid_python(pages):
     source = compile_case(
         [

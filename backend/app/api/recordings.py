@@ -41,10 +41,15 @@ async def launch_recording(
     recorder across origins, so Playwright does it from outside.
     """
     service = RecordingService(db)
+    # Named after the project, not the host it points at. "Recording of
+    # homeske-dev.betaeserver.com" restated the project's own URL, so a page
+    # already headed "Report Problem" carried a second title saying nothing new
+    # - and three recordings of one site were indistinguishable from each other.
+    project = service.project_service.get(project_id, user)
     session = service.start(
         project_id,
         RecordingSessionCreate(
-            name=data.name or f"Recording of {data.url.host}",
+            name=data.name or project.name,
             start_url=data.url,
             extension_version="playwright-0.1.0",
         ),

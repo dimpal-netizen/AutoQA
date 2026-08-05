@@ -63,13 +63,26 @@ class LLMClient(ABC):
 
     @abstractmethod
     def complete_model(
-        self, prompt: str, schema: type[T], *, system: str = "", max_tokens: int = 8000
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        system: str = "",
+        max_tokens: int = 8000,
+        image: bytes | None = None,
     ) -> LLMResponse:
         """Completion validated against a Pydantic model.
 
         `response.parsed` is an instance of `schema`. Used everywhere the output
         feeds code rather than a human — a free-text answer we then regex would
         be the fragile version of this.
+
+        `image` is a PNG to look at alongside the prompt. Optional, and a
+        provider that cannot see is free to ignore it: an analysis reasoning
+        from the traceback alone is the behaviour we already had, not a
+        failure. It exists because a failure analysis reading only the error
+        text said "the application is failing to complete the login process"
+        while the screenshot plainly showed the user signed in.
         """
 
 
