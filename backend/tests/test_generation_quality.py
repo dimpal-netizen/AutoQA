@@ -30,14 +30,21 @@ from app.codegen.synth import module_for
 from app.models.enums import ActionType, SelectorStrategy
 
 
-def action(kind: ActionType, *, payload=None, selectors=None, url="https://app.test/"):
+def action(
+    kind: ActionType, *, payload=None, selectors=None, url="https://app.test/", element=None
+):
     return {
         "action_type": kind.value,
         "payload": payload or {},
         "selectors": selectors or [],
         "url": url,
+        "element": element,
         "is_ignored": False,
     }
+
+
+#: An element that reveals something when hovered, and says so.
+MENU_TRIGGER = {"tag": "button", "role": "button", "attributes": {"aria-haspopup": "menu"}}
 
 
 def sel(strategy: str, value: str, unique: bool = True, score: int = 50) -> dict:
@@ -243,11 +250,47 @@ def test_noise_a_hover_immediately_before_clicking_the_same_thing_is_dropped():
     )
     assert [ActionType(a["action_type"]) for a in cleaned] == [ActionType.CLICK]
 
-def test_noise_a_hover_over_a_different_element_is_kept():
-    """That is a menu being opened, and the next step depends on it."""
+def test_noise_a_hover_that_reveals_nothing_is_dropped():
+    """This test used to assert the opposite, and the opposite was wrong.
+
+    The old rule kept a hover over a *different* element on the theory that it
+    was a menu being opened. Across four real recordings that theory held for
+    none of ten hovers — every one was the cursor crossing a plain link on its
+    way somewhere:
+
+        hover "Login" -> hover "Find Agent" -> scroll
+        hover "Email" -> click "Create Account"
+
+    and one of them, over a "Creating Account..." message that exists only
+    while the server answers, timed out and failed an entire suite.
+    """
     cleaned = normalise(
         [
-            action(ActionType.HOVER, selectors=[sel("role_name", "button|Products")]),
+            action(
+                ActionType.HOVER,
+                selectors=[sel("role_name", "link|Products")],
+                element={"tag": "a", "role": "link", "attributes": {"href": "/products"}},
+            ),
+            action(ActionType.CLICK, selectors=[sel("role_name", "link|Pricing")]),
+        ]
+    )
+    assert [ActionType(a["action_type"]) for a in cleaned] == [ActionType.CLICK]
+
+
+def test_noise_a_hover_that_opens_a_menu_is_kept():
+    """The next step depends on it, so this one has to survive.
+
+    An element that reveals something on hover declares it — aria-haspopup,
+    aria-expanded, or a menu role. That declaration is the whole difference
+    between a hover worth replaying and a mouse position.
+    """
+    cleaned = normalise(
+        [
+            action(
+                ActionType.HOVER,
+                selectors=[sel("role_name", "button|Products")],
+                element=MENU_TRIGGER,
+            ),
             action(ActionType.CLICK, selectors=[sel("role_name", "link|Pricing")]),
         ]
     )
@@ -272,9 +315,8 @@ def test_noise_the_whole_opening_sequence_from_the_real_recording():
     )
     assert [ActionType(a["action_type"]) for a in cleaned] == [
         ActionType.NAVIGATE,
-        ActionType.HOVER,   # over Find Agent — a different element, kept
         ActionType.SCROLL,  # 600px — real
-        ActionType.CLICK,   # the hover before it folded in
+        ActionType.CLICK,   # both hovers gone: neither revealed anything
     ]
 
 def test_noise_nothing_useful_is_lost_from_an_ordinary_recording():

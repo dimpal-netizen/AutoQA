@@ -256,6 +256,54 @@ def test_navigation_after_a_click_becomes_a_wait() -> None:
     assert result[0]["_navigates_to"] == "https://x.test/next"
 
 
+def test_a_hover_that_reveals_nothing_is_dropped() -> None:
+    """The mouse crossing the page is not a test step.
+
+    From the recording that failed a suite: a hover over the "Creating
+    Account..." message, which is there only while the server answers. Whether
+    it works depends on timing, and thirty seconds later the run is red for a
+    reason that has nothing to do with the application.
+    """
+    actions = [
+        _action(0, "hover", element={"tag": "a", "role": "link", "attributes": {"href": "/"}}),
+        _action(1, "click"),
+    ]
+
+    assert [a["action_type"] for a in normalise(actions)] == ["click"]
+
+
+def test_a_hover_that_opens_a_menu_is_kept() -> None:
+    """The next step depends on it, so dropping it would break the flow.
+
+    An element that reveals something says so — this is the whole difference
+    between a hover worth replaying and a mouse position.
+    """
+    revealed = [{"strategy": "text", "value": "Settings", "unique": True, "score": 70}]
+
+    for attribute in ("aria-haspopup", "aria-expanded", "aria-controls"):
+        actions = [
+            _action(0, "hover", element={"tag": "button", "attributes": {attribute: "false"}}),
+            # The item the menu revealed — a different element, or this would
+            # be "hover then act on the same thing", which is one intention.
+            _action(1, "click", selectors=revealed),
+        ]
+
+        assert [a["action_type"] for a in normalise(actions)] == ["hover", "click"], attribute
+
+
+def test_a_menu_role_also_keeps_the_hover() -> None:
+    actions = [
+        _action(0, "hover", element={"tag": "li", "role": "menuitem", "attributes": {}}),
+        _action(
+            1,
+            "click",
+            selectors=[{"strategy": "text", "value": "Settings", "unique": True, "score": 70}],
+        ),
+    ]
+
+    assert [a["action_type"] for a in normalise(actions)] == ["hover", "click"]
+
+
 def test_enter_then_the_submit_button_keeps_only_the_click() -> None:
     """The bug that made every recorded saucedemo test fail.
 

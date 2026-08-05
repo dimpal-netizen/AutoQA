@@ -177,6 +177,31 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if kind is ActionType.SCROLL and not _scroll_distance(action):
             continue
 
+        # The mouse crossing the page on its way somewhere. Recorded ten times
+        # across four recordings here, and every one of them was a link the
+        # cursor passed over:
+        #
+        #     hover "Login" -> hover "Find Agent" -> scroll
+        #     hover "Email" -> click "Create Account"
+        #     hover "Creating Account..." -> click the OTP modal
+        #
+        # That last one failed a whole suite. It hovers a loading message, so
+        # whether it works depends on how fast the server answered: sometimes
+        # the text is gone before the hover lands, sometimes a modal opens over
+        # it and takes the pointer event. Thirty seconds later:
+        #
+        #     Locator.hover: Timeout 30000ms exceeded.
+        #
+        # A step nobody would ever write by hand, failing for a reason that has
+        # nothing to do with the application.
+        #
+        # A hover is worth keeping only when it *reveals* something, because
+        # Playwright hovers before every click anyway. The elements that reveal
+        # something say so: aria-haspopup, aria-expanded, or a menu role. Every
+        # hover recorded here was a plain <a href> or <button> with neither.
+        if kind is ActionType.HOVER and not _opens_a_menu(action):
+            continue
+
         previous = result[-1] if result else None
 
         if previous is not None:
@@ -266,6 +291,33 @@ def _scroll_distance(action: dict[str, Any]) -> int:
     """How far a scroll actually moved, in pixels."""
     payload = action.get("payload") or {}
     return abs(int(payload.get("x") or 0)) + abs(int(payload.get("y") or 0))
+
+
+#: What a control that opens something declares about itself. Presence is what
+#: counts, not the value: `aria-expanded="false"` is a disclosure control that
+#: happens to be closed, which is exactly the one worth hovering.
+_MENU_ATTRIBUTES = ("aria-haspopup", "aria-expanded", "aria-controls")
+
+#: Roles that only exist on things that open, or live inside something that did.
+_MENU_ROLES = {"menu", "menubar", "menuitem", "combobox", "listbox"}
+
+
+def _opens_a_menu(action: dict[str, Any]) -> bool:
+    """Does hovering this element reveal something the next step needs?
+
+    Kept deliberately narrow. A hover that reveals nothing is not a check, it
+    is a mouse position — and it can only ever add ways for the test to fail.
+    A hover-driven menu that declares none of these will be dropped too, and
+    the symptom is a click timing out on an item that never appeared; the fix
+    there is a real one, which is for the menu to say what it is.
+    """
+    element = action.get("element") or {}
+    attributes = {
+        str(name).lower() for name in (element.get("attributes") or {})
+    }
+    if any(name in attributes for name in _MENU_ATTRIBUTES):
+        return True
+    return str(element.get("role") or "").strip().lower() in _MENU_ROLES
 
 
 #: Keys that submit a form. Only these can make a following click redundant —
