@@ -249,6 +249,7 @@ def synthesise(
         raise SynthesisError(f"{len(steps_in)} steps is beyond the {MAX_STEPS} limit")
 
     steps_in = _drop_unverifiable(steps_in, start_url, name=getattr(case, "name", "?"))
+    steps_in = _drop_leaving_claims(steps_in, pages, name=getattr(case, "name", "?"))
 
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
     locators = _locator_index(pages, variable_of)
@@ -541,6 +542,61 @@ def _drop_unverifiable(
         kept.append(step)
         if not (action in _ASSERTIONS and action != "goto"):
             moved_by = step  # an observation cannot move the browser
+
+    return kept
+
+
+def _drop_leaving_claims(
+    steps: list[object], pages: list[PageSpec], *, name: str = "?"
+) -> list[object]:
+    """Remove "we must have left this page" when the page is the one in use.
+
+    Five negative registration tests failed on the same line:
+
+        11. click           'Create Account'
+        12. expect_not_url  /register/buyer      <- always false
+        13. expect_hidden   the OTP modal        <- the real check
+
+    The form rejects an empty email and stays put, which is what a form should
+    do. The test called staying a failure. The application was right five times
+    over and the run was red five times over.
+
+    `_drop_unverifiable` cannot see this one: the browser reached that page by
+    clicking, not by `goto`, so there is no matching navigation to compare
+    against. What gives it away instead is the elements — every step before the
+    assertion drives `register_buyer.*`, and that page object's own URL is
+    `/register/buyer`. A test cannot be filling in a page it has left.
+
+    For a negative case the URL worth naming is the one a *success* would
+    reach. That claim has content; this one had none, and step 13 was carrying
+    the case on its own the whole time.
+    """
+    urls = {page.class_name: (page.url or "") for page in pages}
+    index = _locator_index(pages)
+    kept: list[object] = []
+    on_page: str | None = None  # the page whose elements are being driven
+
+    for step in steps:
+        action = str(getattr(step, "action", "")).strip().lower()
+        value = str(getattr(step, "value", "") or "").strip()
+
+        if action == "expect_not_url" and value and on_page:
+            here = urls.get(on_page, "")
+            if here and (value in here or here in value):
+                logger.info(
+                    "%s: dropped 'expect_not_url %s' - the test is driving %s, "
+                    "which is that page",
+                    name, value[:60], on_page,
+                )
+                continue
+
+        target = str(getattr(step, "target", "") or "").strip()
+        if target:
+            found = index.get(target) or index.get(target.lower().replace(" ", ""))
+            if found:
+                on_page = found[0]
+
+        kept.append(step)
 
     return kept
 

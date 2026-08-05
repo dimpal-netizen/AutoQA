@@ -359,6 +359,31 @@ class CodegenService:
 
         existing = {f.path: f for f in suite.files}
 
+        # The recorded case is rendered from this same IR, so it has to be
+        # rewritten with the page objects rather than left behind. It lives on a
+        # case row instead of a file, which is the only reason it was missed.
+        #
+        #     AttributeError: 'HomePage' object has no attribute 'login_link'
+        #
+        # A whole suite failed on that. The page objects had been re-rendered
+        # from a fresh recording — one where a hover that contributed
+        # `login_link` is no longer a step — while the recorded case still held
+        # code written against the older set. Anything that changes which
+        # locators exist desynchronises the two, and the symptom is never a
+        # subtle mismatch: the module cannot even be imported.
+        recorded = next(
+            (c for c in suite.cases if c.category is CaseCategory.RECORDED), None
+        )
+        module = next((f for f in rendered if f.path == ir.file_path), None)
+        if recorded is not None and module is not None:
+            self.cases.update(
+                recorded,
+                code=module.content,
+                file_path=ir.file_path,
+                function_name=ir.function_name,
+                version=recorded.version + 1,
+            )
+
         for spec in rendered:
             if spec.path == ir.file_path:
                 continue  # the recorded test lives on its case, not as a file

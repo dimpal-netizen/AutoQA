@@ -418,6 +418,54 @@ def test_a_relative_path_stays_on_the_site(pages):
     ast.parse(source)
 
 
+def test_claiming_to_have_left_the_page_you_are_driving_is_dropped(pages):
+    """Five negative registration tests failed on exactly this line.
+
+        11. click           'Create Account'
+        12. expect_not_url  /register/buyer     <- always false
+        13. expect_hidden   the OTP modal       <- the real check
+
+    The form rejects bad input and stays put, which is correct. The browser got
+    there by clicking rather than `goto`, so there is no navigation to compare
+    against — what gives it away is that every step before the assertion drives
+    elements belonging to that very page.
+    """
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/", description="Open the site"),
+            CaseStep(action="fill", target="LoginPage.email_input", value="",
+                     description="Leave the email empty"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_not_url", value="https://x.test/login",
+                     description="Should have left the form"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="The form is still showing"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "not_to_have_url" not in source
+    assert "to_be_visible" in source        # the check that means something survived
+
+
+def test_a_success_destination_is_still_a_valid_thing_to_deny(pages):
+    """The URL a negative case *should* name: where success would have gone,
+    and nowhere this test has been."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="click", target="LoginPage.login_button", description="Submit"),
+            CaseStep(action="expect_not_url", value="/dashboard",
+                     description="Must not reach the dashboard"),
+        ],
+        pages,
+    )
+
+    ast.parse(source)
+    assert "not_to_have_url" in source
+
+
 def test_a_hand_written_case_compiles_to_valid_python(pages):
     source = compile_case(
         [
