@@ -28,8 +28,12 @@ import type {
   User,
 } from "@/lib/types";
 
+// 127.0.0.1, not localhost. On Windows `localhost` resolves to ::1 first and
+// uvicorn binds 0.0.0.0 — IPv4 only — so every fresh connection waits out a
+// ~2 second TCP timeout on IPv6 before falling back. It looks exactly like a
+// slow server and is not one.
 const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
 export class ApiError extends Error {
   constructor(
