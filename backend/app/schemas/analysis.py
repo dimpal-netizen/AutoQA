@@ -18,6 +18,11 @@ class AnalysisRead(BaseModel):
     provider: str
     model: str
 
+    # The mismatch in a person's words. None on analyses written before these
+    # were asked for — the UI omits the pair rather than showing empty labels.
+    expected: str | None = None
+    actual: str | None = None
+
     root_cause: str
     suggested_fix: str
     category: FailureCategory

@@ -48,6 +48,13 @@ class AIAnalysis(Base, TimestampMixin):
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str] = mapped_column(String(64), nullable=False)
 
+    # The two sides of the mismatch, in a person's words. Nullable because
+    # every analysis stored before these existed has neither, and inventing
+    # them from `root_cause` after the fact would be a guess presented as a
+    # finding.
+    expected: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actual: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     root_cause: Mapped[str] = mapped_column(Text, nullable=False)
     suggested_fix: Mapped[str] = mapped_column(Text, nullable=False)
 

@@ -14,7 +14,14 @@ from typing import TypeVar
 from openai import OpenAI
 from pydantic import BaseModel
 
-from app.ai.client import LLMClient, LLMError, LLMRefusal, LLMResponse
+from app.ai.client import (
+    SEED,
+    TEMPERATURE,
+    LLMClient,
+    LLMError,
+    LLMRefusal,
+    LLMResponse,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -74,6 +81,10 @@ class OpenAIClient(LLMClient):
                 max_completion_tokens=max_tokens,
                 messages=messages,
                 response_format=schema,
+                # See `TEMPERATURE` in client.py: the same recording has to
+                # produce the same test cases, or a verdict means nothing.
+                temperature=TEMPERATURE,
+                seed=SEED,
             )
         except Exception as exc:
             raise LLMError(f"OpenAI request failed: {exc}") from exc

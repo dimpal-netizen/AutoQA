@@ -41,6 +41,41 @@ logger = logging.getLogger(__name__)
 
 GENERATOR = "deterministic_v1"
 
+def _why_nothing_was_usable(outcome) -> str:
+    """Why a whole batch was thrown away, in enough detail to act on.
+
+    This used to print the count-free phrase "the model returned no usable test
+    cases" followed by the first rejection, which read as though one case had
+    been a problem. Twelve had, all for the same reason, and the one line on
+    screen gave no way to tell.
+
+    Rejections repeat: a prompt that makes cases too long makes *every* case too
+    long. So they are grouped, and the commonest is named first with how many
+    shared it. Nothing is invented — the reasons are `synthesise`'s own.
+    """
+    if not outcome.rejected:
+        return (
+            "The model returned no test cases at all. Try again — if it keeps "
+            "happening, the recording may be too short to write cases around."
+        )
+
+    # The reason without the case name in front of it, which differs every time
+    # and would put every rejection in a group of one.
+    counts: dict[str, int] = {}
+    for rejection in outcome.rejected:
+        reason = str(rejection).split(":", 1)[-1].strip() or str(rejection)
+        counts[reason] = counts.get(reason, 0) + 1
+
+    ranked = sorted(counts.items(), key=lambda pair: -pair[1])
+    total = len(outcome.rejected)
+    lead, count = ranked[0]
+
+    if count == total and total > 1:
+        return f"All {total} suggested cases were rejected: {lead}"
+
+    detail = "; ".join(f"{reason} ({n})" for reason, n in ranked[:3])
+    return f"None of the {total} suggested cases could be used. {detail}"
+
 
 class _Authored:
     """What `synthesise` reads off a case: a name and a list of steps.
@@ -261,9 +296,23 @@ class CodegenService:
     ) -> tuple[TestSuite, GenerationOutcome]:
         """Add positive, negative, edge and security cases around the recording.
 
-        Replaces any previously generated cases rather than appending, so
+        Replaces the previously generated cases rather than appending, so
         pressing the button twice gives a fresh set instead of thirty
-        near-duplicates. The recorded case is never touched.
+        near-duplicates. The recorded case is never deleted, only re-rendered.
+
+        Pressing it twice on an unchanged recording should also give you the
+        *same* set. It used to give a different one every time — the model was
+        sampling, so a case that passed on Monday came back on Tuesday as a
+        different test wearing the same name, and the suite went red against an
+        application nobody had touched. The mirror of that was quieter and
+        worse: a case failing because it had found a real bug came back weaker
+        and went green.
+
+        That is fixed where it was caused, in `ai/client.py`: the request is
+        made at temperature zero with a fixed seed, so the same recording asks
+        the same question and gets the same answer back. What a test says is
+        then a fact about the application, which is the only thing that makes a
+        verdict worth reading.
         """
         suite = self.get_suite(suite_id, user)
 
@@ -277,10 +326,7 @@ class CodegenService:
         if outcome.skipped:
             raise ValidationError(outcome.skipped)
         if not outcome.cases:
-            raise ValidationError(
-                "The model returned no usable test cases. "
-                + (f"Rejected: {outcome.rejected[0]}" if outcome.rejected else "")
-            )
+            raise ValidationError(_why_nothing_was_usable(outcome))
 
         # Out with the previous generation, in with this one.
         for case in list(suite.cases):
@@ -301,14 +347,20 @@ class CodegenService:
         return suite, outcome
 
     def _discard_runs(self, suite: TestSuite) -> None:
-        """Throw away runs that tested code this regeneration has replaced.
+        """Throw away runs that tested code that has since been replaced.
 
-        A verdict is about a particular version of a test. Once the cases are
+        A verdict is about a particular version of a test. Once a case is
         rewritten, "1 passed" is a statement about a file that no longer
         exists — and because deleting a case sets its results' test_case_id to
         NULL, the result cannot even say which case it was about any more.
-        Keeping that on screen next to the new cases invites reading it as
-        their result.
+        Keeping that on screen next to the new code invites reading it as its
+        result.
+
+        Called when a case is edited into something different, and when a suite
+        is rebuilt from its recording. Deliberately *not* called by
+        `generate_cases`, which no longer replaces anything: those verdicts are
+        still about the code that would run, and throwing them away would lose
+        the very history that makes a red test worth trusting.
 
         A run still going is left alone. It is writing to its own directory and
         will finish against the files it started with; deleting it underneath

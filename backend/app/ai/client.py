@@ -23,6 +23,27 @@ PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 T = TypeVar("T", bound=BaseModel)
 
+#: Sampling is turned off for every call this app makes.
+#:
+#: A model asked the same question twice gives two different answers, which is
+#: usually a feature and here is the bug. Regenerating a suite from an unchanged
+#: recording produced a different set of tests each time: a case that passed on
+#: Monday came back on Tuesday as a different test wearing the same name, and
+#: went red against an application nobody had touched. The mirror of it was
+#: quieter and worse — a case failing because it had found a real bug came back
+#: weaker and went green.
+#:
+#: Nothing here wants a creative answer. Inventing test cases, explaining a
+#: failure, naming a function: each has a best answer for its input, and the
+#: same input should reach it every time. A verdict that moves on its own is not
+#: a verdict.
+TEMPERATURE = 0.0
+
+#: Fixed, so temperature zero has something stable to be deterministic *about*.
+#: Any constant would do; this one is arbitrary and must simply never change,
+#: because changing it reshuffles every suite in the product at once.
+SEED = 20260731
+
 
 class LLMError(Exception):
     """The model could not be reached, or refused."""

@@ -84,8 +84,9 @@ def render(ir: TestIR, *, browser_info: dict[str, Any] | None = None) -> list[Ge
 
     # One helper shared by every page object. Emitted only when something can
     # actually heal, so a suite of unique test ids does not carry code it never
-    # calls.
-    if any(healable(page) for page in ir.pages):
+    # calls — or when a test asserts on an element, because `unhealed` lives in
+    # the same file and a suite of single-candidate locators still imports it.
+    if any(healable(page) for page in ir.pages) or ir.needs_unhealed:
         files.append(
             GeneratedFileSpec(
                 path="pages/_healing.py",

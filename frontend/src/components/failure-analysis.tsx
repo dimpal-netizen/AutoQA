@@ -91,20 +91,44 @@ export function FailureAnalysis({ resultId }: { resultId: number }) {
         </span>
       </div>
 
+      {/* Expected against actual, side by side. The pair is the whole question
+          a failure asks, and reading it as two columns answers it faster than
+          any sentence can — which is why it sits above the explanation rather
+          than inside it. Absent on analyses written before it was asked for, so
+          the block is conditional rather than showing two empty labels. */}
+      {(analysis.expected || analysis.actual) && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-md border border-border bg-muted/40 p-2.5">
+            <p className="text-xs font-medium text-muted-foreground">Expected</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed">
+              {analysis.expected ?? "—"}
+            </p>
+          </div>
+          <div className="rounded-md border border-destructive/25 bg-destructive-subtle p-2.5">
+            <p className="text-xs font-medium text-destructive">Actual</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed">
+              {analysis.actual ?? "—"}
+            </p>
+          </div>
+        </div>
+      )}
+
       <dl className="mt-3 flex flex-col gap-2.5 text-[13px] leading-relaxed">
         <div>
-          <dt className="text-xs font-medium text-muted-foreground">Root cause</dt>
+          <dt className="text-xs font-medium text-muted-foreground">Why</dt>
           <dd className="mt-0.5">{analysis.root_cause}</dd>
         </div>
         <div>
-          <dt className="text-xs font-medium text-muted-foreground">Suggested fix</dt>
+          <dt className="text-xs font-medium text-muted-foreground">
+            What to do about it
+          </dt>
           <dd className="mt-0.5">{analysis.suggested_fix}</dd>
         </div>
       </dl>
 
       <p className="mt-3 border-t border-border pt-2 text-[11px] text-muted-foreground">
         {analysis.model} · {analysis.tokens.toLocaleString()} tokens · $
-        {analysis.cost_usd.toFixed(4)} · read the error and the trace, not the
+        {analysis.cost_usd.toFixed(4)} · read the error, the trace and the
         screenshot
       </p>
     </div>

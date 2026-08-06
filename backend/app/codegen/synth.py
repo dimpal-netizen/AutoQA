@@ -25,7 +25,14 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from app.codegen.converter import PageSpec, StepSpec, TestIR, page_variables
+from app.codegen.converter import (
+    LocatorSpec,
+    PageSpec,
+    StepSpec,
+    TestIR,
+    page_variables,
+    uses_unhealed,
+)
 from app.codegen.selectors import clip_words, py_str, snake_case
 from app.models.enums import ActionType
 
@@ -166,7 +173,15 @@ _URL_ASSERTIONS = {"expect_url", "expect_not_url"}
 #: identifiable and can be cleaned up with one query.
 _UNIQUE_VALUES = {
     "{{unique_email}}": "f'autoqa-{uuid4().hex[:10]}@example.test'",
-    "{{unique_phone}}": "f'7{uuid4().int % 100_000_000:08d}'",
+    # Ten digits, because that is what a mobile number is in most of the world
+    # and certainly in India, where this was rejected outright:
+    #
+    #     Enter a valid India phone number.
+    #
+    # The old expression produced nine - a leading 7 and eight more - so every
+    # registration test failed on its own data before it reached anything worth
+    # testing. Leading 7 keeps it in the 6-9 range real mobile numbers start at.
+    "{{unique_phone}}": "f'7{uuid4().int % 1_000_000_000:09d}'",
     "{{unique_name}}": "f'AutoQA {uuid4().hex[:6]}'",
     "{{unique}}": "uuid4().hex[:10]",
 }
@@ -235,12 +250,17 @@ def synthesise(
     start_url: str,
     module_name: str,
     function_name: str,
+    recorded_steps: list[StepSpec] | None = None,
 ) -> TestIR:
     """Turn one described case into a TestIR reusing `pages`.
 
     Raises SynthesisError when the case cannot be expressed safely. The caller
     drops that case and keeps the rest — one bad suggestion out of fifteen is
     normal and should not cost the other fourteen.
+
+    `recorded_steps` is the happy path: the one sequence known to work against
+    this application. It is used to put back setup the case dropped — see
+    `_restore_setup`.
     """
     steps_in = list(getattr(case, "steps", []) or [])
     if not steps_in:
@@ -253,6 +273,7 @@ def synthesise(
 
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
     locators = _locator_index(pages, variable_of)
+    specs = _locator_specs(pages)
 
     steps: list[StepSpec] = []
     used_pages: set[str] = set()
@@ -260,7 +281,8 @@ def synthesise(
     needs_uuid = False
 
     for index, raw in enumerate(steps_in):
-        verb = VERBS.get(str(getattr(raw, "action", "")).strip().lower())
+        action = str(getattr(raw, "action", "")).strip().lower()
+        verb = VERBS.get(action)
         if verb is None:
             raise SynthesisError(f"step {index}: unknown action {getattr(raw, 'action', None)!r}")
 
@@ -274,6 +296,7 @@ def synthesise(
         target_expr: str | None = None
         locator_name: str | None = None
         page_var: str | None = None
+        spec: LocatorSpec | None = None
 
         if verb.needs_target:
             key = str(getattr(raw, "target", "") or "").strip()
@@ -287,14 +310,23 @@ def synthesise(
             if page_var is None:
                 raise SynthesisError(f"step {index}: no page variable for {class_name}")
             used_pages.add(class_name)
-            target_expr = f"{page_var}.{locator_name}"
+            spec = specs.get((class_name, locator_name))
+
+            if action in _ASSERTIONS:
+                # An assertion asks about *this* element. Healing would let a
+                # recorded spare answer about whichever element sits where this
+                # one used to, which turns "the modal is gone" into a failure
+                # and "the button has vanished" into a pass. See `unhealed` in
+                # pages/_healing.py for the two runs that showed it.
+                target_expr = f"unhealed({page_var}, {py_str(locator_name)})"
+            else:
+                target_expr = f"{page_var}.{locator_name}"
 
         # The step's human-readable fields keep the value as written. Escaping
         # is a detail of compiling to a regex, and `\?password\=` in a test-case
         # sheet is noise to whoever reads it.
         readable = value
 
-        action = str(raw.action).strip().lower()
         if action in _URL_ASSERTIONS:
             needs_regex = True
             # The value is a fragment of a URL, not a pattern someone wrote.
@@ -329,6 +361,13 @@ def synthesise(
                 description=_clean(getattr(raw, "description", "") or str(raw.action)),
                 page_var=page_var,
                 locator_name=locator_name,
+                # Carried over from the page object rather than left at the
+                # default. Without it a generated module claimed no step was
+                # fragile while driving two XPath locators, so the one warning
+                # that would have told a reader to add a data-testid never
+                # appeared on the tests that needed it most.
+                strategy=spec.strategy if spec else None,
+                fragile=bool(spec and spec.fragile),
                 input_data=str(readable) if readable is not None and verb.action
                 is not ActionType.ASSERT else None,
                 expected_result=str(readable)
@@ -338,6 +377,14 @@ def synthesise(
         )
 
     _assert_meaningful(steps_in)
+
+    steps = _restore_setup(
+        steps,
+        recorded_steps or [],
+        used_pages,
+        {var: class_name for class_name, var in variable_of.items()},
+        name=getattr(case, "name", "?"),
+    )
 
     ir = TestIR(
         suite_name=_clean(getattr(case, "name", "Generated test")),
@@ -350,7 +397,9 @@ def synthesise(
         steps=steps,
         needs_regex=needs_regex,
         needs_uuid=needs_uuid,
+        needs_unhealed=uses_unhealed(steps),
     )
+    ir.fragile_count = sum(1 for step in steps if step.fragile)
     return ir
 
 
@@ -387,6 +436,19 @@ def _locator_index(
             for key in keys:
                 index.setdefault(key.replace(" ", ""), (page.class_name, locator.name))
     return index
+
+
+def _locator_specs(pages: list[PageSpec]) -> dict[tuple[str, str], LocatorSpec]:
+    """The full spec behind each locator, keyed the way `_locator_index` answers.
+
+    `_locator_index` returns only the names, which is all a lookup needs. A step
+    also has to carry how durable its element is, and that lives here.
+    """
+    return {
+        (page.class_name, locator.name): locator
+        for page in pages
+        for locator in page.locators
+    }
 
 
 def elements(pages: list[PageSpec]) -> list[dict[str, object]]:
@@ -605,6 +667,156 @@ def _drop_leaving_claims(
         kept.append(step)
 
     return kept
+
+
+def _setup_within(gap: list[StepSpec]) -> list[StepSpec]:
+    """Of the recorded steps a case skipped, the ones that were operating a control.
+
+    Clicks, ticks and dropdown choices always count: a case never means to skip
+    one, and skipping one leaves the form in a state the recording never tested.
+
+    A `fill` counts only when it sits *between* two of them. That is the shape of
+    a control being operated rather than a field being filled in — the country
+    dropdown in the recording is `click, type "ind", click India`, and restoring
+    the two clicks without the search leaves a list the choice is not visible in.
+
+    A `fill` at the edge of the gap is a field the case did not fill, and it is
+    left alone. "Submit with no email address" is a test worth having, and
+    helpfully typing the email back in would destroy it — turning a negative case
+    into a positive one that contradicts its own name.
+    """
+    controls = [
+        index
+        for index, step in enumerate(gap)
+        if step.action not in (ActionType.INPUT, ActionType.ASSERT)
+    ]
+    if not controls:
+        return []  # nothing here was a control; the case skipped fields, on purpose
+
+    first, last = controls[0], controls[-1]
+    return [
+        step
+        for index, step in enumerate(gap)
+        if step.action is not ActionType.ASSERT
+        and (step.action is not ActionType.INPUT or first < index < last)
+    ]
+
+
+def _restore_setup(
+    steps: list[StepSpec],
+    recorded: list[StepSpec],
+    used_pages: set[str],
+    class_of_var: dict[str, str],
+    *,
+    name: str = "?",
+) -> list[StepSpec]:
+    """Put back the setup a case dropped between two fields it fills.
+
+    From a real suite, a case that could never have passed:
+
+        fill  first name
+        fill  email
+        fill  mobile number      <- 10 digits, starting 7
+        ...
+        expect_visible  the one-time-password popup   (i.e. it worked)
+
+    The recording did something else between the email and the number: it opened
+    the country dropdown, searched for "ind", and chose India. The form
+    validates a number against the country, and the country defaults to Kenya —
+    so the number was rejected every time and a test claiming registration
+    succeeds went red against a form doing exactly the right thing. The three
+    steps looked like navigation noise and were load-bearing.
+
+    The recording is the only sequence known to work, so it is the evidence for
+    what is load-bearing. This looks at each pair of fields the case fills that
+    the recording also filled, in the recording's own order, and restores
+    whatever the recording did in between.
+
+    What is restored is decided by `_setup_within`, and what it refuses to
+    restore matters as much: leaving a field blank is a legitimate negative test
+    and one of the most valuable there is, so a field the case simply did not
+    fill is always read as intent.
+
+    Restoring only between two fills is what keeps this narrow. A case testing
+    "registration is refused without accepting the terms" drops the tick that
+    comes *after* the last field, and nothing here touches it.
+    """
+    if not recorded:
+        return steps
+
+    order = {}
+    for position, step in enumerate(recorded):
+        if step.page_var and step.locator_name:
+            order.setdefault((step.page_var, step.locator_name), position)
+
+    filled = [
+        (index, order[(step.page_var, step.locator_name)])
+        for index, step in enumerate(steps)
+        if step.action is ActionType.INPUT
+        and (step.page_var, step.locator_name) in order
+    ]
+
+    driven = {
+        (step.page_var, step.locator_name)
+        for step in steps
+        if step.page_var and step.locator_name
+    }
+
+    inserts: dict[int, list[StepSpec]] = {}
+    for (_, before), (at, after) in zip(filled, filled[1:]):
+        if after <= before:
+            continue  # the case fills them in a different order; not a gap
+        missing = [
+            step
+            for step in _setup_within(recorded[before + 1 : after])
+            if step.page_var
+            and step.locator_name
+            and (step.page_var, step.locator_name) not in driven
+        ]
+        if missing:
+            inserts[at] = missing
+            logger.info(
+                "%s: restored %d recorded step(s) before %s.%s - the recording "
+                "needed them and the case dropped them",
+                name, len(missing), steps[at].page_var, steps[at].locator_name,
+            )
+
+    if not inserts:
+        return steps
+
+    out: list[StepSpec] = []
+    for index, step in enumerate(steps):
+        for restored in inserts.get(index, ()):
+            out.append(
+                StepSpec(
+                    sequence=len(out),
+                    action=restored.action,
+                    verb=VERB_FOR_ACTION.get(restored.action),
+                    # The recorded line already refers to the same page objects
+                    # this case uses, so it is reused rather than re-derived.
+                    # `wait_for_url` is dropped: it belongs to a click that
+                    # navigated, and nothing being restored here does.
+                    code=[
+                        line for line in restored.code
+                        if "wait_for_url" not in line
+                    ],
+                    description=f"{restored.description} (from the recording)",
+                    page_var=restored.page_var,
+                    locator_name=restored.locator_name,
+                    input_data=restored.input_data,
+                    strategy=restored.strategy,
+                    fragile=restored.fragile,
+                )
+            )
+            # Its page object has to be imported and instantiated, or the
+            # restored line names a variable the module never defines.
+            class_name = class_of_var.get(restored.page_var or "")
+            if class_name:
+                used_pages.add(class_name)
+        step.sequence = len(out)
+        out.append(step)
+
+    return out
 
 
 def _clean(text: str) -> str:

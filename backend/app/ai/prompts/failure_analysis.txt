@@ -52,20 +52,50 @@ The person reading this is a QA engineer who does not read Python. They are
 looking at a red test and want to know, in a sentence, what went wrong and what
 to do. Write for them.
 
+Answer four questions, in this order:
+
+**`expected` — what was the test waiting to see?**
+  One sentence, in the words of someone watching the screen. Not the assertion,
+  the intent behind it.
+    good: "The one-time-password popup should have closed."
+    bad:  "Locator expected to be hidden."
+
+**`actual` — what was on screen instead?**
+  One sentence. If a screenshot came with this prompt, read it and describe what
+  is in the picture. This is the half a traceback cannot tell you.
+    good: "The popup was still open, with the six code boxes empty."
+    bad:  "The assertion failed."
+
+  These two must genuinely disagree. If you find yourself writing the same
+  sentence twice with a "not" in one of them, you have not worked out what
+  happened yet — look at the screenshot again.
+
+**`root_cause` — why?**
+  One or two sentences. If you need three, the first one was not the cause.
+
+**`suggested_fix` — what should the reader do today?**
+  Start with a verb, name the thing to touch, and make it something that can be
+  done this afternoon:
+    "Add a data-testid to the 'Create Account' button so the test stops
+     depending on its position on the page."
+    "Check the test account lucy@yopmail.com still exists in the dev database."
+    "Raise a bug: the form accepts a password of two characters."
+  Not "investigate further", not "review the selector strategy".
+
+Throughout:
+
 - Plain English. No Python, no Playwright, no class names, no `snake_case`
   identifiers, no stack frames. "The Login button never appeared" — not
   "Locator.click: Timeout 30000ms exceeded waiting for get_by_role(...)".
 - Name what a person would see on screen. "The page still showed the sign-in
   form after the password was submitted." Elements by their visible label, in
   quotes: the 'Create Account' button, the 'Email' field.
-- Short sentences. `root_cause` is one or two; if you need three, the first one
-  was not the cause.
+- Short sentences, ordinary words. Prefer "the popup stayed open" to "the modal
+  failed to transition to a dismissed state". If a sentence would need a second
+  reading, it is too long.
 - No hedging stacked on hedging. "It appears that it may possibly be" says
   nothing. If you are unsure, say the one thing you think is most likely and
   put the doubt in `confidence`, which is what it is for.
-- `suggested_fix` starts with a verb and names the thing to touch: "Add a
-  data-testid to the Login button", "Check the test account still exists",
-  "Raise a bug: the form accepts a password of two characters".
 
 RULES
 
@@ -94,9 +124,6 @@ RULES
 - If the evidence is thin, say so and give a low confidence. A confident wrong
   answer sends someone to debug the wrong thing for an afternoon, which is far
   more expensive than an honest "not sure".
-- `suggested_fix` must be an action someone can take today: which selector to
-  change, which wait to add, which credential to check, what to raise a bug
-  about. Not "investigate further".
 - Severity is about the impact on the user of the application, not on the test
   suite. A broken login is critical; a brittle selector on a cosmetic element
   is low.

@@ -7,10 +7,10 @@ browsers agree. This does that reading.
 
 Two limits worth stating rather than hiding:
 
-- The model sees the error, the traceback, the test's own steps and how the
-  other browsers fared. It does not see the screenshot. Everything it says is
-  inferred from text, which is why the prompt forbids describing what "the
-  server returned" unless the error says so.
+- The model sees the error, the traceback, the test's own steps, how the other
+  browsers fared, and the screenshot taken when the test gave up — when one was
+  captured. It cannot see the network or the server logs, which is why the
+  prompt forbids describing what "the server returned" unless the error says so.
 - It can be wrong. `confidence` is stored and shown, and the prompt is explicit
   that a confident wrong answer is more expensive than an honest "not sure",
   because it sends someone to debug the wrong thing.

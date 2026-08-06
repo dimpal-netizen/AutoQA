@@ -28,7 +28,14 @@ from google import genai
 from google.genai import errors as genai_errors, types
 from pydantic import BaseModel
 
-from app.ai.client import LLMClient, LLMError, LLMRefusal, LLMResponse
+from app.ai.client import (
+    SEED,
+    TEMPERATURE,
+    LLMClient,
+    LLMError,
+    LLMRefusal,
+    LLMResponse,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -156,6 +163,13 @@ class GeminiClient(LLMClient):
             system_instruction=system or None,
             max_output_tokens=max_tokens,
             thinking_config=types.ThinkingConfig(thinking_budget=THINKING_BUDGET),
+            # Same recording, same question, same answer. Without these the
+            # model samples, and regenerating a suite rewrote every test into a
+            # slightly different one — which is how a passing case came back
+            # red without the application changing. See `TEMPERATURE` in
+            # client.py for the whole of it.
+            temperature=TEMPERATURE,
+            seed=SEED,
         )
 
     def _generate(

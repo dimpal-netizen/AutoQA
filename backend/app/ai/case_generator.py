@@ -70,7 +70,13 @@ def generate_cases(
     client: LLMClient | None = None,
     taken_modules: set[str] | None = None,
 ) -> GenerationOutcome:
-    """Ask for `count` extra cases around `recorded`. Never raises."""
+    """Ask for `count` extra cases around `recorded`. Never raises.
+
+    The same recording asks the same question and gets the same answer back:
+    the request is made at temperature zero with a fixed seed, so regenerating
+    an unchanged suite rebuilds the same cases rather than sampling a new set.
+    See `ai/client.py` for why that matters more here than anywhere else.
+    """
     if not recorded.pages:
         return GenerationOutcome(
             skipped=(
@@ -164,6 +170,11 @@ def _accept(
             start_url=recorded.start_url,
             module_name=module_name,
             function_name=function_name,
+            # The happy path, so setup the case dropped between two fields can
+            # be put back. A form that validates one field against another
+            # rejects a case that skipped the second, and the test goes red
+            # against an application behaving correctly.
+            recorded_steps=recorded.steps,
         )
     except SynthesisError as exc:
         # Expected often enough to be routine: the model referenced an element
