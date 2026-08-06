@@ -105,6 +105,110 @@ def test_everything_generated_is_valid_python():
 
 
 # ---------------------------------------------------------------------------
+# It heals actions, never assertions
+#
+# A generated negative test read:
+#
+#     click           'Create Account'
+#     expect_visible  'Create Account'      <- still on the form
+#     expect_hidden   the OTP modal         <- so registration was rejected
+#
+# and was red on every run. The modal's recorded selector carries `isOpen` in
+# its class, so with the modal closed it matched nothing — the answer the test
+# wanted. Healing then reached the positional spare, matched an unrelated svg at
+# that path, and `to_be_hidden()` failed on an element that was never the modal.
+# Six generated tests reported a bug in a form that was behaving correctly.
+# ---------------------------------------------------------------------------
+def assertion_recording(kind: str, selectors: list) -> list:
+    """A click, then an assertion about the same element."""
+    return recording(selectors) + [
+        {
+            "action_type": "assert",
+            "url": "https://x.test/login",
+            "frame_path": [],
+            "selectors": selectors,
+            "element": {"tag": "button", "input_type": None, "role": "button",
+                        "accessible_name": "Login", "text": "Login", "attributes": {}},
+            "payload": {"kind": kind},
+            "is_ignored": False,
+        }
+    ]
+
+
+def test_an_assertion_is_looked_up_without_healing():
+    ir = build_ir(
+        assertion_recording("to_be_visible", BUTTON_WAYS),
+        suite_name="Login",
+        start_url="https://x.test/login",
+    )
+    test_module = {f.path: f.content for f in render(ir, browser_info={})}[ir.file_path]
+
+    assert "expect(unhealed(login, 'login_button')).to_be_visible()" in test_module
+    assert "expect(login.login_button)" not in test_module
+
+
+def test_the_action_beside_it_still_heals():
+    """Only the observation opts out. The click is still allowed a spare."""
+    ir = build_ir(
+        assertion_recording("to_be_visible", BUTTON_WAYS),
+        suite_name="Login",
+        start_url="https://x.test/login",
+    )
+    test_module = {f.path: f.content for f in render(ir, browser_info={})}[ir.file_path]
+
+    assert "login.login_button.click()" in test_module
+
+
+def test_a_module_that_asserts_imports_the_helper_and_gets_it():
+    files = {
+        f.path: f.content
+        for f in render(
+            build_ir(
+                assertion_recording("to_be_visible", BUTTON_WAYS),
+                suite_name="Login",
+                start_url="https://x.test/login",
+            ),
+            browser_info={},
+        )
+    }
+
+    assert "from pages._healing import unhealed" in files["tests/test_login.py"]
+    assert "def unhealed(" in files["pages/_healing.py"]
+
+
+def test_the_helper_ships_even_when_no_element_can_heal():
+    """`unhealed` lives in the same file, and a single-candidate suite uses it."""
+    only = [{"strategy": "test_id", "value": "login-btn", "unique": True, "score": 100}]
+    files = {
+        f.path: f.content
+        for f in render(
+            build_ir(
+                assertion_recording("to_be_visible", only),
+                suite_name="Login",
+                start_url="https://x.test/login",
+            ),
+            browser_info={},
+        )
+    }
+
+    assert "heal(" not in files["pages/login_page.py"]  # nothing to heal
+    assert "pages/_healing.py" in files  # but unhealed is still imported
+
+
+def test_a_module_with_no_assertion_does_not_import_the_helper():
+    files = {
+        f.path: f.content
+        for f in render(
+            build_ir(recording(BUTTON_WAYS), suite_name="Login",
+                     start_url="https://x.test/login"),
+            browser_info={},
+        )
+    }
+
+    assert "unhealed" not in files["tests/test_login.py"]
+
+
+# ---------------------------------------------------------------------------
 # It actually heals — real browser, real page
 # ---------------------------------------------------------------------------
 PAGE = """
@@ -198,6 +302,119 @@ def test_no_warning_when_the_first_way_still_works(tmp_path: Path):
             located = healing.heal("login_button", candidates)
 
         assert located.inner_text() == "Login"
+        browser.close()
+
+
+# The registration page with no OTP modal on it. `div.OtpModal__isOpen svg`
+# correctly matches nothing; the positional spare matches the dismiss icon, an
+# element that has nothing to do with the modal.
+NO_MODAL = """
+<!doctype html>
+<html><body>
+  <main>
+    <button id="dismiss"><svg width="8" height="8"></svg></button>
+    <form><button>Create Account</button></form>
+  </main>
+</body></html>
+"""
+
+# The recorded spare, as `nth_child`. The suite's XPath spare for this element
+# read `//body/main[1]/.../svg[1]` and could never have matched: an <svg> is in
+# the SVG namespace, and a bare name test in XPath only matches the null one.
+# CSS has no such rule, so this is the candidate that did the damage.
+MODAL_SPARE = "body > main > button:nth-child(1) > svg:nth-child(1)"
+
+
+@pytest.mark.integration
+def test_an_absent_element_stays_absent_instead_of_healing_to_another(tmp_path: Path):
+    """The failure in the report, reproduced and then fixed.
+
+    Without `unhealed` this is `AssertionError: Locator expected to be hidden`
+    against a form that had rejected the duplicate email exactly as it should.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+    healing.PRIMARY_TIMEOUT_MS = 300  # heal() is expected to find nothing
+
+    page_file = tmp_path / "page.html"
+    page_file.write_text(textwrap.dedent(NO_MODAL), encoding="utf-8")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        class RegisterBuyerPage:
+            """Exactly what the generated page object emits for this element."""
+
+            @property
+            def otp_modal(self):
+                return healing.heal("otp_modal", [
+                    ("css", lambda: page.locator("div.OtpModal__isOpen svg")),
+                    ("nth_child", lambda: page.locator(MODAL_SPARE)),
+                ])
+
+        register_buyer = RegisterBuyerPage()
+
+        # What used to happen: the spare matched the header icon, which is on
+        # screen, so the assertion the test cared about could only ever fail.
+        with pytest.warns(healing.Healed):
+            assert register_buyer.otp_modal.is_visible()
+
+        # What happens now.
+        from playwright.sync_api import expect
+
+        expect(healing.unhealed(register_buyer, "otp_modal")).to_be_hidden()
+
+        # And the next lookup heals again — the opt-out lasts one call.
+        with pytest.warns(healing.Healed):
+            register_buyer.otp_modal.is_visible()
+
+        browser.close()
+
+
+@pytest.mark.integration
+def test_a_vanished_element_fails_a_visibility_check_rather_than_healing(tmp_path: Path):
+    """The quiet half. A spare would report the wrong element as present."""
+    import importlib.util
+
+    from playwright.sync_api import expect, sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+    healing.PRIMARY_TIMEOUT_MS = 300
+
+    page_file = tmp_path / "page.html"
+    page_file.write_text(textwrap.dedent(PAGE), encoding="utf-8")  # button renamed
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        class LoginPage:
+            @property
+            def login_button(self):
+                return healing.heal("login_button", [
+                    ("role_name", lambda: page.get_by_role("button", name="Login", exact=True)),
+                    ("css", lambda: page.locator("form.login button")),
+                ])
+
+        login = LoginPage()
+
+        with pytest.raises(AssertionError):
+            expect(healing.unhealed(login, "login_button")).to_be_visible(timeout=300)
+
         browser.close()
 
 

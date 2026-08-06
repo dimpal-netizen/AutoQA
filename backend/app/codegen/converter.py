@@ -143,6 +143,14 @@ class TestIR:
     # imports uuid4. Same reasoning as needs_regex: a flag rather than scanning
     # the rendered code, which would couple the template to string matching.
     needs_uuid: bool = False
+    # Set when a step observes an element, so the module imports `unhealed`.
+    # Assertions are looked up without healing - see `uses_unhealed` below.
+    needs_unhealed: bool = False
+    # (variable, expression, the value that was recorded) for each input the
+    # application would refuse a second time. Assigned once at the top of the
+    # test so two fields that were given the same address still get the same
+    # one. See `_fresh_value`.
+    unique_values: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def file_path(self) -> str:
@@ -459,7 +467,20 @@ def build_ir(
         step.sequence = index
 
     ir.fragile_count = sum(1 for step in ir.steps if step.fragile)
+    ir.needs_unhealed = uses_unhealed(ir.steps)
     return ir
+
+
+def uses_unhealed(steps: list[StepSpec]) -> bool:
+    """True when a step observes an element, so the module imports `unhealed`.
+
+    Every assertion that names an element is looked up without healing, because
+    a spare would answer the question about a different element. The assertions
+    about the URL name no element and need nothing.
+    """
+    return any(
+        step.action is ActionType.ASSERT and step.locator_name for step in steps
+    )
 
 
 def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpec | None:
@@ -569,7 +590,12 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             description = f"Hover over {label}"
         case ActionType.INPUT:
             value = str(payload.get("value", ""))
-            code = [f"{target}.fill({py_str(value)})"]
+            # A sign-up form creates a record, and the recorded address is in it
+            # from the first run onwards. Replaying the same one asks the
+            # application to create the same account twice, which it is right to
+            # refuse — so the test passes once and is red for ever after.
+            fresh = _fresh_value(ir, value, element, str(action.get("url") or ""))
+            code = [f"{target}.fill({fresh or py_str(value)})"]
             description = f"Type into {label}"
             input_data = value
         case ActionType.SELECT:
@@ -616,13 +642,17 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             description = f"Drag {label} onto {drop_name.replace('_', ' ')}"
         case ActionType.ASSERT:
             kind_name = str(payload.get("kind", "to_be_visible"))
+            # An assertion asks about *this* element, so it is looked up with
+            # healing switched off: a spare would answer about a different one.
+            # See `unhealed` in pages/_healing.py.
+            observed = f"unhealed({page_var}, {py_str(name)})"
             if kind_name == "to_have_text":
                 text = str(payload.get("expected", ""))
-                code = [f"expect({target}).to_have_text({py_str(text)})"]
+                code = [f"expect({observed}).to_have_text({py_str(text)})"]
                 description = f"Check {label} shows {text!r}"
                 expected = text
             else:
-                code = [f"expect({target}).to_be_visible()"]
+                code = [f"expect({observed}).to_be_visible()"]
                 description = f"Check {label} is visible"
                 expected = f"{label} is visible"
         case _:
@@ -646,6 +676,139 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         strategy=selector.strategy.value,
         fragile=selector.is_fragile,
     )
+
+
+# ---------------------------------------------------------------------------
+# Values that cannot be replayed
+#
+# The recorded suite's own regression test read:
+#
+#     register_buyer.email_input.fill('lucy@yopmail.com')
+#     register_buyer.mobile_number_input.fill('9632587412')
+#
+# It passed the day it was recorded and failed every day after, because by then
+# that account existed and the application was right to refuse a second one. The
+# steps were correct, the application was correct, and the test was red — which
+# is the most expensive way for a test to be wrong, because the tester spends an
+# afternoon on it and then learns to ignore the next red test.
+#
+# `synth.py` has had placeholders for this since the model started inventing
+# sign-up cases. The recording never went through them: it replays exactly what
+# was typed, which is right for a login and fatal for a registration.
+# ---------------------------------------------------------------------------
+
+#: Where filling in a form creates a record rather than reading one.
+_SIGNUP_PATH = re.compile(r"regist|sign[-_]?up|signup|create[-_]?account|join", re.I)
+
+#: What the replacement looks like. The recorded value's own shape is kept
+#: wherever it carries a constraint: a domain the application accepted, a
+#: number of the length and leading digit its country expects. Inventing those
+#: from nothing is how a "fix" for one form breaks another.
+_EMAIL = "f'autoqa-{uuid4().hex[:10]}@%s'"
+_PHONE = "f'%s{uuid4().int %% %d:0%dd}'"
+_TEXT = "f'autoqa{uuid4().hex[:8]}'"
+
+_DOMAIN_OK = re.compile(r"^[a-zA-Z0-9.-]+$")
+
+#: An address, not merely something with an @ in it. `Test@1234` has an @ and is
+#: a password — substituting it locked the test out of the account it had just
+#: created, with the failure landing on the login step two tests later.
+_LOOKS_LIKE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+#: Never replaced, whatever else they look like. A password is typed into a
+#: sign-up form and is not an identity: the account is created with it and the
+#: test needs it again to sign in.
+_SECRET = ("password", "passcode", "pin", "secret", "cvv", "otp")
+
+
+def _field_words(element: dict[str, Any] | None) -> str:
+    """Everything the recorder knows about what a field is called, lowercased."""
+    if not element:
+        return ""
+    attributes = element.get("attributes") or {}
+    parts = [
+        element.get("input_type"),
+        element.get("accessible_name"),
+        attributes.get("name"),
+        attributes.get("id"),
+        attributes.get("placeholder"),
+        attributes.get("data-testid"),
+        attributes.get("autocomplete"),
+    ]
+    return " ".join(str(part) for part in parts if part).lower()
+
+
+def _fresh_expression(value: str, element: dict[str, Any] | None) -> str | None:
+    """A per-run replacement for one recorded value, or None to keep it.
+
+    Only the fields that have to be unique for a record to exist at all. A
+    password is typed into a sign-up form too and must stay exactly as recorded:
+    it is not an identity, and changing it would lock the test out of the
+    account it just made.
+    """
+    words = _field_words(element)
+
+    if any(secret in words for secret in _SECRET):
+        return None
+
+    if "email" in words or _LOOKS_LIKE_EMAIL.match(value.strip()):
+        domain = value.rpartition("@")[2].strip()
+        if not domain or not _DOMAIN_OK.match(domain):
+            # example.test is reserved and cannot receive mail, so it is only
+            # right when the recording gives us nothing better to copy.
+            domain = "example.test"
+        return _EMAIL % domain
+
+    digits = value.strip()
+    if digits.isdigit() and (
+        "tel" in words or "phone" in words or "mobile" in words or "contact" in words
+    ):
+        # Same length and same leading digit as the number that was accepted.
+        # A hard-coded shape is how a generated Indian number ends up in a form
+        # defaulting to Kenya, where it is not a valid number at all.
+        rest = len(digits) - 1
+        if rest < 1:
+            return None
+        return _PHONE % (digits[0], 10**rest, rest)
+
+    if "username" in words or "user_name" in words:
+        return _TEXT
+
+    return None
+
+
+def _fresh_value(
+    ir: TestIR, value: str, element: dict[str, Any] | None, url: str
+) -> str | None:
+    """The variable holding a per-run value for `value`, or None to keep it.
+
+    Hoisted to a variable rather than inlined, because the same address is often
+    typed twice — an email and its confirmation — and two separate calls to
+    `uuid4()` would put two different addresses in fields the form requires to
+    match. One name, assigned once, read wherever it was recorded.
+    """
+    if not value.strip() or not _SIGNUP_PATH.search(urlparse(url).path or ""):
+        return None
+
+    expression = _fresh_expression(value, element)
+    if expression is None:
+        return None
+
+    for name, existing, recorded in ir.unique_values:
+        if recorded == value:
+            return name
+
+    kind = "email" if "@" in expression else "mobile" if "uuid4().int" in expression else "id"
+    name = f"fresh_{kind}"
+    taken = {existing_name for existing_name, _, _ in ir.unique_values}
+    suffix = 2
+    while name in taken:
+        name = f"fresh_{kind}_{suffix}"
+        suffix += 1
+
+    ir.unique_values.append((name, expression, value))
+    ir.needs_uuid = True
+    return name
 
 
 # Selectors whose value is text a human would recognise, most natural first.

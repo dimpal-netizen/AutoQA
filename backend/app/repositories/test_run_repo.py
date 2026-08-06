@@ -155,6 +155,37 @@ class TestResultRepository(BaseRepository[TestResult]):
 
         return latest
 
+    def latest_failures_for_project(self, project_id: int) -> list[TestResult]:
+        """Every test in the project that is failing as of its most recent run.
+
+        The bug register wants what is broken *now*, not everything that has
+        ever been red. A test that failed in March and passes today is not a
+        bug, and one that has failed in nine consecutive runs is one bug, not
+        nine — so this keeps only the newest result per test and browser, then
+        keeps the ones that are still bad.
+        """
+        statement = (
+            select(TestResult)
+            .join(TestRun, TestResult.run_id == TestRun.id)
+            .where(
+                TestRun.project_id == project_id,
+                TestResult.test_case_id.is_not(None),
+            )
+            .order_by(TestResult.run_id.desc(), TestResult.id.desc())
+        )
+
+        seen: set[tuple[int, str]] = set()
+        failures: list[TestResult] = []
+        for result in self.db.execute(statement).scalars():
+            key = (result.test_case_id, result.browser.value)  # type: ignore[arg-type]
+            if key in seen:
+                continue
+            seen.add(key)
+            if result.status in (ResultStatus.FAILED, ResultStatus.ERROR):
+                failures.append(result)
+
+        return failures
+
     def list_failures(self, run_id: int) -> list[TestResult]:
         """Failures and errors — what Phase 7's analysis will be pointed at."""
         statement = select(TestResult).where(

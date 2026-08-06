@@ -10,8 +10,19 @@ Starting URL: {start_url}
 Page objects and the elements available on them:
 {pages}
 
-The recorded happy path, step by step:
+The recorded happy path, step by step. This is the only sequence known to work
+against this application — someone walked it and it succeeded:
 {steps}
+
+**Do not replay it.** Read it to learn what the form needs, then write short
+cases: open the page the case is about with `goto`, fill the fields that matter
+to it, and assert. Clicking through the site to reach a form is not part of
+testing the form.
+
+You do not have to reproduce setup that sits between two fields either — opening
+a dropdown, choosing from it, and so on. If your case fills two fields the
+recording also filled, whatever the recording did in between is put back for you
+before any code is written. Leave it out and keep the case readable.
 
 Write {target_count} additional test cases covering these categories:
 

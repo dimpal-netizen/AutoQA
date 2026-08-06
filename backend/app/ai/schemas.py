@@ -87,8 +87,29 @@ class DraftedBug(BaseModel):
 
 
 class FailureAnalysis(BaseModel):
-    """Workflow 3 output: why a test failed and what to do about it."""
+    """Workflow 3 output: why a test failed and what to do about it.
 
+    `expected` and `actual` come first deliberately. They are the two facts the
+    reader wants before any explanation, and asking for them first makes the
+    explanation better too: a model that has just written down both sides of the
+    mismatch is far less likely to reason from the traceback alone and miss what
+    the screenshot plainly shows.
+    """
+
+    expected: str = Field(
+        description=(
+            "What the test was waiting to see, as a person would describe it. "
+            "One sentence, no code. 'The one-time-password popup should have "
+            "closed.'"
+        )
+    )
+    actual: str = Field(
+        description=(
+            "What was on screen instead, read off the screenshot where there is "
+            "one. One sentence, no code. 'The popup was still open, with the "
+            "code boxes empty.'"
+        )
+    )
     root_cause: str = Field(description="What actually went wrong, in plain language")
     suggested_fix: str = Field(description="The concrete next action to take")
     category: str = Field(

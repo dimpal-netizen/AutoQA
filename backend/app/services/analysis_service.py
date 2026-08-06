@@ -30,6 +30,17 @@ logger = logging.getLogger(__name__)
 MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024
 
 
+def _text(value: str | None) -> str | None:
+    """Trimmed, or None when the model left it empty.
+
+    An empty string and a missing answer look the same to a reader but not to a
+    template: one renders a heading with nothing under it. Storing None keeps
+    "the model did not say" distinguishable from "the model said nothing".
+    """
+    cleaned = " ".join(str(value or "").split())
+    return cleaned or None
+
+
 class AnalysisService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -71,6 +82,8 @@ class AnalysisService:
             run_id=result.run_id,
             provider=outcome.provider,
             model=outcome.model,
+            expected=_text(found.expected),
+            actual=_text(found.actual),
             root_cause=found.root_cause.strip(),
             suggested_fix=found.suggested_fix.strip(),
             category=category_of(found.category),

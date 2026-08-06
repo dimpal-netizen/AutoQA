@@ -65,7 +65,7 @@ export function GenerateCases({
       variant={hasGenerated ? "outline" : "default"}
       title={
         hasGenerated
-          ? "Replaces every case except your recording — including any you wrote by hand. Usually 15-30 seconds."
+          ? "Rebuilds every case except your recording — including any you wrote by hand. An unchanged recording rebuilds the same cases. Usually 15-30 seconds."
           : "Positive, negative, edge and security cases built around this recording. Usually 15-30 seconds."
       }
     >

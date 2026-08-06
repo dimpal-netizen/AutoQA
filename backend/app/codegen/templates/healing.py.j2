@@ -14,6 +14,9 @@ element.
 When it has to fall back it says so. A test that quietly adapts to a changed
 page is worse than one that fails: the page really did change, and you would
 never hear about it.
+
+Healing applies to *driving* the page, never to *observing* it. `unhealed`
+below is how an assertion opts out, and why it has to.
 """
 
 import warnings
@@ -29,9 +32,47 @@ PRIMARY_TIMEOUT_MS = 10_000
 # so the page is loaded and the answer is immediate either way.
 SPARE_TIMEOUT_MS = 2_000
 
+#: Cleared while `unhealed` reads a property. Not thread-safe, and does not
+#: need to be: a Playwright sync page is driven by one thread, and pytest-xdist
+#: parallelises across processes.
+_substitutes_allowed = True
+
 
 class Healed(UserWarning):
     """The page changed and a recorded alternative was used instead."""
+
+
+def unhealed(page_object: object, name: str) -> Locator:
+    """The element as it was recorded, with the spares switched off.
+
+    Healing is right when the test is *doing* something. If the login button was
+    renamed, finding it by its position instead and clicking it is exactly what
+    should happen - the test is about what the click leads to, not about how the
+    button was found.
+
+    An assertion is the opposite. It asks a question about one element, and a
+    spare answers it about a different one:
+
+        expect(otp_modal).to_be_hidden()
+
+    That modal's recorded selector carries `isOpen` in its class, so with the
+    modal closed it correctly matches nothing - which is the answer the test was
+    looking for. Healing then tried the positional spare,
+    `//body/main[1]/div[1]/.../svg[1]`, matched whatever sits at that path on
+    the registration page, and the assertion failed on an element that was never
+    the OTP modal. Six generated tests reported red against a form that had
+    rejected the duplicate email exactly as it should.
+
+    The mirror case is worse for being quiet: `to_be_visible()` on an element
+    that has genuinely gone passes the moment a positional spare finds anything
+    at all in its place.
+    """
+    global _substitutes_allowed
+    _substitutes_allowed = False
+    try:
+        return getattr(page_object, name)
+    finally:
+        _substitutes_allowed = True
 
 
 def heal(name: str, candidates: list) -> Locator:
@@ -41,6 +82,13 @@ def heal(name: str, candidates: list) -> Locator:
     are not evaluated until they are needed, so the common case - the first one
     works - costs exactly one lookup.
     """
+    if not _substitutes_allowed:
+        # Reached through `unhealed`. No spares, and no wait either: the
+        # `expect` around this does its own waiting and retrying, and waiting
+        # here for an element the test expects to be *gone* would spend
+        # PRIMARY_TIMEOUT_MS on every run to learn what it already knew.
+        return candidates[0][1]()
+
     for index, (strategy, find) in enumerate(candidates):
         locator = find()
         try:

@@ -21,6 +21,9 @@ from uuid import uuid4
 {% endif %}
 from playwright.sync_api import Page, expect
 
+{% if ir.needs_unhealed %}
+from pages._healing import unhealed
+{% endif %}
 {% for variable, class_name in page_vars %}
 from pages.{{ modules[class_name] }} import {{ class_name }}
 {% endfor %}
@@ -31,10 +34,24 @@ def {{ ir.function_name }}(page: Page) -> None:
 {% for variable, class_name in page_vars %}
     {{ variable }} = {{ class_name }}(page)
 {% endfor %}
+{% if ir.unique_values %}
+
+    # Fresh every run. The recording signed up as {{ ir.unique_values[0][2] }}, and
+    # asking the application to create that account a second time is something it
+    # is right to refuse - so replaying the recorded details would pass once and
+    # be red every run after. Change these in the recording, not here.
+{% for name, expression, recorded in ir.unique_values %}
+    {{ name }} = {{ expression }}
+{% endfor %}
+{% endif %}
 
 {% for step in ir.steps %}
     # {{ step.sequence }}. {{ step.description }}
-{% if step.fragile %}
+{% if step.fragile and step.verb == 'expect_hidden' %}
+    # NOTE: located by {{ step.strategy }} - brittle, and this step passes when
+    # the selector matches nothing. A UI change turns it green, not red. A
+    # data-testid is what makes the absence mean something.
+{% elif step.fragile %}
     # NOTE: located by {{ step.strategy }} - brittle. Prefer a data-testid here.
 {% endif %}
 {% for line in step.code %}

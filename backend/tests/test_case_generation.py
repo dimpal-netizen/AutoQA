@@ -273,3 +273,93 @@ def test_generated_modules_do_not_collide_with_the_recorded_one(recorded):
     modules = {c.ir.module_name for c in outcome.cases}
     assert len(modules) == len(outcome.cases)
     assert recorded.module_name not in modules
+
+
+# ---------------------------------------------------------------------------
+# Regenerating an unchanged suite rebuilds the same cases
+#
+# Regeneration replaces every generated case, which is what it is for. What it
+# must not do is replace them with *different* tests: the model was sampling, so
+# a case that passed on Monday came back on Tuesday as a different test wearing
+# the same name and went red against an application nobody had touched. The
+# mirror of that was quieter and worse — a case failing because it had found a
+# real bug came back weaker and went green.
+# ---------------------------------------------------------------------------
+def test_the_prompt_does_not_ask_for_cases_longer_than_it_accepts():
+    """It did, and the whole batch was thrown away.
+
+        The model returned no usable test cases.
+        Rejected: Successful registration with unique valid data:
+                  37 steps is beyond the 30 limit
+
+    Telling the model to reproduce the recorded sequence made every case as long
+    as the recording — 28 steps here — and `MAX_STEPS` rejected all of them. The
+    setup that instruction was protecting is restored by `_restore_setup` after
+    the fact, so the prompt does not need to ask for it and must not.
+    """
+    from app.ai.client import load_prompt
+    from app.codegen.synth import MAX_STEPS
+
+    prompt = load_prompt(
+        "generate_cases", suite_name="S", start_url="u", pages="p",
+        steps="\n".join(f"{i}. step" for i in range(28)), target_count=12,
+    )
+
+    assert "Do not replay it" in prompt
+    assert "put back for you" in prompt
+    # The length it asks for has to fit the length it enforces.
+    assert "Four to eight steps is normal" in prompt
+    assert MAX_STEPS >= 30
+
+
+def test_a_whole_batch_rejected_says_so_rather_than_naming_one(recorded):
+    """"Rejected: <one case>" read as though one case had been the problem."""
+    from app.services.codegen_service import _why_nothing_was_usable
+
+    outcome = generate_cases(recorded, client=FakeLLM(GeneratedCases(cases=[
+        case(name=f"Case {i}", steps=[
+            CaseStep(action="click", target="LoginPage.nope", description="x"),
+            CaseStep(action="expect_url", value="/y", description="y"),
+        ])
+        for i in range(5)
+    ])))
+
+    assert not outcome.cases
+    message = _why_nothing_was_usable(outcome)
+    assert "All 5" in message
+
+
+def test_nothing_samples():
+    """Temperature zero and a fixed seed, or the same input has no same answer."""
+    from app.ai.client import SEED, TEMPERATURE
+
+    assert TEMPERATURE == 0.0
+    assert isinstance(SEED, int)
+
+
+def test_every_provider_that_can_be_pinned_is_pinned():
+    """A provider left sampling reintroduces the whole problem silently."""
+    from pathlib import Path
+
+    ai = Path(__file__).resolve().parent.parent / "app" / "ai"
+    for provider in ("gemini.py", "openai_client.py"):
+        source = (ai / provider).read_text(encoding="utf-8")
+        assert "temperature=TEMPERATURE" in source, provider
+        assert "seed=SEED" in source, provider
+
+    # Claude Opus 5 removed temperature outright — sending it is a 400 — so it
+    # is steered by the prompt instead. Asserted so nobody "fixes" the gap.
+    claude = (ai / "claude.py").read_text(encoding="utf-8")
+    assert "temperature=" not in claude
+    assert "were REMOVED on Claude Opus 5" in claude
+
+
+def test_an_existing_module_name_is_never_reused(recorded):
+    """Two cases writing one file means the older test silently becomes the newer."""
+    outcome = generate_cases(
+        recorded,
+        client=FakeLLM(GeneratedCases(cases=[case(name="Login is rejected")])),
+        taken_modules={"test_login_is_rejected"},
+    )
+
+    assert outcome.cases[0].ir.module_name != "test_login_is_rejected"

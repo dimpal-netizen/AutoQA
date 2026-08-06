@@ -40,6 +40,8 @@ class FakeResult:
 
 def good() -> FailureAnalysis:
     return FailureAnalysis(
+        expected="The 'Email' field should have been on the sign-in form.",
+        actual="The form was there, but the email box was missing its label.",
         root_cause="The email field moved, so the placeholder no longer matches.",
         suggested_fix="Point the locator at #email instead of the placeholder.",
         category="selector_broken",
@@ -90,6 +92,58 @@ def test_a_single_browser_run_says_so_rather_than_implying_agreement():
     analyse(FakeResult(), siblings=[FakeResult(id=1)], client=client)
 
     assert "only ran in one browser" in client.calls[0]
+
+
+# ---------------------------------------------------------------------------
+# Expected against actual
+#
+# The report said what went wrong and what to do, and left the two facts a
+# reader looks for first to be inferred from a sentence about the cause. Worse,
+# the only statement of what happened was the raw assertion — "Locator expected
+# to be hidden", which is neither of them and is not English.
+# ---------------------------------------------------------------------------
+def test_both_sides_of_the_mismatch_come_back():
+    outcome = analyse(FakeResult(), client=FakeLLM(good()))
+
+    assert outcome.analysis.expected
+    assert outcome.analysis.actual
+    assert outcome.analysis.expected != outcome.analysis.actual
+
+
+def test_an_answer_missing_either_side_is_not_accepted():
+    """Required, not optional. An analysis without them is the old one back."""
+    import pydantic
+
+    for missing in ("expected", "actual"):
+        fields = {
+            "expected": "The popup should have closed.",
+            "actual": "The popup was still open.",
+            "root_cause": "r", "suggested_fix": "s", "category": "test_bug",
+            "severity": "low", "priority": "low", "confidence": 0.5,
+            "is_product_bug": False,
+        }
+        del fields[missing]
+        with pytest.raises(pydantic.ValidationError):
+            FailureAnalysis(**fields)
+
+
+def test_the_prompt_asks_for_them_in_a_persons_words():
+    client = FakeLLM(good())
+    analyse(FakeResult(), client=client)
+    prompt = client.calls[0]
+
+    assert "what was the test waiting to see" in prompt.lower()
+    assert "what was on screen instead" in prompt.lower()
+    # The pair is worthless if the model just negates one to make the other.
+    assert "must genuinely disagree" in prompt
+
+
+def test_the_prompt_still_forbids_the_language_of_a_traceback():
+    client = FakeLLM(good())
+    analyse(FakeResult(), client=client)
+
+    assert "No Python, no Playwright" in client.calls[0]
+    assert "snake_case" in client.calls[0]
 
 
 # ---------------------------------------------------------------------------

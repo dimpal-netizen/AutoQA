@@ -374,6 +374,32 @@ export async function downloadTestCaseSheet(
   }
 }
 
+/** Download every bug in the project as one workbook.
+ *
+ *  The per-failure report is a ticket you open one at a time. This is the
+ *  register — what is open, what is critical — which is a different question
+ *  and needs the whole set in one place. */
+export async function downloadBugReport(
+  projectId: number,
+  filename: string,
+): Promise<void> {
+  const blob = await request<Blob>(`/projects/${projectId}/bug-report.xlsx`, {
+    headers: {
+      Accept:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
+  });
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export async function fetchArtifact(artifactId: number): Promise<string> {
   const blob = await request<Blob>(`/artifacts/${artifactId}/download`, {
     headers: { Accept: "*/*" },

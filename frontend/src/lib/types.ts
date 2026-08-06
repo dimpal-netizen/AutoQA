@@ -530,6 +530,10 @@ export interface Analysis {
   run_id: number;
   provider: string;
   model: string;
+  // The two sides of the mismatch, in a person's words. Null on analyses
+  // written before the model was asked for them.
+  expected: string | null;
+  actual: string | null;
   root_cause: string;
   suggested_fix: string;
   category: FailureCategory;

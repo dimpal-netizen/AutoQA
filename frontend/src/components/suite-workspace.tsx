@@ -19,7 +19,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   FileSpreadsheet,
   FlaskConical,
-  FolderOpen,
   MoreHorizontal,
   Play,
   Plus,
@@ -41,7 +40,6 @@ import { useAuthStore } from "@/stores/auth-store";
 import { CaseEditor } from "@/components/case-editor";
 import { GenerateCases } from "@/components/generate-cases";
 import { RunPanel } from "@/components/run-panel";
-import { ScriptLocation } from "@/components/script-location";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/card";
@@ -199,10 +197,6 @@ export function SuiteWorkspace({
   }
 
   const generated = suite.cases.filter((c) => c.category !== "recorded").length;
-  const paths = [
-    ...suite.cases.map((c) => c.file_path),
-    ...suite.files.map((f) => f.path),
-  ].sort();
 
   return (
     <section className="flex min-w-0 flex-col gap-5">
@@ -287,12 +281,6 @@ export function SuiteWorkspace({
                 id: "runs",
                 label: "Runs",
                 icon: <Play />,
-              },
-              {
-                id: "scripts",
-                label: "Scripts",
-                count: paths.length,
-                icon: <FolderOpen />,
               },
             ]}
           />
@@ -436,9 +424,6 @@ export function SuiteWorkspace({
             />
           </div>
 
-          {tab === "scripts" && (
-            <ScriptLocation outputDir={suite.output_dir} paths={paths} />
-          )}
         </div>
       </div>
 
