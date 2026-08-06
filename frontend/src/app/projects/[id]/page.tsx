@@ -10,8 +10,8 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Pencil, Video } from "lucide-react";
-import { api } from "@/lib/api";
+import { ArrowLeft, Bug, ExternalLink, Pencil, Video } from "lucide-react";
+import { api, downloadBugReport } from "@/lib/api";
 import type { Project, TestSuite, TestSuiteDetail } from "@/lib/types";
 import { useAuthStore } from "@/stores/auth-store";
 import { AppShell } from "@/components/app-shell";
@@ -139,6 +139,58 @@ function ProjectName({
   );
 }
 
+/** Download every bug in the project as one workbook.
+ *
+ *  Every *failing test*, not every drafted report. The first version exported
+ *  only what somebody had clicked "Draft a bug report" on, so a project with
+ *  sixteen red tests and no clicks exported nothing and the button answered
+ *  "draft one from a failed test first" — which made the register a reward for
+ *  filing rather than a view of the project. A bug register that leaves out
+ *  bugs is the one thing it must never be.
+ *
+ *  Sits on the project rather than the suite because bugs belong to the
+ *  project. A tester chasing "everything outstanding" does not want to visit
+ *  four suites and join the results up by hand.
+ */
+function ExportBugs({
+  project,
+  onError,
+}: {
+  project: Project;
+  onError: (message: string | null) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function download() {
+    setBusy(true);
+    onError(null);
+    try {
+      const stem =
+        project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ||
+        "project";
+      await downloadBugReport(project.id, `${stem}-bug-report.xlsx`);
+    } catch (err) {
+      onError(
+        err instanceof Error ? err.message : "Could not build the bug report",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      onClick={() => void download()}
+      disabled={busy}
+      title="Every failing test in this project, in one spreadsheet — worst severity first. No drafting needed."
+    >
+      <Bug />
+      {busy ? "Building…" : "Bug report"}
+    </Button>
+  );
+}
+
 function ProjectWorkspace({ id }: { id: number }) {
   const [project, setProject] = useState<Project | null>(null);
   const [suites, setSuites] = useState<TestSuite[]>([]);
@@ -238,6 +290,12 @@ function ProjectWorkspace({ id }: { id: number }) {
               <ExternalLink className="size-3.5 shrink-0" />
             </a>
           </div>
+
+          {/* Only once there is something to record bugs against. On an empty
+              project it would offer a download of nothing. */}
+          {suites.length > 0 && (
+            <ExportBugs project={project} onError={setError} />
+          )}
 
           <Button variant="secondary" onClick={() => setRecording((v) => !v)}>
             <Video />
