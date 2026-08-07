@@ -155,6 +155,41 @@ class TestResultRepository(BaseRepository[TestResult]):
 
         return latest
 
+    def history_per_case(
+        self, suite_id: int, *, runs: int = 10
+    ) -> dict[tuple[int, str], list[TestResult]]:
+        """Recent verdicts for each test and browser, newest first.
+
+        Keyed by (test case, browser) because a test green in Chrome and red in
+        WebKit is two different stories, and averaging them would hide both.
+
+        Bounded to the last few runs of the suite: "has this ever been red" is a
+        different and much less useful question than "is this unreliable now",
+        and a suite with a year of history would answer the first one whatever
+        you asked.
+        """
+        recent = (
+            select(TestRun.id)
+            .where(TestRun.suite_id == suite_id)
+            .order_by(TestRun.id.desc())
+            .limit(runs)
+            .scalar_subquery()
+        )
+        statement = (
+            select(TestResult)
+            .where(
+                TestResult.run_id.in_(recent),
+                TestResult.test_case_id.is_not(None),
+            )
+            .order_by(TestResult.run_id.desc(), TestResult.id.desc())
+        )
+
+        history: dict[tuple[int, str], list[TestResult]] = {}
+        for result in self.db.execute(statement).scalars():
+            key = (result.test_case_id, result.browser.value)  # type: ignore[arg-type]
+            history.setdefault(key, []).append(result)
+        return history
+
     def latest_failures_for_project(self, project_id: int) -> list[TestResult]:
         """Every test in the project that is failing as of its most recent run.
 

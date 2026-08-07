@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass
 
 from app.ai.client import LLMClient, LLMError, ai_available, get_llm_client, load_prompt
-from app.ai.schemas import FailureAnalysis
+from app.ai.schemas import FailureAnalysis, RunTriage
 from app.models.enums import FailureCategory, ResultStatus, Severity
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,11 @@ SYSTEM = (
 )
 
 MAX_TRACE = 4000
+
+#: Shorter per failure than `MAX_TRACE`, because a triage carries one of these
+#: for every red test in the run. Sixteen full tracebacks is a prompt that costs
+#: more than the sixteen separate calls it was meant to replace.
+MAX_TRIAGE_TRACE = 1200
 
 
 @dataclass
@@ -86,17 +91,17 @@ def analyse(
             load_prompt(
                 "failure_analysis",
                 case_name=result.case_name,
-                case_description=_describe_case(result),
+                case_description=describe_case(result),
                 browser=result.browser.value,
                 base_url=base_url or "unknown",
-                steps=_describe_steps(steps),
+                steps=describe_steps(steps),
                 status=result.status.value,
                 failed_step=(
                     result.failed_step if result.failed_step is not None else "unknown"
                 ),
                 error_message=result.error_message or "(none recorded)",
                 stack_trace=(result.stack_trace or "(none recorded)")[:MAX_TRACE],
-                cross_browser=_describe_siblings(result, siblings),
+                cross_browser=describe_siblings(result, siblings),
             ),
             FailureAnalysis,
             system=SYSTEM,
@@ -126,6 +131,133 @@ def analyse(
     )
 
 
+@dataclass
+class TriageOutcome:
+    """One call's worth of triage over a whole run."""
+
+    triage: RunTriage | None = None
+    skipped: str | None = None
+    provider: str = ""
+    model: str = ""
+    tokens: int = 0
+    cost_usd: float = 0.0
+
+    @property
+    def ok(self) -> bool:
+        return self.triage is not None
+
+
+def triage_run(
+    failures: list,
+    *,
+    steps_by_result: dict,
+    suite_name: str = "",
+    base_url: str | None = None,
+    passed: int = 0,
+    finished_at: str = "",
+    client: LLMClient | None = None,
+) -> TriageOutcome:
+    """Explain every failure in a run in one call. Never raises.
+
+    One call rather than one per failure, for two reasons that both matter.
+
+    It is cheaper by the number of failures — sixteen red tests cost sixteen
+    requests, which on a free-tier key is the whole day's quota spent on one
+    run. And it is *better*: failures come in families, and a model that sees
+    all sixteen can say "these six are one problem", which no analysis looking
+    at a single failure can ever work out. "16 failed" and "16 failed, 3 causes"
+    lead to completely different days.
+
+    The trade is the screenshot. Sixteen images in one request is neither
+    affordable nor reliable, so this works from text and says so in the prompt,
+    with confidence lowered to match. `analyse()` remains the deep look at one
+    failure, picture and all.
+    """
+    if not failures:
+        return TriageOutcome(skipped="Nothing failed in this run.")
+
+    if client is None:
+        if not ai_available():
+            return TriageOutcome(
+                skipped=(
+                    "Failure analysis needs an AI provider. Add a key to .env "
+                    "and restart the API."
+                )
+            )
+        try:
+            client = get_llm_client()
+        except LLMError as exc:
+            return TriageOutcome(skipped=str(exc))
+
+    try:
+        response = client.complete_model(
+            load_prompt(
+                "run_triage",
+                base_url=base_url or "unknown",
+                suite_name=suite_name or "(unnamed)",
+                finished_at=finished_at or "unknown",
+                passed=passed,
+                failed=len(failures),
+                count=len(failures),
+                failures=describe_failures(failures, steps_by_result),
+            ),
+            RunTriage,
+            system=SYSTEM,
+            # Scales with the number of failures: the answer carries a full
+            # explanation each, and a truncated response is paid for and thrown
+            # away. Capped so one enormous run cannot ask for a fortune.
+            max_tokens=min(64000, 6000 + 2200 * len(failures)),
+        )
+    except LLMError as exc:
+        logger.warning("Run triage unavailable: %s", exc)
+        return TriageOutcome(skipped=str(exc))
+    except Exception as exc:  # noqa: BLE001 - a provider bug must not 500 the request
+        logger.exception("Run triage failed unexpectedly")
+        return TriageOutcome(skipped=f"unexpected error: {exc}")
+
+    parsed = response.parsed
+    if not isinstance(parsed, RunTriage):
+        return TriageOutcome(skipped="the model returned no usable triage")
+
+    return TriageOutcome(
+        triage=parsed,
+        provider=client.provider,
+        model=response.model or client.model,
+        tokens=response.input_tokens + response.output_tokens,
+        cost_usd=response.cost_usd,
+    )
+
+
+def describe_failures(failures: list, steps_by_result: dict) -> str:
+    """Every failure, numbered, with the evidence for it.
+
+    Numbered because the answer refers back by number. Test names repeat across
+    browsers, and matching an explanation to a failure on prose the model
+    retyped is how one ends up filed against the wrong row.
+    """
+    blocks: list[str] = []
+    for number, result in enumerate(failures, 1):
+        steps = steps_by_result.get(result.id) or []
+        blocks.append(
+            "\n".join(
+                [
+                    f"--- Failure {number} ---",
+                    f"Test: {result.case_name}",
+                    f"Browser: {result.browser.value}",
+                    f"Status: {result.status.value}",
+                    f"Failed at step: "
+                    f"{result.failed_step if result.failed_step is not None else 'unknown'}",
+                    f"Error: {result.error_message or '(none recorded)'}",
+                    "Steps:",
+                    describe_steps(steps),
+                    "Traceback:",
+                    (result.stack_trace or "(none recorded)")[:MAX_TRIAGE_TRACE],
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
+
+
 def category_of(value: str) -> FailureCategory:
     try:
         return FailureCategory(str(value).strip().lower())
@@ -153,13 +285,13 @@ def confidence_of(value: float) -> float:
 # ---------------------------------------------------------------------------
 # Context
 # ---------------------------------------------------------------------------
-def _describe_case(result) -> str:
+def describe_case(result) -> str:
     case = getattr(result, "test_case", None)
     description = getattr(case, "description", None)
     return description or "(no description recorded)"
 
 
-def _describe_steps(steps) -> str:
+def describe_steps(steps) -> str:
     if not steps:
         return "(the test's steps were not recorded)"
 
@@ -174,7 +306,7 @@ def _describe_steps(steps) -> str:
     return "\n".join(lines)
 
 
-def _describe_siblings(result, siblings) -> str:
+def describe_siblings(result, siblings) -> str:
     others = [s for s in siblings if s.id != result.id]
     if not others:
         return "This test only ran in one browser, so there is nothing to compare."

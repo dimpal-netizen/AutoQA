@@ -8,7 +8,15 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Eye, Play, RefreshCw, Square, Trash2 } from "lucide-react";
+import {
+  Download,
+  Eye,
+  Play,
+  RefreshCw,
+  Sparkles,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { api, downloadReport } from "@/lib/api";
 import {
   BROWSER_LABEL,
@@ -17,6 +25,7 @@ import {
   formatDuration,
   isRunActive,
   type Browser,
+  type RunTriage,
   type TestRun,
   type TestRunDetail,
 } from "@/lib/types";
@@ -377,6 +386,14 @@ export function RunPanel({
             )}
           </div>
         )}
+        {/* One call for the whole run, offered where the failures are. Doing
+            them one at a time costs a request each — sixteen red tests is a
+            free-tier key's whole day — and no single-failure analysis can say
+            that six of them are one problem. */}
+        {run && !active && run.failed > 0 && (
+          <TriageRun runId={run.id} onDone={() => void loadHistory()} />
+        )}
+
         {run && run.results.length > 0 && <ResultMatrix results={run.results} />}
 
         {run && run.error_message && (
@@ -413,6 +430,97 @@ export function RunPanel({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Explain every failure in this run, in one call.
+ *
+ *  The per-failure "Explain this failure" is still there and still better — it
+ *  gets the screenshot, which this cannot afford sixteen of. What this has
+ *  instead is the whole run at once, and therefore the one thing no
+ *  single-failure analysis can work out: which failures are the same problem.
+ *  "16 failed" and "16 failed, 3 causes" are a week and an afternoon.
+ */
+function TriageRun({ runId, onDone }: { runId: number; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [triage, setTriage] = useState<RunTriage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Every failure here already carries an explanation, so there is nothing for
+  // this to do and nothing worth saying about that.
+  const [nothingToDo, setNothingToDo] = useState(false);
+
+  // A new run is a new question. Without this the previous run's summary sits
+  // under the new one's failures, describing tests that are no longer on screen.
+  useEffect(() => {
+    setTriage(null);
+    setError(null);
+    setNothingToDo(false);
+  }, [runId]);
+
+  async function explain() {
+    setBusy(true);
+    setError(null);
+    try {
+      const found = await api.analysis.forRun(runId);
+      setTriage(found);
+      // The rows carry their own verdicts now, so the panel below reloads.
+      onDone();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not explain this run";
+
+      // Not a failure — the work was already done, probably on an earlier
+      // visit. Reporting "already explained" in red says something has gone
+      // wrong when nothing has, so the control simply goes away.
+      if (message.includes("already been explained")) {
+        setNothingToDo(true);
+      } else {
+        setError(message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (nothingToDo) return null;
+
+  if (triage) {
+    return (
+      <div className="rounded-md border border-border bg-card p-3.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="outline">
+            {triage.distinct_causes === 1
+              ? "1 underlying cause"
+              : `${triage.distinct_causes} underlying causes`}
+          </Badge>
+          <Badge tone="neutral">
+            {triage.analyses.length} failure(s) explained
+          </Badge>
+          <span className="ml-auto text-[11px] text-muted-foreground">
+            {triage.model} · {triage.tokens.toLocaleString()} tokens · $
+            {triage.cost_usd.toFixed(4)}
+          </span>
+        </div>
+        <p className="mt-2.5 text-[13px] leading-relaxed">{triage.summary}</p>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Each failure now carries its own explanation below. Open one and
+          choose “Explain this failure” for a closer look with the screenshot —
+          this pass read the errors only.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <Button variant="outline" size="sm" onClick={() => void explain()} disabled={busy}>
+          <Sparkles className={busy ? "animate-pulse" : ""} />
+          {busy ? "Reading the failures…" : "Explain all failures"}
+        </Button>
+      </div>
+      {error && <Alert>{error}</Alert>}
+    </div>
   );
 }
 

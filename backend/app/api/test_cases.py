@@ -7,6 +7,8 @@ from app.models.enums import UserRole
 from app.schemas.test_case import (
     CaseVocabulary,
     CaseWrite,
+    CoverageRead,
+    FlakyRead,
     GenerateCasesRequest,
     GenerateCasesResult,
     GenerateRequest,
@@ -208,3 +210,29 @@ def update_case(
 def delete_case(case_id: int, db: DbSession, user: CurrentUser) -> None:
     """Drop one case. The recorded one is refused — it is the session itself."""
     CodegenService(db).delete_case(case_id, user)
+
+
+@router.get("/suites/{suite_id}/coverage", response_model=CoverageRead)
+def suite_coverage(suite_id: int, db: DbSession, user: CurrentUser) -> CoverageRead:
+    """Which elements the recording found that no test in this suite drives.
+
+    The only coverage figure this tool can honestly produce. It cannot see the
+    application's code, so it does not claim to: this is "of what we captured
+    on the way through, how much is being checked", which is a smaller claim
+    and a true one.
+    """
+    return CoverageRead.model_validate(CodegenService(db).coverage(suite_id, user))
+
+
+@router.get("/suites/{suite_id}/flaky", response_model=list[FlakyRead])
+def suite_flaky(suite_id: int, db: DbSession, user: CurrentUser) -> list[FlakyRead]:
+    """Tests here whose verdict changes without the test changing.
+
+    Worked out from the recent runs each time it is asked, rather than written
+    onto a result: flakiness is a property of a history, and no single run can
+    see it. Worst first — the test that changes its mind most often is the one
+    costing the most attention.
+    """
+    return [
+        FlakyRead.model_validate(f) for f in CodegenService(db).flaky(suite_id, user)
+    ]

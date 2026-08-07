@@ -125,12 +125,6 @@ export function FailureAnalysis({ resultId }: { resultId: number }) {
           <dd className="mt-0.5">{analysis.suggested_fix}</dd>
         </div>
       </dl>
-
-      <p className="mt-3 border-t border-border pt-2 text-[11px] text-muted-foreground">
-        {analysis.model} · {analysis.tokens.toLocaleString()} tokens · $
-        {analysis.cost_usd.toFixed(4)} · read the error, the trace and the
-        screenshot
-      </p>
     </div>
   );
 }

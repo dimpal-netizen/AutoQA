@@ -327,6 +327,26 @@ export interface TestResult {
   artifacts: Artifact[];
 }
 
+/** One failure, with enough around it to be a page of its own.
+ *
+ *  Everything about a failure used to have to fit inside an expanded row of the
+ *  run's table — error, analysis, bug draft, screenshot, recording, trace. It
+ *  stopped fitting, so a failure gets a page, and a page needs its own heading
+ *  and its own way back. */
+export interface TestResultDetail extends TestResult {
+  run_id: number;
+  run_status: RunStatus;
+  project_id: number;
+  project_name: string;
+  suite_id: number | null;
+  suite_name: string;
+  started_at: string | null;
+  /** The same test in the other browsers. "Passes in Chrome, fails in WebKit"
+   *  is the most useful thing to know about a failure, and it is invisible to
+   *  anyone looking at one result on its own. */
+  siblings: TestResult[];
+}
+
 export interface TestRun {
   id: number;
   project_id: number;
@@ -544,6 +564,76 @@ export interface Analysis {
   tokens: number;
   cost_usd: number;
   created_at: string;
+}
+
+/** A whole run explained in one pass.
+ *
+ *  `distinct_causes` is the number that changes someone's day: "16 failed" and
+ *  "16 failed, 3 causes" are a week and an afternoon. Nothing that looks at a
+ *  single failure can tell them apart, which is why this exists alongside the
+ *  per-failure analysis rather than replacing it. */
+export interface RunTriage {
+  analyses: Analysis[];
+  summary: string;
+  distinct_causes: number;
+  model: string;
+  tokens: number;
+  cost_usd: number;
+}
+
+/** One exchange, sent back with the next question so a follow-up works. */
+export interface AskTurn {
+  question: string;
+  answer: string;
+}
+
+/** An answer about a project's results, grounded in its stored history. */
+export interface AskAnswer {
+  answer: string;
+  cites: string[];
+  /** False when the stored results did not really support an answer. Shown
+   *  rather than hidden: acting on a confident wrong answer costs an
+   *  afternoon. */
+  confident: boolean;
+  model: string;
+  tokens: number;
+  cost_usd: number;
+}
+
+/** One element only the recorded happy path drives. */
+export interface Untouched {
+  page: string;
+  page_url: string;
+  element: string;
+  label: string;
+  /** A test written against this is brittle the day it is written. */
+  fragile: boolean;
+}
+
+/** How much of the recorded flow has a test other than the recording.
+ *
+ *  Not "how much of your code is tested" — this tool cannot see the code. The
+ *  recording walks one route and everything on it works; the value is in the
+ *  cases written around it, so this counts the parts of the flow that have no
+ *  test except the one that was always going to pass. */
+export interface Coverage {
+  touched: number;
+  total: number;
+  percent: number;
+  untouched: Untouched[];
+}
+
+/** One test and browser whose verdict changes without the test changing. */
+export interface FlakyTest {
+  test_case_id: number;
+  browser: string;
+  case_name: string;
+  runs: number;
+  passed: number;
+  failed: number;
+  /** How many times the verdict changed between consecutive runs. */
+  flips: number;
+  summary: string;
 }
 
 // ---------------------------------------------------------------------------

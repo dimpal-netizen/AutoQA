@@ -211,3 +211,121 @@ def test_severity_falls_back_to_medium(raw, expected):
 def test_confidence_is_always_a_real_probability(raw, expected):
     """It is shown as a percentage, so 170% would make the whole panel absurd."""
     assert confidence_of(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# A whole run in one call
+#
+# It used to loop, one request per failure. Sixteen red tests meant sixteen
+# requests — on a free-tier key, a whole day's quota on one run — and every
+# explanation was written by a model that could see only its own failure.
+#
+# Seeing them together is what makes this worth doing rather than merely
+# cheaper. Six tests that all fill the same form and all stop at the same check
+# are one problem, and no per-failure analysis can work that out.
+# ---------------------------------------------------------------------------
+from app.ai.analyser import describe_failures, triage_run
+from app.ai.schemas import RunTriage, TriagedFailure
+
+
+def triaged(number: int, **overrides) -> TriagedFailure:
+    base = dict(
+        number=number,
+        expected="The one-time-password popup should have opened.",
+        actual="The form stayed put with a red message under Mobile Number.",
+        root_cause="The number is rejected for the selected country.",
+        suggested_fix="Choose the country before typing the number.",
+        category="test_bug",
+        severity="high",
+        priority="high",
+        confidence=0.6,
+        is_product_bug=False,
+        same_cause_as=[],
+    )
+    base.update(overrides)
+    return TriagedFailure(**base)
+
+
+def a_triage(**overrides) -> RunTriage:
+    base = dict(
+        summary="Six failures, all on the registration form, all one cause.",
+        distinct_causes=1,
+        failures=[triaged(1), triaged(2)],
+    )
+    base.update(overrides)
+    return RunTriage(**base)
+
+
+def test_one_call_covers_every_failure():
+    """The whole point: sixteen failures must not cost sixteen requests."""
+    client = FakeLLM(a_triage())
+    failures = [FakeResult(id=1), FakeResult(id=2)]
+
+    outcome = triage_run(failures, steps_by_result={}, client=client)
+
+    assert outcome.ok
+    assert len(client.calls) == 1
+    assert len(outcome.triage.failures) == 2
+
+
+def test_the_failures_are_numbered_so_answers_match_the_right_row():
+    """Names repeat across browsers; matching on prose files it against the
+    wrong failure."""
+    text = describe_failures(
+        [FakeResult(id=1), FakeResult(id=2, browser=Browser.WEBKIT)], {}
+    )
+
+    assert "--- Failure 1 ---" in text
+    assert "--- Failure 2 ---" in text
+    assert "webkit" in text
+
+
+def test_the_prompt_asks_which_failures_share_a_cause():
+    client = FakeLLM(a_triage())
+    triage_run([FakeResult()], steps_by_result={}, client=client)
+    prompt = client.calls[0]
+
+    assert "same_cause_as" in prompt
+    assert "distinct_causes" in prompt
+
+
+def test_the_prompt_admits_it_cannot_see_the_screenshots():
+    """The single-failure analysis gets one; sixteen is not affordable. The
+    confidence has to reflect that rather than quietly not."""
+    client = FakeLLM(a_triage())
+    triage_run([FakeResult()], steps_by_result={}, client=client)
+
+    assert "No screenshots are attached" in client.calls[0]
+
+
+def test_a_run_with_nothing_red_is_not_sent_to_the_model():
+    outcome = triage_run([], steps_by_result={}, client=FakeLLM(a_triage()))
+
+    assert not outcome.ok
+    assert "Nothing failed" in outcome.skipped
+
+
+def test_a_provider_failure_does_not_raise():
+    outcome = triage_run(
+        [FakeResult()], steps_by_result={}, client=FakeLLM(error=LLMError("down"))
+    )
+
+    assert not outcome.ok and "down" in outcome.skipped
+
+
+def test_the_token_budget_grows_with_the_number_of_failures():
+    """One explanation each. A fixed ceiling truncates the answer and bins it."""
+    small = FakeLLM(a_triage())
+    triage_run([FakeResult()], steps_by_result={}, client=small)
+
+    large = FakeLLM(a_triage())
+    triage_run([FakeResult(id=i) for i in range(20)], steps_by_result={}, client=large)
+
+    assert large.budgets[0] > small.budgets[0]
+
+
+def test_the_traceback_per_failure_is_shorter_than_a_single_analysis():
+    """Sixteen full tracebacks costs more than the calls it was replacing."""
+    from app.ai.analyser import MAX_TRACE, MAX_TRIAGE_TRACE
+
+    assert MAX_TRIAGE_TRACE < MAX_TRACE

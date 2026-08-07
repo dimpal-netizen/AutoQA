@@ -39,6 +39,7 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { CaseEditor } from "@/components/case-editor";
 import { GenerateCases } from "@/components/generate-cases";
+import { SuiteHealth } from "@/components/suite-health";
 import { RunPanel } from "@/components/run-panel";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
@@ -377,6 +378,10 @@ export function SuiteWorkspace({
                   only copy of it you had to dismiss. A failure still has to be
                   said, because nothing else on the page would show it. */}
               {generateOutcome && <Alert>{generateOutcome}</Alert>}
+
+              {/* Silent unless there is something to say — no strip announcing
+                  "0 flaky, everything covered" on a healthy suite. */}
+              <SuiteHealth suiteId={suite.id} />
 
               {/* The pass/fail summary was here. Every row already carries its
                   own verdict in the Status column, and the Runs tab carries

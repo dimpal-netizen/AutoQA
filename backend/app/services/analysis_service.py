@@ -12,7 +12,15 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.ai.analyser import analyse, category_of, confidence_of, severity_of
+from dataclasses import dataclass, field
+
+from app.ai.analyser import (
+    analyse,
+    category_of,
+    confidence_of,
+    severity_of,
+    triage_run,
+)
 from app.core.config import settings
 from app.models.ai_analysis import AIAnalysis
 from app.models.enums import ArtifactType, ResultStatus
@@ -28,6 +36,25 @@ logger = logging.getLogger(__name__)
 #: A full-page screenshot of a long page can run to several megabytes, and the
 #: cost of sending one is charged per image regardless of what it shows.
 MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024
+
+
+@dataclass
+class RunTriageResult:
+    """What one whole-run triage produced.
+
+    The per-failure analyses are stored rows, so the existing panel shows them
+    with no change. `summary` and `distinct_causes` are the part that only
+    exists because they were explained together, and they belong to the run
+    rather than to any one failure — which is why they are returned here rather
+    than written onto sixteen identical rows.
+    """
+
+    analyses: list[AIAnalysis] = field(default_factory=list)
+    summary: str = ""
+    distinct_causes: int = 1
+    tokens: int = 0
+    cost_usd: float = 0.0
+    model: str = ""
 
 
 def _text(value: str | None) -> str | None:
@@ -99,41 +126,104 @@ class AnalysisService:
         return analysis
 
     # ------------------------------------------------------------------
-    def analyse_run(self, run_id: int, user: User) -> list[AIAnalysis]:
-        """Explain every failure in a run, skipping ones already explained."""
-        self.execution.get(run_id, user)  # authorises
+    def analyse_run(self, run_id: int, user: User) -> RunTriageResult:
+        """Explain every failure in a run, in a single call.
+
+        It used to loop, calling `analyse_result` once per failure. Sixteen red
+        tests meant sixteen requests — on a free-tier key, a whole day's quota
+        spent on one run — and each explanation was written by a model that
+        could see only its own failure.
+
+        Seeing them together is what makes this worth doing rather than merely
+        cheaper. Failures come in families: six tests that all fill the same
+        form and all stop at the same check are one problem, and no per-failure
+        analysis can work that out. "16 failed" and "16 failed, 3 causes" lead
+        to completely different days.
+
+        The trade is the screenshot, which a sixteen-image request cannot carry
+        affordably. So the triage reasons from text with its confidence lowered
+        to match, and `analyse_result` stays the deep look at one failure with
+        the picture attached.
+        """
+        run = self.execution.get(run_id, user)  # authorises
 
         failures = self.results.list_failures(run_id)
         if not failures:
             raise ValidationError("Nothing failed in this run.")
 
-        analyses: list[AIAnalysis] = []
-        already = 0
-        reasons: list[str] = []
-
-        for result in failures:
-            if self.analyses.latest_for_result(result.id) is not None:
-                already += 1
-                continue  # already explained; re-analysing is an explicit action
-            try:
-                analyses.append(self.analyse_result(result.id, user))
-            except ValidationError as exc:
-                # One failure the model would not explain must not cost the
-                # explanations of the others.
-                logger.info("Result %s: not analysed - %s", result.id, exc)
-                reasons.append(str(exc))
-
-        if analyses:
-            return analyses
-
-        # Nothing came back, and *why* decides what the user does next. Saying
-        # "already analysed" when every call was rate limited sends them
-        # looking for analyses that do not exist.
-        if reasons:
+        pending = [
+            result
+            for result in failures
+            if self.analyses.latest_for_result(result.id) is None
+        ]
+        if not pending:
             raise ValidationError(
-                f"Could not analyse {len(reasons)} failure(s): {reasons[0]}"
+                "Every failure in this run has already been explained."
             )
-        raise ValidationError("Every failure in this run has already been analysed.")
+
+        outcome = triage_run(
+            pending,
+            steps_by_result={r.id: self._steps_for(r) for r in pending},
+            suite_name=run.suite.name if run.suite else "",
+            base_url=run.project.base_url if run.project else None,
+            passed=run.passed,
+            finished_at=run.finished_at.isoformat() if run.finished_at else "",
+        )
+        if outcome.skipped:
+            raise ValidationError(outcome.skipped)
+
+        triage = outcome.triage
+        by_number = {found.number: found for found in triage.failures}
+
+        # Split evenly. One call covered all of them, and attributing the whole
+        # cost to whichever happened to be first would make one failure look
+        # sixteen times more expensive to explain than its neighbour.
+        share = max(1, len(pending))
+
+        stored: list[AIAnalysis] = []
+        for number, result in enumerate(pending, 1):
+            found = by_number.get(number)
+            if found is None:
+                # The model skipped one. Better to store nothing for it than to
+                # file the next failure's explanation against this row.
+                logger.info("Run %s: no triage returned for failure %s", run_id, number)
+                continue
+
+            stored.append(
+                self.analyses.create(
+                    result_id=result.id,
+                    run_id=result.run_id,
+                    provider=outcome.provider,
+                    model=outcome.model,
+                    expected=_text(found.expected),
+                    actual=_text(found.actual),
+                    root_cause=found.root_cause.strip(),
+                    suggested_fix=found.suggested_fix.strip(),
+                    category=category_of(found.category),
+                    severity=severity_of(found.severity),
+                    priority=severity_of(found.priority),
+                    is_product_bug=bool(found.is_product_bug),
+                    confidence=confidence_of(found.confidence),
+                    tokens=outcome.tokens // share,
+                    cost_usd=outcome.cost_usd / share,
+                    raw=found.model_dump(),
+                )
+            )
+
+        if not stored:
+            raise ValidationError(
+                "The model returned no usable explanations for this run."
+            )
+
+        self.db.commit()
+        return RunTriageResult(
+            analyses=stored,
+            summary=triage.summary.strip(),
+            distinct_causes=max(1, int(triage.distinct_causes or 1)),
+            tokens=outcome.tokens,
+            cost_usd=outcome.cost_usd,
+            model=outcome.model,
+        )
 
     # ------------------------------------------------------------------
     def _screenshot_for(self, result) -> bytes | None:

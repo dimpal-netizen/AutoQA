@@ -8,18 +8,24 @@ import { useAuthStore } from "@/stores/auth-store";
 import type {
   Analysis,
   Artifact,
+  AskAnswer,
+  AskTurn,
   Browser,
   BugReport,
   BugStatus,
   CaseVocabulary,
   CaseWrite,
+  Coverage,
+  FlakyTest,
   GenerateCasesResult,
   Project,
   ProjectCreate,
   RecordingSession,
   RecordingSessionDetail,
+  RunTriage,
   TestCase,
   TestResult,
+  TestResultDetail,
   TestRun,
   TestRunDetail,
   TestSuite,
@@ -217,6 +223,13 @@ export const api = {
       }),
 
     remove: (id: number) => request<void>(`/suites/${id}`, { method: "DELETE" }),
+
+    /** Which parts of the recorded flow have no test but the recording. */
+    coverage: (suiteId: number) =>
+      request<Coverage>(`/suites/${suiteId}/coverage`),
+
+    /** Tests whose verdict changes without the test changing. */
+    flaky: (suiteId: number) => request<FlakyTest[]>(`/suites/${suiteId}/flaky`),
   },
 
   cases: {
@@ -271,6 +284,10 @@ export const api = {
       return request<TestRun[]>(`/runs${suffix ? `?${suffix}` : ""}`);
     },
 
+    /** One failure, with the context its own page needs. */
+    result: (resultId: number) =>
+      request<TestResultDetail>(`/results/${resultId}`),
+
     /** The run plus its full per-browser result matrix. */
     get: (id: number) => request<TestRunDetail>(`/runs/${id}`),
 
@@ -295,6 +312,29 @@ export const api = {
     /** Whatever has already been worked out, or null. */
     get: (resultId: number) =>
       request<Analysis | null>(`/results/${resultId}/analysis`),
+
+    /** Explain every unexplained failure in a run, in one call.
+     *
+     *  Cheaper than one call per failure by the number of failures, and it can
+     *  say which of them share a cause — which nothing looking at a single
+     *  failure can work out. */
+    forRun: (runId: number) =>
+      request<RunTriage>(`/runs/${runId}/analyze`, { method: "POST" }),
+
+    /** Ask about one failure, with its screenshot attached.
+     *
+     *  The project box answers "what is failing, and since when". This is the
+     *  other half — you are looking at one red test and want to ask about that
+     *  one, with the evidence already on screen. */
+    askAboutFailure: (
+      resultId: number,
+      question: string,
+      history: AskTurn[] = [],
+    ) =>
+      request<AskAnswer>(`/results/${resultId}/ask`, {
+        method: "POST",
+        body: JSON.stringify({ question, history }),
+      }),
   },
 
   reports: {
@@ -374,21 +414,26 @@ export async function downloadTestCaseSheet(
   }
 }
 
-/** Download every bug in the project as one workbook.
+const OFFICE_TYPES = {
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+} as const;
+
+/** Download every bug in the project as one file.
  *
- *  The per-failure report is a ticket you open one at a time. This is the
- *  register — what is open, what is critical — which is a different question
- *  and needs the whole set in one place. */
+ *  Two formats because they answer different questions. `xlsx` is the register
+ *  — what is open, what is critical, sorted and filtered. `docx` is the same
+ *  bugs written out with the screenshot of each failure, which is what you
+ *  attach to a ticket and what a spreadsheet cell cannot hold. */
 export async function downloadBugReport(
   projectId: number,
   filename: string,
+  format: keyof typeof OFFICE_TYPES = "xlsx",
 ): Promise<void> {
-  const blob = await request<Blob>(`/projects/${projectId}/bug-report.xlsx`, {
-    headers: {
-      Accept:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    },
-  });
+  const blob = await request<Blob>(
+    `/projects/${projectId}/bug-report.${format}`,
+    { headers: { Accept: OFFICE_TYPES[format] } },
+  );
   const url = URL.createObjectURL(blob);
   try {
     const link = document.createElement("a");

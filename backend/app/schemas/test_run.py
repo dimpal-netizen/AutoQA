@@ -88,3 +88,26 @@ class RunDetail(RunRead):
     """A run with the full cross-browser matrix."""
 
     results: list[ResultRead] = []
+
+
+class ResultDetail(ResultRead):
+    """One result, with enough around it to be a page of its own.
+
+    A failure used to be readable only inside the run that produced it, which is
+    why everything about it — the error, the analysis, the bug draft, the
+    screenshot, the recording, the trace — had to fit in an expanded table row.
+    It stopped fitting. This carries the names and ids a standalone page needs
+    for its heading and its way back.
+    """
+
+    run_id: int
+    run_status: RunStatus
+    project_id: int
+    project_name: str = ""
+    suite_id: int | None = None
+    suite_name: str = ""
+    started_at: datetime | None = None
+    #: The same test in the other browsers. "Passes in Chrome, fails in WebKit"
+    #: is the single most useful thing to know about a failure, and it is
+    #: invisible to anyone looking at one result on its own.
+    siblings: list[ResultRead] = []
