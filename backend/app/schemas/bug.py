@@ -29,6 +29,11 @@ class BugRead(BaseModel):
     priority: Severity
     status: BugStatus
     created_at: datetime
+    # Named, so a list spanning every project can group itself without a request
+    # per row. Empty on the per-failure lookups, which already know the project.
+    project_name: str = ""
+    # The test that found it, while the run that produced it still exists.
+    case_name: str = ""
 
 
 class BugStatusUpdate(BaseModel):

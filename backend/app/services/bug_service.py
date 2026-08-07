@@ -77,6 +77,23 @@ class BugRepository(BaseRepository[BugReport]):
         )
         return list(self.db.execute(statement).scalars().all())
 
+    def list_for_projects(self, project_ids: list[int], limit: int = 200):
+        """Every bug across several projects, newest first.
+
+        For the page that answers "what is outstanding" without picking a
+        project first — which is the question somebody has before they know
+        which project to open.
+        """
+        if not project_ids:
+            return []
+        statement = (
+            select(BugReport)
+            .where(BugReport.project_id.in_(project_ids))
+            .order_by(BugReport.id.desc())
+            .limit(limit)
+        )
+        return list(self.db.execute(statement).scalars().all())
+
 
 class BugService:
     def __init__(self, db: Session) -> None:
@@ -202,6 +219,17 @@ class BugService:
         """Every bug drafted against this project, newest first."""
         self.execution.codegen.recording_service.project_service.get(project_id, user)
         return self.bugs.list_for_project(project_id, limit=MAX_EXPORT)
+
+    def list_all(self, user: User) -> list[BugReport]:
+        """Every bug across every project this user can see, newest first.
+
+        Scoped by listing their projects first rather than by trusting a filter:
+        the question "which bugs may this person read" has exactly one right
+        answer and it is the one the project service already gives.
+        """
+        projects = self.execution.codegen.recording_service.project_service
+        ids = [p.id for p in projects.list_for_user(user, skip=0, limit=1000)]
+        return self.bugs.list_for_projects(ids)
 
     def export_all(
         self, project_id: int, user: User, *, fmt: str = "xlsx"

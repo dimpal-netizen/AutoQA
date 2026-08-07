@@ -62,7 +62,24 @@ def list_runs(
     runs = ExecutionService(db).list_runs(
         user, project_id=project_id, suite_id=suite_id, skip=skip, limit=limit
     )
-    return [RunRead.model_validate(r) for r in runs]
+    return [_named(run) for run in runs]
+
+
+def _named(run) -> RunRead:
+    """A run with its project and suite named.
+
+    Read here rather than left to the caller: a page listing every run across
+    every project would otherwise make one request per row to find out what it
+    belongs to, and the relationships are already loaded.
+    """
+    return RunRead.model_validate(run).model_copy(
+        update={
+            "project_name": run.project.name if run.project else "",
+            # Empty when the suite has been deleted. A run outlives what it ran,
+            # which is the point of keeping it.
+            "suite_name": run.suite.name if run.suite else "",
+        }
+    )
 
 
 @router.get("/runs/{run_id}", response_model=RunDetail)

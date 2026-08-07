@@ -353,6 +353,10 @@ export const api = {
     forResult: (resultId: number) =>
       request<BugReport | null>(`/results/${resultId}/bug-report`),
 
+    /** Every bug across every project, newest first — for the page that answers
+     *  "what is outstanding" without picking a project first. */
+    listAll: () => request<BugReport[]>("/bug-reports"),
+
     setStatus: (bugId: number, status: BugStatus) =>
       request<BugReport>(`/bug-reports/${bugId}`, {
         method: "PATCH",

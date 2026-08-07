@@ -12,11 +12,13 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Bug,
   FolderKanban,
   Home,
   LayoutDashboard,
   LogOut,
   Menu,
+  Play,
   Radar,
   Video,
   X,
@@ -26,14 +28,19 @@ import { ROLE_LABEL } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 
-// Three entries, in the order you use them. "Tests" is the workspace and the
-// place work actually happens; the other two are things you set up once.
 // In the order the work happens: pick a project, then everything else lives
-// inside it. Recordings is a flat history across all projects.
+// inside it. The three below it are flat histories across every project.
+//
+// Runs and Bugs are here because they were the two nouns with no home. Both
+// were reachable only by opening a project first, which asks you to know where
+// to look — and "what ran, what broke, what is still outstanding" is the
+// question you have *before* you know that.
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/recordings", label: "Recordings", icon: Video },
+  { href: "/runs", label: "Runs", icon: Play },
+  { href: "/bugs", label: "Bugs", icon: Bug },
 ];
 
 export function AppShell({
