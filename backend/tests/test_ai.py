@@ -31,6 +31,10 @@ class FakeLLM(LLMClient):
         self.parsed = parsed
         self.error = error
         self.calls: list[str] = []
+        # The ceiling asked for on each call. A triage over sixteen failures
+        # needs a bigger one than a single analysis, and a fixed budget would
+        # truncate the answer and bin it after paying for it.
+        self.budgets: list[int] = []
 
     def complete(self, prompt, *, system="", max_tokens=8000) -> LLMResponse:
         self.calls.append(prompt)
@@ -44,6 +48,7 @@ class FakeLLM(LLMClient):
         # Recorded so a test can assert the screenshot reached the model.
         self.image = image
         self.calls.append(prompt)
+        self.budgets.append(max_tokens)
         if self.error:
             raise self.error
         return LLMResponse(

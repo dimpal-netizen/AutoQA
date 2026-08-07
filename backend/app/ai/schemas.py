@@ -86,6 +86,82 @@ class DraftedBug(BaseModel):
     priority: str = Field(description="One of: critical, high, medium, low")
 
 
+class ResultsAnswer(BaseModel):
+    """An answer to a question about a project's test results."""
+
+    answer: str = Field(
+        description="The answer, in plain English, as short as the question allows"
+    )
+    cites: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of the tests, suites or runs the answer rests on, so the "
+            "reader can go and look. Empty when it rests on nothing specific."
+        ),
+    )
+    confident: bool = Field(
+        description=(
+            "False when the stored results do not really support an answer — "
+            "too few runs, no analysis, nothing recorded for what was asked"
+        )
+    )
+
+
+class TriagedFailure(BaseModel):
+    """One failure inside a whole-run triage.
+
+    Carries `number` rather than a test name so the answer can be matched back
+    to the exact result it is about. Names repeat — the same test fails in three
+    browsers — and matching on prose the model retyped is how an explanation
+    ends up filed against the wrong failure.
+    """
+
+    number: int = Field(description="The number this failure was listed under")
+    expected: str = Field(description="What the test was waiting to see, in one sentence")
+    actual: str = Field(description="What happened instead, in one sentence")
+    root_cause: str = Field(description="Why, in one or two sentences")
+    suggested_fix: str = Field(description="The concrete next action, starting with a verb")
+    category: str = Field(
+        description=(
+            "One of: application_bug, test_bug, selector_broken, timing, "
+            "environment, test_data, flaky"
+        )
+    )
+    severity: str = Field(description="One of: critical, high, medium, low")
+    priority: str = Field(description="One of: critical, high, medium, low")
+    confidence: float = Field(ge=0.0, le=1.0, description="How sure you are")
+    is_product_bug: bool = Field(
+        description="True if the application is broken, false if the test is"
+    )
+    same_cause_as: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Numbers of other failures in this run with the SAME underlying "
+            "cause. Empty when this one stands alone."
+        ),
+    )
+
+
+class RunTriage(BaseModel):
+    """Every failure in a run, explained together rather than one at a time.
+
+    The grouping is the reason this exists. Six failures with one cause is one
+    afternoon's work; six failures with six causes is a week, and no per-failure
+    analysis can tell the difference because each one only ever sees itself.
+    """
+
+    summary: str = Field(
+        description=(
+            "What is wrong with this run, in two or three sentences, for someone "
+            "deciding whether to ship"
+        )
+    )
+    distinct_causes: int = Field(
+        description="How many genuinely different problems these failures represent"
+    )
+    failures: list[TriagedFailure] = Field(description="One entry per failure listed")
+
+
 class FailureAnalysis(BaseModel):
     """Workflow 3 output: why a test failed and what to do about it.
 

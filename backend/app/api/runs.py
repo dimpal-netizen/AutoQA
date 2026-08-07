@@ -12,7 +12,13 @@ from app.api.deps import CurrentUser, DbSession, require_role
 from app.core.config import settings
 from app.models.enums import UserRole
 from app.repositories.test_run_repo import ArtifactRepository, TestResultRepository
-from app.schemas.test_run import ResultRead, RunCreate, RunDetail, RunRead
+from app.schemas.test_run import (
+    ResultDetail,
+    ResultRead,
+    RunCreate,
+    RunDetail,
+    RunRead,
+)
 from app.services.codegen_service import CodegenService
 from app.services.exceptions import NotFound
 from app.services.execution_service import ExecutionService
@@ -117,6 +123,46 @@ def get_result(result_id: int, db: DbSession, user: CurrentUser) -> list[ResultR
 
     ExecutionService(db).get(result.run_id, user)  # authorises
     return [ResultRead.model_validate(result)]
+
+
+@router.get("/results/{result_id}", response_model=ResultDetail)
+def get_result_detail(
+    result_id: int, db: DbSession, user: CurrentUser
+) -> ResultDetail:
+    """One failure, with enough around it to be read on its own page.
+
+    Everything about a failure used to have to fit inside an expanded row of the
+    run's table — the error, the analysis, the bug draft, the screenshot, the
+    recording and the trace, stacked under a row of a table. It stopped fitting,
+    so a failure gets a page, and a page needs its own heading, its own way back
+    and the context the surrounding table used to supply.
+    """
+    results = TestResultRepository(db)
+
+    result = results.get_full(result_id)
+    if result is None:
+        raise NotFound(f"Result {result_id} not found")
+
+    run = ExecutionService(db).get(result.run_id, user)  # authorises
+
+    return ResultDetail(
+        **ResultRead.model_validate(result).model_dump(),
+        run_id=run.id,
+        run_status=run.status,
+        project_id=run.project_id,
+        project_name=run.project.name if run.project else "",
+        suite_id=run.suite_id,
+        suite_name=run.suite.name if run.suite else "",
+        started_at=run.started_at,
+        siblings=[
+            ResultRead.model_validate(other)
+            for other in results.list_for_run(run.id)
+            # The same test elsewhere, not the whole run. Matched on the
+            # function rather than the case name: names are edited, the module
+            # a test lives in is what identifies it across browsers.
+            if other.function_name == result.function_name and other.id != result.id
+        ],
+    )
 
 
 @router.get("/artifacts/{artifact_id}/download")

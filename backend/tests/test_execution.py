@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.enums import ArtifactType, Browser, ResultStatus
+from app.models.enums import ArtifactType, Browser, ResultStatus, RunStatus
 from app.runner.executor import (
     ARTIFACT_TYPES,
     ExecutionOutcome,
@@ -488,3 +488,42 @@ def test_a_case_untouched_by_the_newest_run_keeps_its_earlier_result():
         2: ResultStatus.PASSED,
         3: ResultStatus.PASSED,
     }
+
+
+
+# ---------------------------------------------------------------------------
+# A failure is a page, not a row
+#
+# Everything about a failure used to have to fit inside an expanded row of the
+# run's table: the error, the explanation, the bug draft, the screenshot, the
+# recording, the trace, and a box for asking questions. Six panels stacked in a
+# table row, with the rest of the run's tests pushed off the screen below them.
+#
+# A page reached by a link cannot borrow context from the table it left, so the
+# fields below are what it needs to stand on its own. Losing one of them breaks
+# a heading or a way back with nothing to catch it.
+# ---------------------------------------------------------------------------
+def test_a_result_carries_what_a_page_of_its_own_needs():
+    from app.schemas.test_run import ResultDetail
+
+    required = set(ResultDetail.model_fields)
+
+    assert {"case_name", "browser", "status", "error_message"} <= required
+    # Its heading, and its way back.
+    assert {"run_id", "project_id", "project_name", "suite_name"} <= required
+    # The evidence, and the same test elsewhere.
+    assert {"artifacts", "siblings"} <= required
+
+
+def test_a_result_with_no_siblings_is_valid():
+    """One browser is the common case; the page must not require a comparison."""
+    from app.schemas.test_run import ResultDetail
+
+    detail = ResultDetail(
+        id=1, case_name="Login", function_name="test_login",
+        browser=Browser.CHROMIUM, status=ResultStatus.FAILED,
+        run_id=2, run_status=RunStatus.FAILED, project_id=3,
+    )
+
+    assert detail.siblings == []
+    assert detail.artifacts == []

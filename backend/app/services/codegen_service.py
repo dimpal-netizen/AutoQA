@@ -34,7 +34,9 @@ from app.repositories.test_case_repo import (
     TestSuiteRepository,
 )
 from app.repositories.test_run_repo import TestResultRepository, TestRunRepository
+from app.services.coverage import Coverage, coverage
 from app.services.exceptions import NotFound, ValidationError
+from app.services.flakiness import Flaky, flakiness
 from app.services.recording_service import RecordingService
 
 logger = logging.getLogger(__name__)
@@ -807,6 +809,23 @@ class CodegenService:
             raise NotFound(f"Test suite {suite_id} not found") from None
 
         return suite
+
+    def coverage(self, suite_id: int, user: User) -> Coverage:
+        """How much of what the recording found this suite's tests drive.
+
+        The only coverage figure this tool can honestly produce. It is not "how
+        much of your code is tested" — it cannot see the code — it is "how much
+        of what we saw on the way through is being checked", which is a smaller
+        claim and a true one.
+        """
+        suite = self.get_suite(suite_id, user)
+        cases = [self.cases.get_with_steps(case.id) for case in suite.cases]
+        return coverage(self._pages_for(suite), [c for c in cases if c])
+
+    def flaky(self, suite_id: int, user: User) -> list[Flaky]:
+        """Tests in this suite whose verdict changes without the test changing."""
+        self.get_suite(suite_id, user)  # authorises
+        return flakiness(TestResultRepository(self.db).history_per_case(suite_id))
 
     def export_testcases(
         self, suite_id: int, user: User, *, run_id: int | None = None

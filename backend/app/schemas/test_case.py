@@ -37,6 +37,53 @@ class GenerateCasesResult(BaseModel):
     cost_usd: float = 0.0
 
 
+class UntouchedRead(BaseModel):
+    """One element the recording found and no test drives."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    page: str
+    page_url: str
+    element: str
+    label: str
+    # A test written against this would be brittle from the day it was written,
+    # so it is worth saying before someone goes and writes one.
+    fragile: bool
+
+
+class CoverageRead(BaseModel):
+    """How much of what the recording found the tests actually use.
+
+    Not "how much of your code is tested" — this tool cannot see the code. It
+    is the smaller, checkable claim: of the elements captured on the way
+    through, these are the ones nobody is checking.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    touched: int
+    total: int
+    percent: int
+    untouched: list[UntouchedRead] = []
+
+
+class FlakyRead(BaseModel):
+    """One test and browser whose verdict changes without the test changing."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    test_case_id: int
+    browser: str
+    case_name: str
+    runs: int
+    passed: int
+    failed: int
+    # How many times the verdict changed between consecutive runs. One flip is
+    # a test that broke and stayed broken; several is one nobody can trust.
+    flips: int
+    summary: str
+
+
 class GenerateRequest(BaseModel):
     name: str | None = Field(default=None, max_length=255)
 

@@ -9,18 +9,21 @@
  */
 
 import { Fragment, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Image as ImageIcon, Video } from "lucide-react";
+import Link from "next/link";
+import {
+  ChevronRight,
+  Image as ImageIcon,
+  Maximize2,
+  Video,
+  X,
+} from "lucide-react";
 import { fetchArtifact } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { FailureAnalysis } from "@/components/failure-analysis";
-import { BugReport } from "@/components/bug-report";
 import {
   BROWSER_LABEL,
   RESULT_BADGE,
   formatDuration,
-  plainError,
   type Artifact,
-  type Browser,
   type ResultStatus,
   type TestResult,
 } from "@/lib/types";
@@ -34,15 +37,15 @@ const ICON: Record<ResultStatus, string> = {
 };
 
 export function ResultMatrix({ results }: { results: TestResult[] }) {
-  // Everything starts closed.
+  // A failure opens its own page rather than an extra row.
   //
-  // This used to open every failure automatically, on the reasoning that
-  // someone looking at a red run came to read the error. That holds for one
-  // failure and stops holding at five: the run expands into a page of stack
-  // traces and analysis prose, and the list of which tests failed — the thing
-  // you actually look at first — is pushed off the screen by the detail of the
-  // first one. The row says what failed; opening it says why.
-  const [openRows, setOpenRows] = useState<Set<number>>(() => new Set());
+  // It expanded inline for a long time, and each thing added to a failure made
+  // that worse: the error, the explanation, the bug draft, the screenshot, the
+  // recording, the trace, a box for asking questions. Six panels stacked inside
+  // a table row, with the rest of the run's tests pushed off the screen below
+  // them. Every one is worth having and none belongs in a row.
+  //
+  // The row says what failed. The page says why.
 
   // Group by test, keeping the order results arrived in.
   const byCase = new Map<string, TestResult[]>();
@@ -71,35 +74,28 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
             const failure = group.find(
               (r) => r.status === "failed" || r.status === "error",
             );
-            const expandable = Boolean(failure);
-            const isOpen = expandable && openRows.has(group[0].id);
 
             return (
               <Fragment key={name}>
-                <tr
-                  className={`border-b ${expandable ? "cursor-pointer hover:bg-muted/50" : ""}`}
-                  onClick={() =>
-                    expandable &&
-                    setOpenRows((current) => {
-                      const next = new Set(current);
-                      if (!next.delete(group[0].id)) next.add(group[0].id);
-                      return next;
-                    })
-                  }
-                >
+                <tr className={`border-b ${failure ? "hover:bg-muted/50" : ""}`}>
                   <td className="py-2 pr-3">
-                    <span className="flex items-center gap-1">
-                      {expandable ? (
-                        isOpen ? (
-                          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                        )
-                      ) : (
+                    {failure ? (
+                      // A link, not a click handler: a failure is a place, so
+                      // it opens in a new tab on a middle click and can be sent
+                      // to whoever should look at it.
+                      <Link
+                        href={`/results/${failure.id}`}
+                        className="flex items-center gap-1 transition-colors hover:text-primary"
+                      >
+                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                        {name}
+                      </Link>
+                    ) : (
+                      <span className="flex items-center gap-1">
                         <span className="size-3.5 shrink-0" />
-                      )}
-                      {name}
-                    </span>
+                        {name}
+                      </span>
+                    )}
                   </td>
 
                   {browsers.map((browser) => {
@@ -128,75 +124,11 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
                     );
                   })}
                 </tr>
-
-                {isOpen && failure && (
-                  <tr className="border-b bg-muted/30">
-                    <td colSpan={browsers.length + 1} className="px-3 py-3">
-                      <FailureDetail results={group} />
-                    </td>
-                  </tr>
-                )}
               </Fragment>
             );
           })}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function FailureDetail({ results }: { results: TestResult[] }) {
-  const failures = results.filter((r) => r.status === "failed" || r.status === "error");
-
-  return (
-    <div className="flex flex-col gap-4">
-      {failures.map((result) => (
-        <div key={result.id} className="flex flex-col gap-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            {BROWSER_LABEL[result.browser as Browser] ?? result.browser}
-            {result.failed_step !== null && ` · failed at step ${result.failed_step}`}
-          </p>
-
-          {/* What happened, in words, before the words the test framework
-              chose. A Manual QA Engineer reading "Locator.click: Timeout
-              30000ms exceeded" learns nothing they can act on, and they are
-              the audience this tool exists for. The technical text stays
-              underneath — it is what you paste to a developer. */}
-          {result.error_message && (
-            <div className="rounded-md border border-destructive/25 bg-destructive-subtle px-2.5 py-2">
-              {plainError(result.error_message) && (
-                <p className="text-[13px] leading-relaxed text-destructive">
-                  {plainError(result.error_message)}
-                </p>
-              )}
-              <p
-                className={`font-mono text-xs leading-relaxed text-destructive ${
-                  plainError(result.error_message) ? "mt-1.5 opacity-70" : ""
-                }`}
-              >
-                {result.error_message}
-              </p>
-            </div>
-          )}
-
-          <FailureAnalysis resultId={result.id} />
-
-          <BugReport resultId={result.id} />
-
-          {result.artifacts.length > 0 && <Evidence artifacts={result.artifacts} />}
-
-          {result.stack_trace && (
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground">
-                Full trace
-              </summary>
-              <pre className="mt-1.5 max-h-64 overflow-auto rounded-md bg-[#0b1220] p-3 font-mono text-xs leading-relaxed text-slate-200">
-                {result.stack_trace}
-              </pre>
-            </details>
-          )}
-        </div>
-      ))}
     </div>
   );
 }
@@ -207,8 +139,11 @@ function FailureDetail({ results }: { results: TestResult[] }) {
  *  linked directly. Every object URL is revoked on unmount or the browser
  *  leaks the whole video.
  */
-function Evidence({ artifacts }: { artifacts: Artifact[] }) {
+export function Evidence({ artifacts }: { artifacts: Artifact[] }) {
   const [urls, setUrls] = useState<Record<number, string>>({});
+  // The screenshot being shown at full size, or null. Held here rather than per
+  // figure so only one can be open at a time.
+  const [zoomed, setZoomed] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -238,39 +173,118 @@ function Evidence({ artifacts }: { artifacts: Artifact[] }) {
   const videos = artifacts.filter((a) => a.type === "video");
 
   return (
-    <div className="flex flex-wrap gap-3">
-      {screenshots.map((artifact) => (
-        <figure key={artifact.id} className="max-w-sm">
-          <figcaption className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-            <ImageIcon className="size-3" />
-            What the page looked like
-          </figcaption>
-          {urls[artifact.id] ? (
-            /* eslint-disable-next-line @next/next/no-img-element -- blob URL, not a static asset */
-            <img
-              src={urls[artifact.id]}
-              alt="Screenshot at the moment the test failed"
-              className="rounded border"
-            />
-          ) : (
-            <div className="h-32 w-64 animate-pulse rounded border bg-muted" />
-          )}
-        </figure>
-      ))}
+    <>
+      {/* Thumbnails, not the pictures themselves.
 
-      {videos.map((artifact) => (
-        <figure key={artifact.id} className="max-w-sm">
-          <figcaption className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-            <Video className="size-3" />
-            Recording of the run
-          </figcaption>
-          {urls[artifact.id] ? (
-            <video src={urls[artifact.id]} controls className="w-full rounded border" />
-          ) : (
-            <div className="h-32 w-64 animate-pulse rounded border bg-muted" />
-          )}
-        </figure>
-      ))}
+          Shown at full size these ran the height of the screen each — a
+          full-page screenshot of a sign-up form is two thousand pixels tall,
+          and three of them pushed the trace and everything else off the page.
+          Scaled down they are unreadable anyway, so the inline copy is a
+          contact sheet: enough to tell one from another, one click to read. */}
+      <div className="flex flex-wrap gap-3">
+        {screenshots.map((artifact) => (
+          <figure key={artifact.id} className="w-56">
+            <figcaption className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <ImageIcon className="size-3 shrink-0" />
+              What the page looked like
+            </figcaption>
+            {urls[artifact.id] ? (
+              <button
+                type="button"
+                onClick={() => setZoomed(urls[artifact.id])}
+                className="group relative block h-36 w-full overflow-hidden rounded border transition-colors hover:border-primary"
+              >
+                {/* Anchored to the top: the useful part of a full-page capture
+                    is the form and the error above the fold, not the footer. */}
+                {/* eslint-disable-next-line @next/next/no-img-element -- blob URL, not a static asset */}
+                <img
+                  src={urls[artifact.id]}
+                  alt="Screenshot at the moment the test failed"
+                  className="h-full w-full object-cover object-top"
+                />
+                <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-medium text-white opacity-0 transition-all group-hover:bg-black/45 group-hover:opacity-100">
+                  <Maximize2 className="mr-1 size-3.5" />
+                  View full size
+                </span>
+              </button>
+            ) : (
+              <div className="h-36 w-full animate-pulse rounded border bg-muted" />
+            )}
+          </figure>
+        ))}
+
+        {videos.map((artifact) => (
+          <figure key={artifact.id} className="w-56">
+            <figcaption className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <Video className="size-3 shrink-0" />
+              Recording of the run
+            </figcaption>
+            {urls[artifact.id] ? (
+              // Kept as a player rather than a still: a recording with no
+              // controls is a picture, and the controls are the point.
+              <video
+                src={urls[artifact.id]}
+                controls
+                className="h-36 w-full rounded border bg-black object-contain"
+              />
+            ) : (
+              <div className="h-36 w-full animate-pulse rounded border bg-muted" />
+            )}
+          </figure>
+        ))}
+      </div>
+
+      {zoomed && <Lightbox src={zoomed} onClose={() => setZoomed(null)} />}
+    </>
+  );
+}
+
+/** The screenshot at the size it was taken.
+ *
+ *  A full-page screenshot shown at column width is unreadable — the error
+ *  message someone opened the failure to read is a few pixels tall. This shows
+ *  it whole, scrollable, and gets out of the way on Escape or a click outside.
+ */
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    function escape(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", escape);
+    // The page behind must not scroll while this is over it.
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", escape);
+      document.body.style.overflow = previous;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Screenshot at the moment the test failed"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/80 p-4 sm:p-8"
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="fixed right-4 top-4 z-10 rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20"
+      >
+        <X className="size-5" />
+      </button>
+
+      {/* eslint-disable-next-line @next/next/no-img-element -- blob URL, not a static asset */}
+      <img
+        src={src}
+        alt="Screenshot at the moment the test failed"
+        // Stops a click on the image itself from closing what it just opened.
+        onClick={(event) => event.stopPropagation()}
+        className="h-auto max-w-full rounded shadow-2xl"
+      />
     </div>
   );
 }
