@@ -348,3 +348,117 @@ def test_the_header_counts_what_is_still_unreviewed():
 
     assert header["Total Bugs"] == "2"
     assert header["Awaiting Review"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# The same bugs as a Word document
+#
+# Not another format of the spreadsheet — a different question. The register
+# answers "what is outstanding, by severity". This answers "here is bug 3, with
+# a picture", which is what gets attached to a ticket. The screenshot is the
+# whole reason it exists: the error text says what the test expected, the image
+# says what was actually on screen, and that is the difference between an
+# application bug and a test one.
+# ---------------------------------------------------------------------------
+#: The smallest thing Word will accept as a picture: a 1x1 PNG.
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000a49444154789c6360000002000100fdff03fa0000000049454e44ae426082"
+)
+
+
+def document(bugs, project_name: str = "Homeske"):
+    """Build and read back, so a test asserts on the file rather than the code."""
+    import io
+
+    from docx import Document
+
+    from app.reports.bugs_doc import build_bug_document
+
+    return Document(io.BytesIO(build_bug_document(bugs, project_name=project_name)))
+
+
+def text_of(doc) -> str:
+    return "\n".join(p.text for p in doc.paragraphs)
+
+
+def test_the_screenshot_is_in_the_document():
+    """The one thing a spreadsheet cell cannot hold."""
+    doc = document([bug(screenshot=PNG)])
+
+    assert len(doc.inline_shapes) == 1
+
+
+def test_every_bug_brings_its_own_screenshot():
+    doc = document([bug(screenshot=PNG), bug(screenshot=PNG), bug(screenshot=PNG)])
+
+    assert len(doc.inline_shapes) == 3
+
+
+def test_a_failure_with_no_screenshot_says_so_rather_than_going_quiet():
+    """A missing picture is worth a sentence; a blank space reads as a bug."""
+    doc = document([bug(screenshot=None)])
+
+    assert "No screenshot was captured" in text_of(doc)
+
+
+def test_an_unreadable_image_costs_one_picture_not_the_report():
+    """Truncated on disk, or a format Word declines. The other bugs still ship."""
+    doc = document([bug(title="First", screenshot=b"not an image"), bug(title="Second", screenshot=PNG)])
+
+    assert "could not be embedded" in text_of(doc)
+    assert "Second" in text_of(doc)
+    assert len(doc.inline_shapes) == 1
+
+
+def test_the_worst_bug_is_the_first_one_you_read_here_too():
+    doc = document([
+        bug(title="Low one", severity=Severity.LOW),
+        bug(title="Critical one", severity=Severity.CRITICAL),
+    ])
+    headings = [p.text for p in doc.paragraphs if p.style.name == "Heading 1"]
+
+    assert headings[0].endswith("Critical one")
+
+
+def test_the_prose_a_developer_needs_is_all_there():
+    doc = document([bug()])
+    body = text_of(doc)
+
+    assert "Login rejects an email with trailing spaces" in body
+    assert "The user is signed in." in body        # expected
+    assert "The page stays on /login." in body     # actual
+    assert "Open /login" in body                   # steps to reproduce
+
+
+def test_an_empty_field_does_not_leave_a_dangling_label():
+    """"Expected:" with nothing after it reads as a tool that failed to fill in."""
+    doc = document([bug(expected="", case_name="")])
+    body = text_of(doc)
+
+    assert "Expected:" not in body
+    assert "Test case:" not in body
+
+
+def test_an_undrafted_bug_says_nobody_has_reviewed_it():
+    doc = document([bug(drafted=False)])
+
+    assert "Not reviewed yet" in text_of(doc)
+
+
+def test_the_summary_counts_what_nobody_has_looked_at():
+    doc = document([bug(drafted=True), bug(drafted=False)])
+
+    assert "2 bug(s)." in text_of(doc)
+    assert "1 have not been reviewed" in text_of(doc)
+
+
+def test_both_exports_are_built_from_the_same_row():
+    """One description of a bug, so the two files cannot drift apart."""
+    from app.reports.bugs import BugRow
+    from app.reports.bugs_doc import build_bug_document
+
+    one = bug()
+    assert isinstance(one, BugRow)
+    assert build_bug_document([one], project_name="P")
+    assert workbook([one])

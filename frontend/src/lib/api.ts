@@ -374,21 +374,26 @@ export async function downloadTestCaseSheet(
   }
 }
 
-/** Download every bug in the project as one workbook.
+const OFFICE_TYPES = {
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+} as const;
+
+/** Download every bug in the project as one file.
  *
- *  The per-failure report is a ticket you open one at a time. This is the
- *  register — what is open, what is critical — which is a different question
- *  and needs the whole set in one place. */
+ *  Two formats because they answer different questions. `xlsx` is the register
+ *  — what is open, what is critical, sorted and filtered. `docx` is the same
+ *  bugs written out with the screenshot of each failure, which is what you
+ *  attach to a ticket and what a spreadsheet cell cannot hold. */
 export async function downloadBugReport(
   projectId: number,
   filename: string,
+  format: keyof typeof OFFICE_TYPES = "xlsx",
 ): Promise<void> {
-  const blob = await request<Blob>(`/projects/${projectId}/bug-report.xlsx`, {
-    headers: {
-      Accept:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    },
-  });
+  const blob = await request<Blob>(
+    `/projects/${projectId}/bug-report.${format}`,
+    { headers: { Accept: OFFICE_TYPES[format] } },
+  );
   const url = URL.createObjectURL(blob);
   try {
     const link = document.createElement("a");

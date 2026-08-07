@@ -12,6 +12,7 @@ from app.services.bug_service import BugService
 router = APIRouter(tags=["bugs"])
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 @router.post(
@@ -62,6 +63,25 @@ def export_bugs(project_id: int, db: DbSession, user: CurrentUser) -> Response:
     return Response(
         content=workbook,
         media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/projects/{project_id}/bug-report.docx")
+def export_bugs_document(project_id: int, db: DbSession, user: CurrentUser) -> Response:
+    """The same bugs as a Word document, with the screenshot of each failure.
+
+    The spreadsheet is the register — sort, filter, count. This is what you
+    attach to a ticket or email to a developer, and the screenshot is why it
+    exists: a cell cannot hold the picture of the page at the moment the test
+    gave up, and that picture is the fastest way to tell an application bug from
+    a test one.
+    """
+    document, filename = BugService(db).export_all(project_id, user, fmt="docx")
+
+    return Response(
+        content=document,
+        media_type=DOCX,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

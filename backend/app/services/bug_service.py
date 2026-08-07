@@ -20,14 +20,16 @@ from sqlalchemy.orm import Session
 from app.ai.analyser import severity_of
 from app.ai.client import LLMError, ai_available, get_llm_client, load_prompt
 from app.ai.schemas import DraftedBug
+from app.core.config import settings
 from app.models.bug_report import BugReport
-from app.models.enums import BugStatus, ResultStatus, Severity
+from app.models.enums import ArtifactType, BugStatus, ResultStatus, Severity
 from app.models.user import User
 from app.reports.bugs import BugRow, build_bug_workbook
+from app.reports.bugs_doc import build_bug_document
 from app.repositories.analysis_repo import AnalysisRepository
 from app.repositories.base import BaseRepository
 from app.repositories.test_case_repo import TestCaseRepository
-from app.repositories.test_run_repo import TestResultRepository
+from app.repositories.test_run_repo import ArtifactRepository, TestResultRepository
 from app.services.exceptions import NotFound, ValidationError
 from app.services.execution_service import ExecutionService
 
@@ -45,6 +47,11 @@ MAX_TRACE = 3000
 #: A ceiling on one export. High enough that no real project reaches it, low
 #: enough that a runaway table cannot build a workbook that never finishes.
 MAX_EXPORT = 2000
+
+#: A full-page screenshot of a long page runs to megabytes, and the Word report
+#: embeds one per bug. Twenty of those is a document nobody can email, which
+#: defeats the point of writing one.
+MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024
 
 
 class BugRepository(BaseRepository[BugReport]):
@@ -196,8 +203,17 @@ class BugService:
         self.execution.codegen.recording_service.project_service.get(project_id, user)
         return self.bugs.list_for_project(project_id, limit=MAX_EXPORT)
 
-    def export_all(self, project_id: int, user: User) -> tuple[bytes, str]:
-        """Every bug in the project as one workbook, and what to call the file.
+    def export_all(
+        self, project_id: int, user: User, *, fmt: str = "xlsx"
+    ) -> tuple[bytes, str]:
+        """Every bug in the project as one file, and what to call it.
+
+        Two formats, because they answer different questions. `xlsx` is the
+        register — rows to sort, filter and count. `docx` is the same bugs
+        written out with the screenshot of each failure, which a spreadsheet
+        cell cannot hold and which is the fastest way to tell an application bug
+        from a test one: the error says what the test expected, the picture says
+        what was on screen.
 
         Two sources, and the sheet does not distinguish between them because the
         reader does not care:
@@ -238,11 +254,70 @@ class BugService:
                 "failing. Run the suite first."
             )
 
-        workbook = build_bug_workbook(rows[:MAX_EXPORT], project_name=project.name)
+        rows = rows[:MAX_EXPORT]
         stem = "".join(
             c if c.isalnum() else "-" for c in project.name.lower()
         ).strip("-") or "project"
-        return workbook, f"{stem}-bug-report.xlsx"
+
+        if fmt == "docx":
+            # Only the document shows them, and reading a screenshot off disk
+            # per bug is not free — so the spreadsheet does not pay for it.
+            for row, result in zip(rows, self._results_for(drafted, failures)):
+                row.screenshot = self._screenshot_for(result) if result else None
+            return (
+                build_bug_document(rows, project_name=project.name),
+                f"{stem}-bug-report.docx",
+            )
+
+        return (
+            build_bug_workbook(rows, project_name=project.name),
+            f"{stem}-bug-report.xlsx",
+        )
+
+    @staticmethod
+    def _results_for(drafted: list, failures: list) -> list:
+        """The result behind each row, in the order the rows were built.
+
+        A drafted bug points at its result unless the run has since been
+        deleted, in which case there is no screenshot to find and None is the
+        honest answer. Grouped failures use their first result: the browsers
+        share a page, and one picture of it is the point rather than four.
+        """
+        grouped: dict[int, list] = {}
+        for result in failures:
+            grouped.setdefault(result.test_case_id, []).append(result)
+        return [bug.result for bug in drafted] + [
+            results[0] for results in grouped.values()
+        ]
+
+    def _screenshot_for(self, result) -> bytes | None:
+        """The page as it looked when the test gave up.
+
+        Never raises. A missing or unreadable file costs that one picture, not
+        the report — the same trade `analysis_service` makes for the same
+        reason.
+        """
+        if result is None:
+            return None
+
+        for artifact in ArtifactRepository(self.db).list_for_result(result.id):
+            if artifact.type is not ArtifactType.SCREENSHOT:
+                continue
+
+            path = (settings.storage_dir / artifact.file_path).resolve()
+            root = settings.storage_dir.resolve()
+            # The stored path is data. Treating it as a filesystem instruction
+            # without this check turns a database read into an arbitrary one.
+            if not path.is_relative_to(root) or not path.is_file():
+                continue
+            if path.stat().st_size > MAX_SCREENSHOT_BYTES:
+                continue
+
+            try:
+                return path.read_bytes()
+            except OSError:
+                logger.exception("Could not read %s", path)
+        return None
 
     def _rows_from_failures(self, failures: list) -> list[BugRow]:
         """One row per failing test, not one per browser.

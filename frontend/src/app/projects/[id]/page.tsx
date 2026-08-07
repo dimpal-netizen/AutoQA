@@ -8,7 +8,7 @@
  *  Record the answer is already on screen.
  */
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bug, ExternalLink, Pencil, Video } from "lucide-react";
 import { api, downloadBugReport } from "@/lib/api";
@@ -160,15 +160,34 @@ function ExportBugs({
   onError: (message: string | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
 
-  async function download() {
+  useEffect(() => {
+    if (!open) return;
+    function away(event: PointerEvent) {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  async function download(format: "xlsx" | "docx") {
+    setOpen(false);
     setBusy(true);
     onError(null);
     try {
       const stem =
         project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ||
         "project";
-      await downloadBugReport(project.id, `${stem}-bug-report.xlsx`);
+      await downloadBugReport(project.id, `${stem}-bug-report.${format}`, format);
     } catch (err) {
       onError(
         err instanceof Error ? err.message : "Could not build the bug report",
@@ -179,15 +198,65 @@ function ExportBugs({
   }
 
   return (
-    <Button
-      variant="outline"
-      onClick={() => void download()}
-      disabled={busy}
-      title="Every failing test in this project, in one spreadsheet — worst severity first. No drafting needed."
+    <div ref={box} className="relative">
+      <Button
+        variant="outline"
+        onClick={() => setOpen((v) => !v)}
+        disabled={busy}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        title="Every failing test in this project, in one file. No drafting needed."
+      >
+        <Bug />
+        {busy ? "Building…" : "Bug report"}
+      </Button>
+
+      {open && (
+        <div
+          role="menu"
+          // z-30 rather than 20: the workspace below has its own z-20 layers,
+          // and a later sibling wins a tie. Still under the z-50 editor panel,
+          // which should cover this rather than the other way round.
+          className="absolute right-0 z-30 mt-1 w-72 overflow-hidden rounded-xl border border-border bg-card p-1 shadow-lg"
+        >
+          {/* Not two formats of one file — two different questions. One is a
+              register you sort and count; the other is a document you attach to
+              a ticket, and only it can carry the screenshots. */}
+          <ExportChoice
+            title="Excel spreadsheet"
+            detail="One row per bug. Sort, filter and count."
+            onClick={() => void download("xlsx")}
+          />
+          <ExportChoice
+            title="Word document"
+            detail="Each bug written out, with the screenshot of the failure."
+            onClick={() => void download("docx")}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExportChoice({
+  title,
+  detail,
+  onClick,
+}: {
+  title: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="w-full rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent"
     >
-      <Bug />
-      {busy ? "Building…" : "Bug report"}
-    </Button>
+      <span className="block text-[13px] font-medium">{title}</span>
+      <span className="block text-xs text-muted-foreground">{detail}</span>
+    </button>
   );
 }
 
@@ -263,10 +332,15 @@ function ProjectWorkspace({ id }: { id: number }) {
         All projects
       </Link>
 
-      <header className="relative overflow-hidden rounded-2xl border border-border bg-card px-6 py-6 shadow-xs sm:px-8">
+      {/* No `overflow-hidden` here, deliberately. It was clipping the gradient
+          below to the rounded corners, and clipping the export menu along with
+          it — the second choice was cut off by the edge of the card. The
+          gradient is the only thing that needed the rounding, so it carries it
+          itself and the header stops cropping its own children. */}
+      <header className="relative rounded-2xl border border-border bg-card px-6 py-6 shadow-xs sm:px-8">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 rounded-2xl"
           style={{
             background:
               "linear-gradient(120deg, var(--primary-subtle) 0%, transparent 62%)",

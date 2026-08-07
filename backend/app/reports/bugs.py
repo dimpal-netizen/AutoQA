@@ -63,6 +63,11 @@ class BugRow:
     #: Shown in its own column, because "nobody has looked at this yet" is a
     #: different thing from "someone triaged it and left it open".
     drafted: bool = False
+    #: The page as it looked when the test gave up. Only the Word report can
+    #: show it — a spreadsheet cell is the wrong place for a picture — but it is
+    #: carried on the row so both exports are built from one description of a
+    #: bug rather than two that can drift apart.
+    screenshot: bytes | None = None
 
 COLUMNS = [
     "Bug ID",
