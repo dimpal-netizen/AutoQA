@@ -68,6 +68,17 @@ class TestSuite(Base, TimestampMixin):
     # Folder the scripts were written to, for opening in VS Code. Stored rather
     # than recomputed so the path stays valid if the setting later changes.
     output_dir: Mapped[str | None] = mapped_column(String(1024))
+    # Checks somebody added to the recorded test, as
+    # [{after, target, kind, expected}]. Stored on the suite rather than on the
+    # case they end up in, because that case is rebuilt from the recording every
+    # time the suite is regenerated — a check written onto it would last until
+    # the next press of a button. Held here, it is re-applied each rebuild.
+    #
+    # The recording itself is not touched. It is a record of what somebody did,
+    # and they did not do these.
+    checks: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
 
     project: Mapped["Project"] = relationship()
     recording: Mapped["RecordingSession | None"] = relationship()

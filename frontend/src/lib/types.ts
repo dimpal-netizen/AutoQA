@@ -367,6 +367,12 @@ export interface TestRun {
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
+  /** Named on the list endpoint, so a page of runs from every project can group
+   *  itself without a request per row. */
+  project_name: string;
+  /** Empty once the suite is deleted — a run outlives what it ran, which is the
+   *  point of keeping it. */
+  suite_name: string;
 }
 
 /** How slowly to drive the browser when watching, in milliseconds per action.
@@ -601,6 +607,24 @@ export interface AskAnswer {
 }
 
 /** One element only the recorded happy path drives. */
+/** One check proposed for a recorded test that asserts nothing.
+ *
+ *  A recording captures what somebody did, not what should have been true
+ *  afterwards — so the test it produces passes as long as every click found
+ *  something to click. */
+export interface SuggestedCheck {
+  after: number;
+  /** What the step it follows actually does, so the row reads "after clicking
+   *  Login" rather than "after step 7" — a number nobody can check. */
+  step: string;
+  target: string;
+  kind: "visible" | "text";
+  expected: string;
+  /** What breaking would look like without it. This is how somebody decides
+   *  whether to keep it. */
+  why: string;
+}
+
 export interface Untouched {
   page: string;
   page_url: string;
@@ -648,6 +672,14 @@ export const BUG_STATUS_TONE: Record<BugStatus, Tone> = {
   wont_fix: "neutral",
 };
 
+/** `wont_fix` is not a word. */
+export const BUG_STATUS_LABEL: Record<BugStatus, string> = {
+  draft: "Draft",
+  open: "Open",
+  resolved: "Resolved",
+  wont_fix: "Won't fix",
+};
+
 export interface BugReport {
   id: number;
   project_id: number;
@@ -663,6 +695,13 @@ export interface BugReport {
   priority: Severity;
   status: BugStatus;
   created_at: string;
+  /** Named on the list endpoints, so a page spanning every project can group
+   *  itself without a request per row. Empty on the per-failure lookups, which
+   *  already know where they are. */
+  project_name: string;
+  /** The test that found it. Empty once the run has been deleted — the bug
+   *  outlives it, which is why its steps were copied in when it was drafted. */
+  case_name: string;
 }
 
 /** The whole report as plain text, for pasting into a tracker. */

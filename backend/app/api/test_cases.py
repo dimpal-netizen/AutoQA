@@ -7,11 +7,13 @@ from app.models.enums import UserRole
 from app.schemas.test_case import (
     CaseVocabulary,
     CaseWrite,
+    ChecksWrite,
     CoverageRead,
     FlakyRead,
     GenerateCasesRequest,
     GenerateCasesResult,
     GenerateRequest,
+    SuggestedCheckRead,
     TestCaseDetail,
     TestSuiteDetail,
     TestSuiteRead,
@@ -236,3 +238,55 @@ def suite_flaky(suite_id: int, db: DbSession, user: CurrentUser) -> list[FlakyRe
     return [
         FlakyRead.model_validate(f) for f in CodegenService(db).flaky(suite_id, user)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Checks for the recorded test
+#
+# A recording captures what somebody did, not what should have been true
+# afterwards — so the test it produces replays the clicks faithfully and asserts
+# nothing. It passes as long as every click found something to click.
+#
+# That test is the baseline every other case in the suite is written around,
+# which makes it the worst one to have no opinion.
+# ---------------------------------------------------------------------------
+@router.post(
+    "/suites/{suite_id}/suggest-checks",
+    response_model=list[SuggestedCheckRead],
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+def suggest_checks(
+    suite_id: int, db: DbSession, user: CurrentUser
+) -> list[SuggestedCheckRead]:
+    """Propose the assertions the recorded test is missing.
+
+    Saves nothing. A check nobody agreed to is how a suite acquires assertions
+    it does not believe, so these come back for review.
+    """
+    return [
+        SuggestedCheckRead(**check)
+        for check in CodegenService(db).suggest_checks(suite_id, user)
+    ]
+
+
+@router.put(
+    "/suites/{suite_id}/checks",
+    response_model=TestSuiteDetail,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+def save_checks(
+    suite_id: int, data: ChecksWrite, db: DbSession, user: CurrentUser
+) -> TestSuiteDetail:
+    """Store the accepted checks and rewrite the recorded test with them.
+
+    A whole replacement rather than an append: the checks are a list somebody
+    curates, and expressing "drop the third one" as a partial update is more
+    ways to be wrong than sending the list you want.
+
+    Stored on the suite rather than written into the case, because the case is
+    rebuilt from the recording every time the suite is regenerated.
+    """
+    suite = CodegenService(db).save_checks(
+        suite_id, user, [c.model_dump() for c in data.checks]
+    )
+    return TestSuiteDetail.model_validate(suite)

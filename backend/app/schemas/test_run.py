@@ -82,6 +82,11 @@ class RunRead(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime
+    # Names, so a list of runs from every project can group itself without a
+    # request per row. Empty when the run has no suite, which happens after one
+    # is deleted — the run is history and outlives what it ran.
+    project_name: str = ""
+    suite_name: str = ""
 
 
 class RunDetail(RunRead):

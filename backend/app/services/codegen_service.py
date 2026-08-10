@@ -34,6 +34,12 @@ from app.repositories.test_case_repo import (
     TestSuiteRepository,
 )
 from app.repositories.test_run_repo import TestResultRepository, TestRunRepository
+from app.services.checks import (
+    Check,
+    apply as apply_checks,
+    page_at as page_at_step,
+    parse as parse_checks,
+)
 from app.services.coverage import Coverage, coverage
 from app.services.exceptions import NotFound, ValidationError
 from app.services.flakiness import Flaky, flakiness
@@ -77,6 +83,49 @@ def _why_nothing_was_usable(outcome) -> str:
 
     detail = "; ".join(f"{reason} ({n})" for reason, n in ranked[:3])
     return f"None of the {total} suggested cases could be used. {detail}"
+
+
+def _pages_by_variable(ir: TestIR):
+    """(variable, page) pairs, the way a step names them."""
+    from app.codegen.converter import page_variables
+
+    by_class = {page.class_name: page for page in ir.pages}
+    return [
+        (var, by_class[class_name])
+        for var, class_name in page_variables(ir)
+        if class_name in by_class
+    ]
+
+
+def _describe_recorded_steps(ir: TestIR) -> str:
+    """The recorded steps, numbered as a check will refer back to them."""
+    return "\n".join(
+        f"  {step.sequence}. {step.description}"
+        + (f"  (typed: {step.input_data[:60]!r})" if step.input_data else "")
+        for step in ir.steps
+    )
+
+
+def describe_elements(pages) -> str:
+    """Every element a check may point at, named the way a step names it."""
+    from app.codegen.synth import elements
+
+    return "\n".join(
+        f"  {item['target']}  ({item['label']}, on {item['page']})"
+        for item in elements(pages)
+    )
+
+
+def _step_description(ir: TestIR, after: int) -> str:
+    """What the step a check follows actually does.
+
+    Sent back with the suggestion so the tickbox reads as "after clicking Login"
+    rather than "after step 7" — a number nobody can check without counting.
+    """
+    for step in ir.steps:
+        if step.sequence == after:
+            return step.description
+    return ""
 
 
 class _Authored:
@@ -475,6 +524,11 @@ class CodegenService:
         Rebuilt rather than stored: the IR is derived data, and keeping a
         serialised copy in the database would be one more thing to migrate
         every time the converter changes.
+
+        Checks somebody added to the recorded test are applied here, on the way
+        out. They live on the suite because this method runs on every
+        regeneration, and a check written into the case instead would survive
+        exactly until the next press of a button.
         """
         if suite.recording_id is None:
             return None
@@ -483,7 +537,7 @@ class CodegenService:
         if not actions:
             return None
 
-        return build_ir(
+        ir = build_ir(
             [
                 {
                     "action_type": a.action_type.value,
@@ -499,6 +553,7 @@ class CodegenService:
             suite_name=suite.name,
             start_url=suite.recording.start_url,
         )
+        return apply_checks(ir, parse_checks(suite.checks))
 
     def _store_case(
         self, suite: TestSuite, synthesised, browser_info: dict, model: str
@@ -821,6 +876,142 @@ class CodegenService:
         suite = self.get_suite(suite_id, user)
         cases = [self.cases.get_with_steps(case.id) for case in suite.cases]
         return coverage(self._pages_for(suite), [c for c in cases if c])
+
+    def suggest_checks(self, suite_id: int, user: User):
+        """Ask what the recorded test should be checking, and check the answer.
+
+        The recorded test asserts nothing — it replays what somebody did, and a
+        recording has no opinion about what should have been true afterwards. So
+        it passes as long as every click found something to click.
+
+        Saves nothing. The suggestions come back for somebody to accept, because
+        a check nobody agreed to is how a suite acquires assertions it does not
+        believe.
+        """
+        from app.ai.client import LLMError, ai_available, get_llm_client, load_prompt
+        from app.ai.schemas import SuggestedChecks
+
+        suite = self.get_suite(suite_id, user)
+        ir = self._recorded_ir(suite)
+        if ir is None or not ir.pages:
+            raise ValidationError(
+                "This suite has no recording behind it, so there are no steps "
+                "to add checks to."
+            )
+
+        if not ai_available():
+            raise ValidationError(
+                "Suggesting checks needs an AI provider. Add a key to .env and "
+                "restart the API."
+            )
+
+        try:
+            client = get_llm_client()
+            response = client.complete_model(
+                load_prompt(
+                    "suggest_checks",
+                    suite_name=ir.suite_name,
+                    start_url=ir.start_url,
+                    steps=_describe_recorded_steps(ir),
+                    pages=describe_elements(ir.pages),
+                ),
+                SuggestedChecks,
+                system=(
+                    "You add the assertions a recorded test is missing. You only "
+                    "ever reference elements you have been shown, and you check "
+                    "what changed rather than what was always there."
+                ),
+                max_tokens=8000,
+            )
+        except LLMError as exc:
+            raise ValidationError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - a provider bug must not 500
+            logger.exception("Suggesting checks failed unexpectedly")
+            raise ValidationError(f"Could not suggest checks: {exc}") from exc
+
+        parsed = response.parsed
+        if not isinstance(parsed, SuggestedChecks) or not parsed.checks:
+            raise ValidationError(
+                "No checks were suggested for this recording. It may be too "
+                "short, or nothing it touched can prove anything."
+            )
+
+        # Two things have to be true, and only the first is obvious.
+        #
+        # The element must exist — a suggestion naming an invented one must not
+        # reach a tickbox saying "add".
+        #
+        # And the test must actually be on that element's page at that point. A
+        # check on the first-name field placed one click before the form is
+        # reached compiles perfectly and fails on every run, which is the worst
+        # of both: it looks like cover and behaves like a bug.
+        known = {
+            f"{var}.{locator.name}"
+            for var, page in _pages_by_variable(ir)
+            for locator in page.locators
+        }
+        last = ir.steps[-1].sequence if ir.steps else 0
+
+        kept = []
+        for check in parsed.checks:
+            after = max(0, min(int(check.after), last))
+            if check.target not in known:
+                continue
+
+            here = page_at_step(ir.steps, after)
+            if here and check.target.split(".", 1)[0] != here:
+                logger.info(
+                    "Dropped a suggested check on %s after step %s - the test "
+                    "is on %s there",
+                    check.target, after, here,
+                )
+                continue
+
+            kept.append(
+                {
+                    "after": after,
+                    "target": check.target,
+                    "kind": check.kind if check.kind in ("visible", "text") else "visible",
+                    "expected": check.expected or "",
+                    "why": " ".join(str(check.why or "").split())[:300],
+                    "step": _step_description(ir, after),
+                }
+            )
+
+        if not kept:
+            raise ValidationError(
+                "Every suggested check was about a page the test is not on at "
+                "that point. Try again — if it keeps happening, the recording "
+                "may move between pages too quickly to check anything."
+            )
+        return kept
+
+    def save_checks(self, suite_id: int, user: User, checks: list[dict]) -> TestSuite:
+        """Store accepted checks and rewrite the recorded test with them.
+
+        Stored on the suite rather than written into the case: the case is
+        rebuilt from the recording on every regeneration, so a check written
+        onto it would last until the next press of a button.
+        """
+        suite = self.get_suite(suite_id, user)
+
+        suite.checks = [
+            Check(
+                after=int(raw.get("after", 0)),
+                target=str(raw.get("target", "")),
+                kind=str(raw.get("kind", "visible")),
+                expected=str(raw.get("expected") or ""),
+            ).as_dict()
+            for raw in checks
+            if "." in str(raw.get("target", ""))
+        ]
+
+        ir = self._recorded_ir(suite)  # applies them on the way out
+        if ir is not None:
+            self._refresh_files(suite, ir)
+
+        self.db.commit()
+        return self.suites.get_full(suite.id)  # type: ignore[return-value]
 
     def flaky(self, suite_id: int, user: User) -> list[Flaky]:
         """Tests in this suite whose verdict changes without the test changing."""

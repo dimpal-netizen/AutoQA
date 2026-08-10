@@ -41,13 +41,37 @@ def get_bug(bug_id: int, db: DbSession, user: CurrentUser) -> BugRead:
     return BugRead.model_validate(BugService(db).get(bug_id, user))
 
 
+@router.get("/bug-reports", response_model=list[BugRead])
+def list_all_bugs(db: DbSession, user: CurrentUser) -> list[BugRead]:
+    """Every bug across every project, newest first.
+
+    For the page that answers "what is outstanding" without picking a project
+    first — which is the question somebody has before they know which project
+    to open.
+    """
+    return [_named(bug) for bug in BugService(db).list_all(user)]
+
+
 @router.get("/projects/{project_id}/bug-reports", response_model=list[BugRead])
 def list_bugs(project_id: int, db: DbSession, user: CurrentUser) -> list[BugRead]:
     """Every bug drafted against this project, newest first."""
-    return [
-        BugRead.model_validate(bug)
-        for bug in BugService(db).list_for_project(project_id, user)
-    ]
+    return [_named(bug) for bug in BugService(db).list_for_project(project_id, user)]
+
+
+def _named(bug) -> BugRead:
+    """A bug with its project and the test that found it named.
+
+    Read here rather than left to the caller: a page listing every bug would
+    otherwise make a request per row to find out what it belongs to.
+    """
+    return BugRead.model_validate(bug).model_copy(
+        update={
+            "project_name": bug.project.name if bug.project else "",
+            # Null once the run is deleted — the bug outlives it, which is why
+            # its steps were copied in when it was drafted.
+            "case_name": getattr(bug.result, "case_name", "") if bug.result else "",
+        }
+    )
 
 
 @router.get("/projects/{project_id}/bug-report.xlsx")
