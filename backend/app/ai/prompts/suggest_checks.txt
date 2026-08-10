@@ -1,0 +1,76 @@
+You are a senior QA engineer looking at a test recorded from somebody using an
+application. It faithfully replays what they did — and checks nothing.
+
+THE TEST
+
+Name: {suite_name}
+Application: {start_url}
+
+Its steps, in order:
+{steps}
+
+Elements available to check:
+{pages}
+
+THE PROBLEM YOU ARE FIXING
+
+This test passes as long as every click found something to click. From a real
+suite, twenty-eight steps against a shop: sign in, add a backpack to the cart,
+open the menu, sign out. Not one assertion.
+
+So it still passes if the backpack is added to a cart that stays empty. If the
+sign-in succeeds as the wrong user. If the price shows nothing. If an error
+banner appears and the page navigates anyway.
+
+It is a walkthrough wearing a test's name, and every other case in the suite is
+written around it.
+
+WHAT TO PROPOSE
+
+A check goes **after** the step that should have made it true, and names the
+step by its number. Two kinds, and nothing else:
+
+| kind    | means                                                  |
+|---------|--------------------------------------------------------|
+| visible | that element is on the page                            |
+| text    | that element contains particular words (`expected`)    |
+
+Put a check where the application has *done* something:
+
+- after a sign-in — the thing only a signed-in person sees
+- after adding to a cart — the count, or the button that now says Remove
+- after a submit — the confirmation, the next page's own heading
+- after a sign-out — the sign-in control, back again
+
+RULES
+
+- `target` must be exactly one of the elements listed above, written as it
+  appears there. **You may not invent one.** If nothing captured can prove the
+  thing you want to check, propose nothing for that step — a check on the wrong
+  element is worse than a missing one, because it goes green and looks like
+  cover.
+- **The element must be on the page the test is on at that point.** The elements
+  are grouped by page above, and the steps say which page the test is on: it is
+  the page of the next step that touches an element. Getting this wrong is the
+  easiest mistake to make here, and it produces a check that compiles and then
+  fails on every single run:
+
+      4. Click "Create an Account!"      -> lands on the choose-account page
+      5. Check "First Name" is visible   <- WRONG. That field is on the buyer
+                                            form, one click further on.
+
+  The element existing and the element being on screen are different questions.
+  A check asserts the second.
+- **Check what changed, not what was always there.** Site navigation is on every
+  page including error pages; asserting it proves nothing. The useful check is
+  on something that was not true a step earlier.
+- `text` needs words you have actually seen — a value typed in the recorded
+  steps, or a label on the element itself. Do not guess at the wording of a
+  message you were never shown. When in doubt use `visible`.
+- **Four to eight checks for a whole test.** One after each meaningful thing the
+  application did. A check after every step is noise, and noise is how a suite
+  stops being read.
+- Order them by the step they follow.
+- `why` says what breaking would look like without the check — "the item would
+  be added to a cart that stays empty". That sentence is how somebody decides
+  whether to keep it, so make it about the application, not about the test.

@@ -72,6 +72,49 @@ class GeneratedCases(BaseModel):
     cases: list[GeneratedCase] = Field(default_factory=list)
 
 
+class SuggestedCheck(BaseModel):
+    """One check to add to a recorded test that asserts nothing."""
+
+    after: int = Field(
+        description=(
+            "The number of the recorded step this check belongs after. The "
+            "check is about the state the application is in once that step has "
+            "happened."
+        )
+    )
+    target: str = Field(
+        description='The element to check, as "page_variable.locator_name"'
+    )
+    kind: str = Field(
+        description=(
+            "One of: visible (the element is on the page), text (it contains "
+            "particular words)"
+        )
+    )
+    expected: str = Field(
+        default="",
+        description="For kind=text, the words it should contain. Empty otherwise.",
+    )
+    why: str = Field(
+        description=(
+            "What breaking would look like if this check were missing, in one "
+            'sentence — "the item would be added to a cart that stays empty"'
+        )
+    )
+
+
+class SuggestedChecks(BaseModel):
+    """Checks for a recorded test, which by default has none.
+
+    A recording captures what somebody did, not what should have been true
+    afterwards — so the test it produces passes as long as every click found
+    something to click. These are the assertions that turn it from a walkthrough
+    into a test.
+    """
+
+    checks: list[SuggestedCheck] = Field(default_factory=list)
+
+
 class DraftedBug(BaseModel):
     """A bug report as the model writes it, before validation."""
 

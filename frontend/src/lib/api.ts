@@ -15,14 +15,13 @@ import type {
   BugStatus,
   CaseVocabulary,
   CaseWrite,
-  Coverage,
-  FlakyTest,
   GenerateCasesResult,
   Project,
   ProjectCreate,
   RecordingSession,
   RecordingSessionDetail,
   RunTriage,
+  SuggestedCheck,
   TestCase,
   TestResult,
   TestResultDetail,
@@ -224,12 +223,21 @@ export const api = {
 
     remove: (id: number) => request<void>(`/suites/${id}`, { method: "DELETE" }),
 
-    /** Which parts of the recorded flow have no test but the recording. */
-    coverage: (suiteId: number) =>
-      request<Coverage>(`/suites/${suiteId}/coverage`),
+    /** Propose the assertions the recorded test is missing. Saves nothing. */
+    suggestChecks: (suiteId: number) =>
+      request<SuggestedCheck[]>(`/suites/${suiteId}/suggest-checks`, {
+        method: "POST",
+      }),
 
-    /** Tests whose verdict changes without the test changing. */
-    flaky: (suiteId: number) => request<FlakyTest[]>(`/suites/${suiteId}/flaky`),
+    /** Store the accepted checks and rewrite the recorded test with them.
+     *
+     *  A whole replacement, not an append — the checks are a list somebody
+     *  curates, and "drop the third one" is clearer as the list you want. */
+    saveChecks: (suiteId: number, checks: SuggestedCheck[]) =>
+      request<TestSuiteDetail>(`/suites/${suiteId}/checks`, {
+        method: "PUT",
+        body: JSON.stringify({ checks }),
+      }),
   },
 
   cases: {

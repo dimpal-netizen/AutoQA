@@ -607,6 +607,24 @@ export interface AskAnswer {
 }
 
 /** One element only the recorded happy path drives. */
+/** One check proposed for a recorded test that asserts nothing.
+ *
+ *  A recording captures what somebody did, not what should have been true
+ *  afterwards — so the test it produces passes as long as every click found
+ *  something to click. */
+export interface SuggestedCheck {
+  after: number;
+  /** What the step it follows actually does, so the row reads "after clicking
+   *  Login" rather than "after step 7" — a number nobody can check. */
+  step: string;
+  target: string;
+  kind: "visible" | "text";
+  expected: string;
+  /** What breaking would look like without it. This is how somebody decides
+   *  whether to keep it. */
+  why: string;
+}
+
 export interface Untouched {
   page: string;
   page_url: string;

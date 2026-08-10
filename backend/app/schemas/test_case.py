@@ -261,3 +261,24 @@ class CaseVocabulary(BaseModel):
     elements: list[ElementRead]
     placeholders: list[PlaceholderRead]
     max_steps: int
+
+
+class SuggestedCheckRead(BaseModel):
+    """One check proposed for a recorded test that asserts nothing."""
+
+    after: int
+    # What the step it follows actually does, so a tickbox reads "after clicking
+    # Login" rather than "after step 7" — a number nobody can check.
+    step: str = ""
+    target: str
+    kind: str
+    expected: str = ""
+    # What breaking would look like without it. This is how somebody decides
+    # whether to keep it, so it is about the application, not the test.
+    why: str = ""
+
+
+class ChecksWrite(BaseModel):
+    """The checks somebody accepted. Replaces whatever was stored before."""
+
+    checks: list[SuggestedCheckRead] = []

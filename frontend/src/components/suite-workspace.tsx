@@ -39,7 +39,7 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { CaseEditor } from "@/components/case-editor";
 import { GenerateCases } from "@/components/generate-cases";
-import { SuiteHealth } from "@/components/suite-health";
+import { SuggestChecks } from "@/components/suggest-checks";
 import { RunPanel } from "@/components/run-panel";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
@@ -379,9 +379,12 @@ export function SuiteWorkspace({
                   said, because nothing else on the page would show it. */}
               {generateOutcome && <Alert>{generateOutcome}</Alert>}
 
-              {/* Silent unless there is something to say — no strip announcing
-                  "0 flaky, everything covered" on a healthy suite. */}
-              <SuiteHealth suiteId={suite.id} />
+              {/* Only where there is a recording to read. The recorded test is
+                  the baseline every other case is written around, and it
+                  asserts nothing at all. */}
+              {canEdit && suite.recording_id && (
+                <SuggestChecks suiteId={suite.id} onSaved={onChange} />
+              )}
 
               {/* The pass/fail summary was here. Every row already carries its
                   own verdict in the Status column, and the Runs tab carries
