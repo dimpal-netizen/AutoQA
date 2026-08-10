@@ -140,18 +140,27 @@ function Runs() {
   );
 }
 
+/** One run, in fixed columns.
+ *
+ *  Every column after the name has a width and a right edge, because the whole
+ *  point of a list is reading down it. Laid out with `gap` alone, "1 failed"
+ *  and "14 passed · 2 failed" start in different places on consecutive rows, and
+ *  the eye has to find the number on every line instead of scanning one column.
+ */
 function RunRow({ run }: { run: TestRun }) {
   const active = isRunActive(run);
 
   return (
     <Link
       href={`/projects/${run.project_id}`}
-      className="flex flex-wrap items-center gap-3 border-b border-border px-3.5 py-2.5 text-[13px] transition-colors last:border-b-0 hover:bg-muted/50"
+      className="flex items-center gap-3 border-b border-border px-3.5 py-2.5 text-[13px] transition-colors last:border-b-0 hover:bg-muted/50"
     >
-      <Badge tone={RUN_BADGE[run.status]}>
-        {active && <LiveDot />}
-        {run.status}
-      </Badge>
+      <span className="w-20 shrink-0">
+        <Badge tone={RUN_BADGE[run.status]}>
+          {active && <LiveDot />}
+          {run.status}
+        </Badge>
+      </span>
 
       {/* Empty once the suite is deleted. A run outlives what it ran, which is
           the point of keeping it — so it says so rather than showing nothing. */}
@@ -161,22 +170,25 @@ function RunRow({ run }: { run: TestRun }) {
         )}
       </span>
 
-      <span className="tabular text-muted-foreground">
-        {run.passed > 0 && <span className="text-success">{run.passed} passed</span>}
-        {run.passed > 0 && run.failed > 0 && " · "}
-        {run.failed > 0 && (
-          <span className="font-medium text-destructive">{run.failed} failed</span>
-        )}
-        {run.passed === 0 && run.failed === 0 && "no results"}
+      {/* A dash rather than a blank when nothing ran at all — two empty columns
+          read as a rendering fault. The badge beside it already says why. */}
+      <span className="tabular w-16 shrink-0 text-right text-success">
+        {run.passed > 0 ? (
+          `${run.passed} passed`
+        ) : run.failed === 0 ? (
+          <span className="text-muted-foreground">—</span>
+        ) : null}
       </span>
 
-      {run.duration_ms !== null && (
-        <span className="tabular w-16 text-right text-muted-foreground">
-          {formatDuration(run.duration_ms)}
-        </span>
-      )}
+      <span className="tabular w-16 shrink-0 text-right font-medium text-destructive">
+        {run.failed > 0 && `${run.failed} failed`}
+      </span>
 
-      <span className="w-24 text-right text-muted-foreground">
+      <span className="tabular w-16 shrink-0 text-right text-muted-foreground">
+        {run.duration_ms !== null ? formatDuration(run.duration_ms) : ""}
+      </span>
+
+      <span className="w-20 shrink-0 text-right text-muted-foreground">
         {formatRelative(run.finished_at ?? run.created_at)}
       </span>
     </Link>
