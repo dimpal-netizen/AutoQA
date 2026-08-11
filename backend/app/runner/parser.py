@@ -84,13 +84,21 @@ def _parse_case(case) -> ParsedResult:
     skipped = case.find("skipped")
 
     if failure is not None:
+        trace = (failure.text or "")
         return ParsedResult(
             function_name=function_name,
-            status=ResultStatus.FAILED,
+            # Not always FAILED. A test that could not reach its element never
+            # asked the application anything, so it has no verdict to report -
+            # see `could_not_run`.
+            status=(
+                ResultStatus.ERROR
+                if could_not_run(failure.get("message"), trace)
+                else ResultStatus.FAILED
+            ),
             duration_ms=duration_ms,
             error_message=_summarise(failure.get("message")),
-            stack_trace=(failure.text or "").strip() or None,
-            failed_step=_failed_step(failure.text or ""),
+            stack_trace=trace.strip() or None,
+            failed_step=_failed_step(trace),
         )
 
     if error is not None:
@@ -117,6 +125,76 @@ def _parse_case(case) -> ParsedResult:
     return ParsedResult(
         function_name=function_name, status=ResultStatus.PASSED, duration_ms=duration_ms
     )
+
+
+#: Playwright verbs that *drive* the page. Every one of them needs the element
+#: to be there and usable before anything about the application is being asked.
+_DRIVING = (
+    "click", "dblclick", "fill", "type", "press", "check", "uncheck",
+    "select_option", "hover", "set_input_files", "drag_to", "focus", "tap",
+    "clear", "select_text",
+)
+
+_ACTION_TIMEOUT = re.compile(
+    rf"Locator\.(?:{'|'.join(_DRIVING)}): Timeout \d+ms exceeded", re.I
+)
+
+#: Playwright's own words for "I found it and could not use it".
+_UNUSABLE = (
+    "element is not visible",
+    "element is not enabled",
+    "element is not stable",
+    "element is outside of the viewport",
+    "intercepts pointer events",
+)
+
+
+def could_not_run(message: str | None, trace: str | None) -> bool:
+    """Did this test fail to ask the application anything?
+
+    The distinction this draws is the whole difference between a report a tester
+    can act on and one that wastes their afternoon:
+
+      * An **assertion** failed. The test reached the page, made a claim about
+        it, and the claim was false. That is a finding about the application,
+        and it should be red.
+
+      * An **action** could not reach its element. The test never got as far as
+        asking a question, so it has no answer to report - about the
+        application or about anything else. Filing that as a defect points a
+        developer at a page that works.
+
+    Two shapes qualify, and both are Playwright saying so in its own words.
+
+    A strict mode violation: the locator named more than one element and
+    Playwright refused to guess. Nothing about the page is in question.
+
+    An action that timed out on an element it *found*:
+
+        Locator.click: Timeout 30000ms exceeded.
+          - locator resolved to <input type="checkbox"/>
+          - element is not visible
+
+    "resolved to" is the load-bearing half. An element found and unusable is a
+    hidden control, a menu that never opened, a spinner over the button - our
+    problem every time. An element never found at all is left as a failure on
+    purpose: the page genuinely not rendering its Submit button is a real bug,
+    and it looks exactly the same as a selector that has gone stale. Between
+    quietly downgrading a real defect and occasionally over-reporting one, only
+    the second is recoverable.
+    """
+    haystack = f"{message or ''}\n{trace or ''}"
+
+    if "strict mode violation" in haystack.lower():
+        return True
+
+    if not _ACTION_TIMEOUT.search(haystack):
+        return False
+
+    if "locator resolved to" not in haystack.lower():
+        return False  # never found it; that may be a real defect
+
+    return any(phrase in haystack.lower() for phrase in _UNUSABLE)
 
 
 def _summarise(message: str | None) -> str | None:

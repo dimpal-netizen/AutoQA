@@ -75,6 +75,90 @@ def unhealed(page_object: object, name: str) -> Locator:
         _substitutes_allowed = True
 
 
+#: A hover that opens a menu opens it at once or not at all. Waiting the full
+#: thirty seconds only delays a failure the next step will describe better.
+REVEAL_TIMEOUT_MS = 2_000
+
+
+def reveal(target: Locator) -> None:
+    """Hover something whose only job is to open a menu.
+
+    Failures are swallowed on purpose, and that is not the usual "ignore the
+    error" - it is where the error belongs.
+
+    A hover asserts nothing. It exists so the next step can reach an item that
+    is hidden until the pointer arrives. If the hover works, the next step is
+    the one with something to say. If it does not, the next step still is:
+
+        Locator.click: Timeout 30000ms exceeded
+          - locator resolved to <a href="...property-type=HOUSE">House</a>
+          - element is not visible
+
+    which names the menu item nobody could reach. Letting the hover raise
+    instead reports "could not hover the navigation link", which is a fact about
+    the mouse rather than about the application.
+
+    It also removes a whole class of false failure. One suite hovered a button
+    whose label was mid-flight - "Creating Account..." - and whether that step
+    passed came down to how fast the server answered. Sometimes the text had
+    already changed; sometimes a modal had opened over it and taken the pointer.
+    Thirty seconds later the run was red, with nothing wrong anywhere.
+    """
+    try:
+        target.hover(timeout=REVEAL_TIMEOUT_MS)
+    except Exception:  # noqa: BLE001 - any failure here is the next step's news
+        pass
+
+
+def set_checked(box: Locator, checked: bool) -> None:
+    """Tick or untick a checkbox the way a person does.
+
+    Almost every modern site hides the real `<input type="checkbox">` and draws
+    a styled box on top of it, so the control the test found is `0x0` pixels:
+
+        <input type="checkbox"/>   box: {width: 0.0, height: 0.0}
+
+    Playwright refuses to act on an element nobody can see, and quite rightly -
+    but it waits the full timeout first, so a filter that works perfectly in the
+    browser fails like this:
+
+        Locator.check: Timeout 30000ms exceeded.
+          - locator resolved to <input type="checkbox"/>
+          - element is not visible
+
+    Thirty seconds, then red, on a feature with nothing wrong with it.
+
+    Clicking the associated `<label>` is what the person did when they recorded
+    it, and the browser forwards that to the input. So: read the state off the
+    input - which needs no visibility, it is a property not a gesture - and if it
+    already matches, do nothing. That is what makes this safe to call twice.
+
+    `force=True` is deliberately not used. It would skip the visibility check and
+    click at the input's coordinates, which happen to land on the styled box, and
+    that works right up until the site moves one a few pixels from the other.
+    """
+    if box.is_checked() == checked:
+        return
+
+    if box.is_visible():
+        box.check() if checked else box.uncheck()
+        return
+
+    label = box.locator("xpath=ancestor::label[1]")
+    if not label.count():
+        box_id = box.get_attribute("id")
+        label = box.page.locator(f"label[for={box_id!r}]") if box_id else label
+
+    if not label.count():
+        # No label to click. Let Playwright raise its own error against the
+        # input, which names the element and says it is not visible - a truer
+        # report than anything invented here.
+        box.check() if checked else box.uncheck()
+        return
+
+    label.first.click()
+
+
 def heal(name: str, candidates: list) -> Locator:
     """The first candidate that finds the element.
 

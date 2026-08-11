@@ -410,7 +410,59 @@
 
     const type = (el.getAttribute?.("type") || "").toLowerCase();
     if (el.tagName === "INPUT" && (type === "checkbox" || type === "radio")) return;
-    record("click", el);
+    record("click", targetOf(el));
+  }
+
+  //: Things a person can operate. A click inside one of these is a click on it.
+  const INTERACTIVE = "a, button, summary, label, select, textarea, input, " +
+    "[role=button], [role=link], [role=tab], [role=menuitem], [role=option], " +
+    "[role=checkbox], [role=radio], [role=switch]";
+
+  /**
+   * The element a person would say they clicked.
+   *
+   * `event.target` is the deepest node under the cursor, which is routinely not
+   * the thing anyone means. Clicking the site logo gives you the <svg> inside
+   * `<a aria-label="Homeske home">`; clicking a play button gives you the <img>
+   * inside the <button>. Neither inner node has a name, so the only way left to
+   * describe it is where it sits:
+   *
+   *     html body header.Navbar-module__Sl14ZG__navbar a...logo svg
+   *
+   * which is both unreadable and wrong the moment anything above it moves. The
+   * <a> and the <button> around them have accessible names, are what the person
+   * pressed, and keep working after a redesign.
+   *
+   * Two passes, in this order:
+   *
+   *   1. If the node is not something you can operate and has no name of its
+   *      own, use the nearest ancestor that is. Four levels: an icon sits one or
+   *      two inside its button, while a whole card wrapped in a link is a
+   *      different element and should not be swallowed.
+   *   2. If what we have still has no size — a marker overlay stretched to zero
+   *      height, an <area> in an image map — use the nearest ancestor with one.
+   *      Playwright refuses to act on an element nobody can see, and waits the
+   *      full thirty seconds before saying so.
+   *
+   * Neither pass is a guess. The click landed inside both ancestors, so a click
+   * on either lands in the same place.
+   */
+  function targetOf(el) {
+    let node = el;
+
+    if (!node.matches?.(INTERACTIVE) && !accessibleName(node)) {
+      for (let up = node, depth = 0; up?.nodeType === 1 && depth < 4; depth++) {
+        if (up.matches?.(INTERACTIVE)) { node = up; break; }
+        up = up.parentElement;
+      }
+    }
+
+    for (let up = node, depth = 0; up?.nodeType === 1 && depth < 4; depth++) {
+      const box = up.getBoundingClientRect?.();
+      if (box && box.width > 0 && box.height > 0) return up;
+      up = up.parentElement;
+    }
+    return node;
   }
 
   function onInput(event) {

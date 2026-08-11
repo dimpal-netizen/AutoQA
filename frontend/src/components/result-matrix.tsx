@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   BROWSER_LABEL,
   RESULT_BADGE,
+  RESULT_LABEL,
   formatDuration,
   type Artifact,
   type ResultStatus,
@@ -112,7 +113,9 @@ export function ResultMatrix({ results }: { results: TestResult[] }) {
                         <Badge
                           tone={RESULT_BADGE[result.status]}
                           className="tabular"
-                          title={result.error_message ?? result.status}
+                          title={`${RESULT_LABEL[result.status] ?? result.status}${
+                            result.error_message ? ` - ${result.error_message}` : ""
+                          }`}
                         >
                           {/* A stopped run leaves results with no duration
                               recorded; "✓ -" is worse than just "✓". */}

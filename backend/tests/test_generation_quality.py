@@ -250,28 +250,65 @@ def test_noise_a_hover_immediately_before_clicking_the_same_thing_is_dropped():
     )
     assert [ActionType(a["action_type"]) for a in cleaned] == [ActionType.CLICK]
 
-def test_noise_a_hover_that_reveals_nothing_is_dropped():
-    """This test used to assert the opposite, and the opposite was wrong.
+def test_noise_a_hover_before_acting_on_something_else_is_kept():
+    """This test has now asserted both answers, and the evidence moved.
 
-    The old rule kept a hover over a *different* element on the theory that it
-    was a menu being opened. Across four real recordings that theory held for
-    none of ten hovers — every one was the cursor crossing a plain link on its
-    way somewhere:
+    It first said keep (a hover over a different element opens a menu). Then
+    four recordings produced ten hovers and not one was a menu - every one was
+    the cursor crossing a link on its way somewhere -
 
         hover "Login" -> hover "Find Agent" -> scroll
         hover "Email" -> click "Create Account"
 
-    and one of them, over a "Creating Account..." message that exists only
-    while the server answers, timed out and failed an entire suite.
+    and one of them, over a "Creating Account..." message that exists only while
+    the server answers, timed out and failed an entire suite. So it said drop
+    unless the element advertised itself with aria-haspopup or a menu role.
+
+    Almost nothing advertises itself. A property site opened its navigation
+    submenus on CSS hover from a plain <a href>, the hover was dropped, and
+    clicking the item inside waited thirty seconds on a link that was in the
+    page the whole time.
+
+    Both failures were real, and only one of them had to be paid: the hazard was
+    never the extra step, it was the extra step being able to fail. A hover
+    asserts nothing, so it is emitted through `reveal` and cannot. Keeping it is
+    then free, and dropping it never was.
     """
     cleaned = normalise(
         [
             action(
                 ActionType.HOVER,
-                selectors=[sel("role_name", "link|Products")],
-                element={"tag": "a", "role": "link", "attributes": {"href": "/products"}},
+                selectors=[sel("role_name", "link|New Projects+")],
+                element={"tag": "a", "role": "link", "attributes": {"href": "/new"}},
             ),
+            action(ActionType.CLICK, selectors=[sel("role_name", "link|House")]),
+        ]
+    )
+    assert [ActionType(a["action_type"]) for a in cleaned] == [
+        ActionType.HOVER,
+        ActionType.CLICK,
+    ]
+
+def test_noise_a_hover_the_pointer_only_passed_through_is_still_dropped():
+    """Scrolling away is close to proof that nothing was revealed."""
+    cleaned = normalise(
+        [
+            action(ActionType.HOVER, selectors=[sel("role_name", "link|Find Agent")]),
+            action(ActionType.SCROLL, payload={"x": 0, "y": 600}),
             action(ActionType.CLICK, selectors=[sel("role_name", "link|Pricing")]),
+        ]
+    )
+    assert [ActionType(a["action_type"]) for a in cleaned] == [
+        ActionType.SCROLL,
+        ActionType.CLICK,
+    ]
+
+def test_noise_a_trailing_hover_is_dropped():
+    """Nothing follows it, so nothing depended on it."""
+    cleaned = normalise(
+        [
+            action(ActionType.CLICK, selectors=[sel("role_name", "link|Pricing")]),
+            action(ActionType.HOVER, selectors=[sel("role_name", "link|Find Agent")]),
         ]
     )
     assert [ActionType(a["action_type"]) for a in cleaned] == [ActionType.CLICK]
@@ -425,3 +462,80 @@ def test_the_full_home_link_expression_is_now_unambiguous():
     assert expression == (
         "page.get_by_role('banner').get_by_role('link', name='Home', exact=True)"
     )
+
+
+# ---------------------------------------------------------------------------
+# What the model is allowed to build a case on
+# ---------------------------------------------------------------------------
+"""The elements offered to the model are not all the elements in the recording.
+
+A recorded test is a faithful record of what someone did, so it keeps every
+element they touched, however awkward. An invented case has no such claim: it
+exists to be trusted, and a case built on an element the runner cannot reliably
+find or act on is a coin toss reported as a verdict.
+
+Both shapes below are from one recording of a property site, and between them
+they produced six red tests against pages with nothing wrong.
+"""
+
+from app.ai.case_generator import describe_pages  # noqa: E402
+from app.codegen.converter import LocatorSpec, PageSpec  # noqa: E402
+
+
+def locator(name, strategy="role_name", *, visible=True):
+    return LocatorSpec(
+        name=name,
+        expression=f"self.page.get_by_role('link', name={name!r})",
+        strategy=strategy,
+        fragile=strategy in {"css", "xpath", "nth_child"},
+        visible=visible,
+    )
+
+
+def test_an_element_findable_only_by_its_position_is_not_offered() -> None:
+    """`home.body_section_5_div_1_section_1_div_2_div_1` has no name because it
+    is a wrapper inside a third-party map widget. A case built on it clicks
+    whatever now sits at that path, or nothing at all."""
+    page = PageSpec(
+        class_name="HomePage", module="home_page", url="https://app.test/",
+        locators=[
+            locator("house_link"),
+            locator("body_section_5_div_1_section_1", strategy="nth_child"),
+            locator("div_div_gm_style_div", strategy="css"),
+        ],
+    )
+
+    described = describe_pages([page])
+
+    assert "HomePage.house_link" in described
+    assert "body_section_5" not in described
+    assert "gm_style" not in described
+
+
+def test_an_element_with_no_size_is_not_offered_even_when_it_has_a_name() -> None:
+    """The trap the positional rule misses. This map marker carried the text
+    "Zenith Towers, Upper Hill, Nairobi" - a good name by any measure - on a
+    <div> stretched to zero height. Playwright will not click it."""
+    page = PageSpec(
+        class_name="HomePage", module="home_page", url="https://app.test/",
+        locators=[
+            locator("house_link"),
+            locator("zenith_towers_upper_hill", strategy="text", visible=False),
+        ],
+    )
+
+    described = describe_pages([page])
+
+    assert "HomePage.house_link" in described
+    assert "zenith_towers" not in described
+
+
+def test_a_page_left_with_nothing_usable_is_not_listed_at_all() -> None:
+    """An empty page heading invites the model to invent something to put under
+    it, which is the one thing it must never do."""
+    page = PageSpec(
+        class_name="MapPage", module="map_page", url="https://app.test/map",
+        locators=[locator("gmimap4_area", strategy="css", visible=False)],
+    )
+
+    assert describe_pages([page]) == ""

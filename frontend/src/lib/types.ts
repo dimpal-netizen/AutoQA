@@ -412,6 +412,27 @@ export const RESULT_BADGE: Record<ResultStatus, Tone> = {
   flaky: "warning",
 };
 
+/** What each status means to the person reading it, rather than to pytest.
+ *
+ *  "Blocked" is the one that earns its place. A test whose click never reached
+ *  its element asked the application nothing, so it has no verdict to give —
+ *  about the application or about anything else. Shown as "Error" it reads as
+ *  a defect and sends someone to look at a page that works; shown as "Failed"
+ *  it is worse. Red has to keep meaning "your application is wrong", or the
+ *  next red one gets dismissed too. */
+export const RESULT_LABEL: Record<ResultStatus, string> = {
+  passed: "Passed",
+  failed: "Failed",
+  error: "Blocked",
+  skipped: "Skipped",
+  flaky: "Flaky",
+};
+
+export const BLOCKED_MEANS =
+  "AutoQA could not reach the element this step needed, so the test never got " +
+  "as far as checking anything. That is a problem with the test, not evidence " +
+  "of a bug in your application.";
+
 export const RUN_BADGE: Record<RunStatus, Tone> = {
   queued: "neutral",
   running: "primary",

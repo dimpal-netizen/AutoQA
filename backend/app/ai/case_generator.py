@@ -85,6 +85,18 @@ def generate_cases(
             )
         )
 
+    described = describe_pages(recorded.pages)
+    if not described:
+        return GenerationOutcome(
+            skipped=(
+                "Every element in this recording can only be found by its "
+                "position in the page, so any test case written against one "
+                "would pass or fail on where things happen to sit rather than "
+                "on whether they work. Add a data-testid to the controls you "
+                "want covered and record again."
+            )
+        )
+
     if client is None:
         if not ai_available():
             return GenerationOutcome(
@@ -106,7 +118,7 @@ def generate_cases(
                 "generate_cases",
                 suite_name=recorded.suite_name,
                 start_url=recorded.start_url,
-                pages=describe_pages(recorded.pages),
+                pages=described,
                 steps=describe_steps(recorded),
                 target_count=count,
             ),
@@ -212,13 +224,51 @@ def _priority(value: str) -> CasePriority:
 # ---------------------------------------------------------------------------
 # What the model is shown
 # ---------------------------------------------------------------------------
+#: Locators that say where an element sits rather than what it is. An element
+#: that has one of these as its *best* way of being found had no name, no role,
+#: no label and no test id — nothing to recognise it by at all.
+_POSITIONAL = {"css", "xpath", "nth_child"}
+
+
 def describe_pages(pages: list[PageSpec]) -> str:
-    """Pages and locators as text — the only elements a case may reference."""
+    """Pages and locators as text — the only elements a case may reference.
+
+    Elements that can only be found by their position are left out, and that
+    omission is the point.
+
+    The recorded test keeps them: it is a faithful record of what someone did,
+    and dropping a step would make it a record of something else. An invented
+    case has no such claim on them. Built on
+
+        home.body_section_5_div_1_section_1_div_2_div_1
+
+    it is a coin toss — the element has no name because it is a wrapper inside a
+    third-party map widget, so the test either clicks whatever now sits at that
+    path or waits thirty seconds and reports a bug against a page that is fine.
+    Either way the red tells you nothing.
+
+    So the vocabulary offered here is the elements a person could name. Fewer
+    cases, and every one of them about something real. Anything left out shows
+    up in the suite as a fragile-selector warning, which is the honest fix: the
+    element needs a `data-testid`, not a cleverer guess.
+
+    Elements that had no size when they were recorded go for the same reason,
+    and they are not always the ones without names. A marker inside a map widget
+    carried the text "Zenith Towers, Upper Hill, Nairobi" - a perfectly good
+    name - on a `<div>` stretched to zero height. Playwright will not act on it,
+    so an invented case that clicks it spends thirty seconds and then reports a
+    broken property listing.
+    """
     lines: list[str] = []
     for page in pages:
+        usable = [
+            loc for loc in page.locators
+            if loc.strategy not in _POSITIONAL and loc.visible
+        ]
+        if not usable:
+            continue
         lines.append(f"{page.class_name}  (url: {page.url})")
-        for locator in page.locators:
-            lines.append(f"  {page.class_name}.{locator.name}")
+        lines.extend(f"  {page.class_name}.{locator.name}" for locator in usable)
     return "\n".join(lines)
 
 

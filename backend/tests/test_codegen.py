@@ -420,10 +420,17 @@ def test_the_test_body_covers_every_action(generated, sample) -> None:
         "page.goto(",
         ".click()",
         ".fill(",
-        ".check()",
-        ".uncheck()",
+        # Not `.check()`/`.uncheck()`: a custom checkbox hides its real input,
+        # and Playwright refuses to act on an element with no size. See
+        # `set_checked` in the healing template.
+        "set_checked(",
+        ", True)",
+        ", False)",
         ".select_option(",
-        ".hover()",
+        # Not `.hover()`. A hover only opens a menu for the step after it and
+        # asserts nothing, so it must not be able to fail the test - see
+        # `reveal` in the healing template.
+        "reveal(",
         ".dblclick()",
         ".press(",
         ".set_input_files(",
@@ -544,6 +551,25 @@ def test_conftest_uses_the_recorded_viewport(sample) -> None:
 
     assert '"width": 1440' in conftest
     assert '"height": 900' in conftest
+
+
+def test_assertions_are_given_longer_than_playwrights_default(sample) -> None:
+    """Actions wait 30s for an element; assertions waited Playwright's default 5.
+
+    So a click that really did navigate, on an app slower than five seconds,
+    failed with "Page URL expected to be '/find-agent'". Driving the same click
+    by hand reached /find-agent every time. The navigation was fine and the test
+    reported a broken link, which is the exact failure AutoQA exists to avoid.
+    """
+    ir = build_ir(sample["actions"], suite_name="Flow", start_url="https://x.test/")
+    conftest = next(
+        s for s in render(ir, browser_info=sample["session"]["browser_info"])
+        if s.path == "conftest.py"
+    ).content
+
+    assert "expect.set_options(" in conftest
+    assert "AUTOQA_EXPECT_TIMEOUT_MS" in conftest, "must stay overridable per run"
+    assert "10_000" in conftest
 
 
 def test_absurd_viewport_falls_back_to_a_sane_default() -> None:

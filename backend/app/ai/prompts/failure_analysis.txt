@@ -29,6 +29,13 @@ HOW TO DECIDE
 
 Work through these in order — the first that fits is usually right:
 
+0. Read the status first. `error` means the test could not act on the element
+   it needed - Playwright found it and refused, because it was hidden, covered,
+   disabled, or matched more than once. The test never got as far as asking the
+   application anything, so it CANNOT be `application_bug`. Say plainly that
+   the step could not be performed and what stood in the way. This one rule
+   overrides everything below it.
+
 1. Did the element not exist, or match nothing? If the test looked for
    something by placeholder or CSS and the page has changed, that is
    `selector_broken`, not an application bug.

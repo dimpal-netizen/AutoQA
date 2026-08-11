@@ -105,6 +105,27 @@ Rules, all of which matter:
 
 - Never assert a page is broken by expecting a normal element to be gone. Site
   navigation in particular is on every page, including error pages.
+
+- **Only act on a control that is actually there when your case reaches it.**
+  Elements are listed under the page they were recorded on, not under the state
+  they appeared in. A dialog's close button, a video overlay, an expanded menu,
+  a "clear filters" link: every one of those was recorded on a page, and none of
+  them is on that page when it first loads.
+
+      goto   /
+      click  home.close_video_button   <- no video is playing. Nothing to close.
+
+  Clicking a control your own case has just said is absent cannot tell you
+  anything. The click waits thirty seconds for an element that was never coming
+  and then reports a bug against a page behaving perfectly.
+
+  If the case is about the control NOT being there, assert that:
+
+      goto           /
+      expect_hidden  home.close_video_button
+
+  If the case is about the control itself, do first whatever the recorded steps
+  did to reveal it, then act on it.
 - Do not guess the wording of an error message you have not seen.
 
 - **One case tests one thing.** A case that logs in with a bad value, then logs

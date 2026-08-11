@@ -52,7 +52,47 @@ _POSITIONAL = {
 }
 
 
-def best_selector(raw_selectors: list[dict[str, Any]]) -> Selector | None:
+#: Tags `get_by_label` is allowed to describe. See `usable_selectors`.
+_FORM_CONTROLS = {"input", "select", "textarea"}
+
+
+def usable_selectors(
+    raw_selectors: list[dict[str, Any]], element: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Drop candidates that would not find the element they were recorded for.
+
+    Only one does that, and it does it silently. `get_by_label` returns the
+    *form control* a label is attached to - never the label, and never anything
+    else inside it. The recorder does not know that, so a click on the styled box
+    of a custom checkbox is recorded as:
+
+        <span> 'House'   ->   label: "House"
+
+    and rendered as `get_by_label("House")`, which resolves to the `<input>`
+    hidden behind that span:
+
+        - locator resolved to <input type="checkbox"/>
+        - element is not visible
+
+    Thirty seconds later the test is red, pointing at an element the recording
+    never touched. Nothing in the failure says the selector changed target, which
+    is what makes this worth ruling out here rather than debugging later.
+
+    An unknown tag keeps every candidate: guessing is what caused the problem.
+    """
+    tag = str((element or {}).get("tag") or "").lower()
+    if not tag or tag in _FORM_CONTROLS:
+        return raw_selectors
+
+    kept = [s for s in raw_selectors if s.get("strategy") != SelectorStrategy.LABEL.value]
+    # Never strip the last one. A label is a poor description of a <span>, but a
+    # test with no locator at all is worse than one aimed slightly wide.
+    return kept or raw_selectors
+
+
+def best_selector(
+    raw_selectors: list[dict[str, Any]], element: dict[str, Any] | None = None
+) -> Selector | None:
     """Pick the most durable candidate. Re-sorts rather than trusting order.
 
     Two properties compete, and the order between them is the whole decision.
@@ -80,7 +120,7 @@ def best_selector(raw_selectors: list[dict[str, Any]]) -> Selector | None:
     if not raw_selectors:
         return None
 
-    candidates = [Selector.from_dict(s) for s in raw_selectors]
+    candidates = [Selector.from_dict(s) for s in usable_selectors(raw_selectors, element)]
     return min(
         candidates,
         key=lambda s: (s.strategy in _POSITIONAL, not s.unique, s.rank, -s.score),
@@ -156,6 +196,103 @@ def scoped_root(raw_selectors: list[dict[str, Any]], root: str = "page") -> str:
     return f"{root}.get_by_role({py_str(role)})" if role else root
 
 
+#: Attributes that say *which* element this is when the name does not, strongest
+#: first. Deliberately excludes anything that changes as the page is used - an
+#: input's `value` would make one field look like a different one per keystroke.
+#:
+#: `href` is last because it is the only one that can carry a record id, and a
+#: locator built on `/properties/cmryim584000q01p42kj4ts8q` describes one row on
+#: one server on one day. It is still worth having: an ambiguous name with no
+#: other way to tell it apart leaves `.first`, which is a guess either way.
+_DISTINGUISHING = ("data-testid", "id", "name", "href")
+
+#: A record id sitting in a URL - all digits, a UUID, or a long opaque token.
+#: The digit is what separates `cmryim584000q01p42kj4ts8q` from a real slug
+#: like `property-management`.
+_RECORD_ID = re.compile(
+    r"^\d+$|^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$|^(?=[a-z0-9]*\d)[a-z0-9]{16,}$",
+    re.I,
+)
+
+
+def _is_stable(attribute: str, value: str) -> bool:
+    """Would this still identify the same element tomorrow?
+
+    Only hrefs are questioned, and only for the segments in their path. A query
+    string like `?listing-type=NEW_PROJECT&property-type=HOUSE` is what the link
+    is *for* and belongs in the locator; `/properties/cmryim584000q01p42kj4ts8q`
+    is a row that will be gone by next week.
+    """
+    if attribute != "href":
+        return True
+    path = value.split("?", 1)[0].split("#", 1)[0]
+    return not any(_RECORD_ID.match(segment) for segment in path.split("/") if segment)
+
+
+def distinguisher(element: dict[str, Any] | None) -> tuple[str, str] | None:
+    """The strongest (attribute, value) pair singling this element out, if any."""
+    attributes = (element or {}).get("attributes") or {}
+    for name in _DISTINGUISHING:
+        value = str(attributes.get(name) or "").strip()
+        if value and _is_stable(name, value):
+            return name, value
+    return None
+
+
+def identity(element: dict[str, Any] | None) -> tuple[str, ...]:
+    """What makes this element itself, beyond what it is called.
+
+    Two nav items can share a role and an accessible name and still be different
+    links. A property site had "House" under its Rent menu and "House" under its
+    New Projects menu:
+
+        <a href="/properties?listing-type=FOR_RENT&property-type=HOUSE">House</a>
+        <a href="/properties?listing-type=NEW_PROJECT&property-type=HOUSE">House</a>
+
+    Both render as `get_by_role("link", name="House", exact=True)`, so the page
+    object kept one property for the two of them and every step aimed at either
+    drove whichever came first. The recorded journey opened the New Projects
+    menu and clicked the item in it; the test opened the same menu and clicked
+    the Rent one, which was hidden, and waited thirty seconds. Nothing in the
+    failure suggested two elements had been merged.
+
+    Everything present is recorded here, and `conflicting` then compares only
+    what the two have in common. That split matters, because the recorder
+    captures whatever the element carried at the moment of the event and it is
+    not the same set twice. The identical email field arrived as
+
+        click  {id: "email", name: "email", data-testid: "email-input"}
+        input  {data-testid: "email-input"}
+
+    Requiring the sets to match would have made those two different elements and
+    split one field into `email_input` and `email_input_2`. Comparing what they
+    share - `data-testid`, which agrees - keeps them one.
+    """
+    attributes = (element or {}).get("attributes") or {}
+    return tuple(
+        f"{name}={value}"
+        for name in _DISTINGUISHING
+        if (value := str(attributes.get(name) or "").strip())
+        and _is_stable(name, value)
+    )
+
+
+def conflicting(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    """Do these two identities prove they are different elements?
+
+    Only a disagreement on an attribute they both carry counts. An element with
+    nothing to identify it is not evidence of anything, and treating "unknown"
+    or "not captured this time" as "different" splits one element into several
+    page-object properties - which is the failure this exists to avoid, in the
+    other direction.
+    """
+    theirs = {pair.split("=", 1)[0]: pair for pair in right}
+    return any(
+        (mine := pair.split("=", 1)[0]) in theirs and theirs[mine] != pair
+        for pair in left
+    )
+
+
 def py_str(value: str) -> str:
     """A Python string literal that is always safe to paste into generated code.
 
@@ -173,7 +310,11 @@ _VISIBLE_NAME = {SelectorStrategy.ROLE_NAME, SelectorStrategy.TEXT}
 
 
 def locator_expression(
-    selector: Selector, root: str = "page", *, scoped: bool = False
+    selector: Selector,
+    root: str = "page",
+    *,
+    scoped: bool = False,
+    narrow: str | None = None,
 ) -> str:
     """Render one selector as a Playwright call on `root`.
 
@@ -199,11 +340,19 @@ def locator_expression(
     Labels and placeholders are left strict on purpose. Two form fields sharing
     a label is a real accessibility defect, and a test that fails on it is
     doing its job.
+
+    `narrow` is an attribute selector that tells this element from the others
+    answering to the same name, and it goes on *before* `.first` - the whole
+    point is to choose which one, and `.first.and_(...)` would pick one and then
+    check it, which is the same guess with an extra step.
     """
     ambiguous = not selector.unique or (
         selector.strategy in _VISIBLE_NAME and not scoped
     )
-    return _render(selector, root) + (".first" if ambiguous else "")
+    expression = _render(selector, root)
+    if narrow:
+        expression = f"{expression}.and_({root}.locator({py_str(narrow)}))"
+    return expression + (".first" if ambiguous else "")
 
 
 def _render(selector: Selector, root: str) -> str:

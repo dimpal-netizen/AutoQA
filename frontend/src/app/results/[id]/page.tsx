@@ -20,7 +20,9 @@ import { ArrowLeft, Clock } from "lucide-react";
 import { api } from "@/lib/api";
 import {
   BROWSER_LABEL,
+  BLOCKED_MEANS,
   RESULT_BADGE,
+  RESULT_LABEL,
   formatDuration,
   plainError,
   type TestResultDetail,
@@ -107,7 +109,7 @@ function Failure({ id }: { id: number }) {
         </h1>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <Badge tone={RESULT_BADGE[result.status] ?? "neutral"}>
-            {result.status}
+            {RESULT_LABEL[result.status] ?? result.status}
           </Badge>
           <span>{BROWSER_LABEL[result.browser] ?? result.browser}</span>
           {result.duration_ms !== null && (
@@ -118,6 +120,15 @@ function Failure({ id }: { id: number }) {
           )}
           {result.failed_step !== null && <span>stopped at step {result.failed_step}</span>}
         </div>
+
+        {/* Said here rather than left to the reader. Someone opening a red row
+            is deciding whether to raise a defect, and this is the sentence that
+            decides it. */}
+        {result.status === "error" && (
+          <p className="rounded-md border border-warning/25 bg-warning-subtle px-3 py-2 text-sm text-warning">
+            {BLOCKED_MEANS}
+          </p>
+        )}
 
         {/* The same test elsewhere. "Passes in Chrome, fails in WebKit" points
             at the application; failing everywhere usually points at the test —

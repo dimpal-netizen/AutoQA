@@ -575,6 +575,16 @@ def _drop_unverifiable(
     resolve, so the browser raises before any assertion runs and the test errors
     instead of reporting anything. A missing host is a DNS question and a
     browser is the wrong instrument for it.
+
+    Note what is deliberately *not* dropped: "it is still visible" about the
+    element just clicked. It looks tautological — Playwright only clicks what is
+    visible — but it is one of the sharper checks there is:
+
+        1. click           RegisterBuyerPage.create_account_button
+        2. expect_visible  RegisterBuyerPage.create_account_button
+
+    A submit that worked navigates away and takes the button with it. Step 2 is
+    asking whether the form rejected the address, and it has two real answers.
     """
     host = urlparse(start_url).hostname if start_url else None
     kept: list[object] = []
