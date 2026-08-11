@@ -21,7 +21,7 @@ import { api, downloadReport } from "@/lib/api";
 import {
   BROWSER_LABEL,
   RUN_BADGE,
-  WATCH_SPEEDS,
+  WATCH_SLOWMO_MS,
   formatDuration,
   isRunActive,
   type Browser,
@@ -30,7 +30,6 @@ import {
   type TestRunDetail,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/input";
 import { Badge, LiveDot } from "@/components/ui/badge";
 import {
   Alert,
@@ -67,8 +66,10 @@ export function RunPanel({
   onRunningChange?: (caseIds: number[] | null) => void;
 }) {
   const [browsers, setBrowsers] = useState<Browser[]>(["chromium"]);
-  const [headless, setHeadless] = useState(true);
-  const [slowMo, setSlowMo] = useState(WATCH_SPEEDS[1].ms);
+  // Every run is watched, stepping through one action at a time. Not a choice:
+  // see WATCH_SLOWMO_MS.
+  const headless = false;
+  const slowMo = WATCH_SLOWMO_MS;
   const [run, setRun] = useState<TestRunDetail | null>(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -287,36 +288,13 @@ export function RunPanel({
             );
           })}
 
-          <label
-            className="ml-1 flex cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm transition-colors hover:border-border-strong"
-            title="Opens a real browser and slows each action down so you can follow along"
+          <span
+            className="ml-1 flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground"
+            title="A real browser opens and steps through one action at a time"
           >
-            <input
-              type="checkbox"
-              checked={!headless}
-              disabled={active}
-              onChange={(e) => setHeadless(!e.target.checked)}
-              className="size-3.5 accent-primary"
-            />
-            <Eye className="size-4 text-muted-foreground" />
+            <Eye className="size-4" />
             Watch it run
-          </label>
-
-          {!headless && (
-            <Select
-              value={slowMo}
-              disabled={active}
-              onChange={(e) => setSlowMo(Number(e.target.value))}
-              className="h-8.5 w-auto text-[13px]"
-              aria-label="Playback speed"
-            >
-              {WATCH_SPEEDS.map((speed) => (
-                <option key={speed.ms} value={speed.ms}>
-                  {speed.label}
-                </option>
-              ))}
-            </Select>
-          )}
+          </span>
 
           <div className="ml-auto flex items-center gap-2">
             {run && !active && (
@@ -355,10 +333,10 @@ export function RunPanel({
         {browsers.length === 0 && (
           <p className="text-xs text-muted-foreground">Pick at least one browser.</p>
         )}
-        {!headless && !active && (
+        {!active && (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            A browser window opens and pauses {slowMo}ms between each action so
-            you can follow along. The run will take noticeably longer.
+            A browser window opens and pauses {slowMo}ms between each action, so
+            you can follow every step. Runs take noticeably longer this way.
           </p>
         )}
         {error && <Alert>{error}</Alert>}

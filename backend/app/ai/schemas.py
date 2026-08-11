@@ -57,7 +57,17 @@ class CaseStep(BaseModel):
     value: str | None = Field(
         default=None, description="Text to type, option to select, key to press, or URL"
     )
-    description: str = Field(description="What this step does, in plain English")
+    # No `description`. It used to be here, and asking for it was the single
+    # most expensive field in the schema: a line of English per step, four to
+    # eight steps a case, twelve cases a call - most of a 28,000-token answer
+    # that then ran out of room mid-JSON and lost the whole request. On a key
+    # allowed twenty requests a day, a request that returns nothing is a large
+    # fraction of the day.
+    #
+    # Nothing was lost by dropping it. "Click the sign in button" is derivable
+    # from the action and the element, `converter.py` has always derived it that
+    # way for recorded steps, and deriving it here means a recorded step and an
+    # invented one finally read alike. See `describe_step` in synth.py.
 
 
 class GeneratedCase(BaseModel):

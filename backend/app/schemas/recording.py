@@ -75,6 +75,12 @@ class ElementInfo(BaseModel):
     text: str | None = Field(default=None, max_length=2048)
     attributes: dict[str, str] = Field(default_factory=dict)
     bounding_box: BoundingBox | None = None
+    # Was the element already on screen before the previous step, or did that
+    # step put it there? Answerable only while the page is in front of us, and
+    # it decides whether a generated test case may use the element at all: a
+    # modal's close button reads exactly like an ordinary one once the recording
+    # is finished. `None` on recordings made before this was captured.
+    was_on_screen: bool | None = None
 
 
 class ViewportInfo(BaseModel):

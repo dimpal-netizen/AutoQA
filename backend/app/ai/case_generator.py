@@ -258,12 +258,27 @@ def describe_pages(pages: list[PageSpec]) -> str:
     name - on a `<div>` stretched to zero height. Playwright will not act on it,
     so an invented case that clicks it spends thirty seconds and then reports a
     broken property listing.
+
+    And elements that were not on screen until the step before reached them: a
+    modal's close button, a video overlay, an item in a menu that has to be
+    opened. In a finished recording these are indistinguishable from the site's
+    ordinary links - `home.close_video_button` has a better accessible name than
+    most of them. The recorded test reaches them the way the person did. A case
+    that opens the page and goes straight there finds nothing:
+
+        goto   /
+        click  home.close_video_button
+
+        Locator.click: Timeout 30000ms exceeded
+
+    Thirty seconds, then a defect against a page that is working. Not offering
+    the element is the only reliable way to not write that case.
     """
     lines: list[str] = []
     for page in pages:
         usable = [
             loc for loc in page.locators
-            if loc.strategy not in _POSITIONAL and loc.visible
+            if loc.strategy not in _POSITIONAL and loc.visible and not loc.revealed
         ]
         if not usable:
             continue

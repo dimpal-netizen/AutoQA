@@ -95,6 +95,17 @@ def render(ir: TestIR, *, browser_info: dict[str, Any] | None = None) -> list[Ge
             )
         )
 
+    # Only when something is uploaded: a 9 KB JPEG in a suite that never asks
+    # for one is dead weight in every checkout.
+    if ir.needs_sample_file:
+        files.append(
+            GeneratedFileSpec(
+                path="pages/_files.py",
+                content=env.get_template("files.py.j2").render(),
+                file_type=FileType.HELPER,
+            )
+        )
+
     width, height = _viewport(browser_info)
     files.append(
         GeneratedFileSpec(

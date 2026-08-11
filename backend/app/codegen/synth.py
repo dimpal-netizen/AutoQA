@@ -66,8 +66,14 @@ VERBS: dict[str, Verb] = {
     "goto": Verb(ActionType.NAVIGATE, False, True, "page.goto({value})"),
     "fill": Verb(ActionType.INPUT, True, True, "{target}.fill({value})", allows_empty=True),
     "click": Verb(ActionType.CLICK, True, False, "{target}.click()"),
-    "check": Verb(ActionType.CHECK, True, False, "{target}.check()"),
-    "uncheck": Verb(ActionType.UNCHECK, True, False, "{target}.uncheck()"),
+    # Not `.check()`. Almost every site hides the real <input> and draws a
+    # styled box over it, so Playwright refuses to act on it and spends thirty
+    # seconds doing so. `set_checked` reads the state off the input and clicks
+    # its label instead - see the healing template. Recorded steps went through
+    # it first; an invented step ticks the same checkbox and needs it just as
+    # much.
+    "check": Verb(ActionType.CHECK, True, False, "set_checked({target}, True)"),
+    "uncheck": Verb(ActionType.UNCHECK, True, False, "set_checked({target}, False)"),
     "select": Verb(ActionType.SELECT, True, True, "{target}.select_option({value})"),
     "press": Verb(ActionType.KEY_PRESS, True, True, "{target}.press({value})"),
     "expect_visible": Verb(
@@ -268,8 +274,11 @@ def synthesise(
     if len(steps_in) > MAX_STEPS:
         raise SynthesisError(f"{len(steps_in)} steps is beyond the {MAX_STEPS} limit")
 
-    steps_in = _drop_unverifiable(steps_in, start_url, name=getattr(case, "name", "?"))
+    steps_in = _drop_unverifiable(
+        steps_in, start_url, pages=pages, name=getattr(case, "name", "?")
+    )
     steps_in = _drop_leaving_claims(steps_in, pages, name=getattr(case, "name", "?"))
+    _assert_arrived_before_driving(steps_in, pages, name=getattr(case, "name", "?"))
 
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
     locators = _locator_index(pages, variable_of)
@@ -358,7 +367,10 @@ def synthesise(
                 action=verb.action,
                 verb=action,
                 code=[line],
-                description=_clean(getattr(raw, "description", "") or str(raw.action)),
+                description=_clean(
+                    getattr(raw, "description", "")
+                    or describe_step(action, locator_name, readable)
+                ),
                 page_var=page_var,
                 locator_name=locator_name,
                 # Carried over from the page object rather than left at the
@@ -386,6 +398,19 @@ def synthesise(
         name=getattr(case, "name", "?"),
     )
 
+    # After `_restore_setup`, deliberately. Signing in adds two `fill` steps of
+    # its own, and that rule works by looking at the gaps between the fields a
+    # case fills - shown the sign-in it decides the case skipped the whole
+    # journey from the login form and restores a click the case does not want.
+    steps = _restore_sign_in(
+        steps,
+        recorded_steps or [],
+        pages,
+        used_pages,
+        {var: class_name for class_name, var in variable_of.items()},
+        name=getattr(case, "name", "?"),
+    )
+
     ir = TestIR(
         suite_name=_clean(getattr(case, "name", "Generated test")),
         function_name=function_name,
@@ -396,6 +421,9 @@ def synthesise(
         pages=[p for p in pages if p.class_name in used_pages],
         steps=steps,
         needs_regex=needs_regex,
+        needs_set_checked=any(
+            step.action in (ActionType.CHECK, ActionType.UNCHECK) for step in steps
+        ),
         needs_uuid=needs_uuid,
         needs_unhealed=uses_unhealed(steps),
     )
@@ -535,8 +563,24 @@ def _assert_meaningful(steps: list[object]) -> None:
     # loosely is worse than one carrying a check that could be sharper.
 
 
+def _bare(url: str) -> str:
+    """A URL reduced to the part that says which page it is.
+
+    Query strings and fragments are dropped because a page object's url is
+    already stored without them, and a trailing slash is not a different page.
+    Relative and absolute forms both reduce to the same path, so a case written
+    as `/products` matches a page recorded at `https://shop.test/products`.
+    """
+    parsed = urlparse((url or "").strip())
+    return (parsed.path or "/").rstrip("/").lower() or "/"
+
+
 def _drop_unverifiable(
-    steps: list[object], start_url: str, *, name: str = "?"
+    steps: list[object],
+    start_url: str,
+    *,
+    pages: list[PageSpec] | None = None,
+    name: str = "?",
 ) -> list[object]:
     """Remove the steps whose verdict could not mean anything, keep the case.
 
@@ -576,6 +620,25 @@ def _drop_unverifiable(
     instead of reporting anything. A missing host is a DNS question and a
     browser is the wrong instrument for it.
 
+    **An assertion about an element, on a page the recording never visited.**
+    From a real suite, red, and reported against a working site:
+
+        goto            /category_products/999
+        expect_visible  home.add_to_cart_link
+
+    The recording never opened that address, so nothing is known about what is
+    on it - and "Add to cart" was recorded on the Home page, which this is not.
+    The claim is a guess about how the site handles a bad URL, and a guess has
+    no business being a verdict. The failure it produced said "the application
+    displayed the generic Products page", which is a normal thing for a site to
+    do with an unknown category.
+
+    Every element assertion after such a `goto` goes. What that leaves is
+    usually nothing, so the case is dropped by the existing "checks nothing"
+    rule - which is right: a bad-URL case cannot be written from a recording
+    that never went there. The URL assertions stay, because the address is
+    knowable without having seen the page.
+
     Note what is deliberately *not* dropped: "it is still visible" about the
     element just clicked. It looks tautological — Playwright only clicks what is
     visible — but it is one of the sharper checks there is:
@@ -587,12 +650,39 @@ def _drop_unverifiable(
     asking whether the form rejected the address, and it has two real answers.
     """
     host = urlparse(start_url).hostname if start_url else None
+    # The start URL counts even when no page object was built from it: the
+    # recording opened it, so it is somewhere we have seen.
+    known = {_bare(page.url) for page in (pages or [])}
+    if known and start_url:
+        known.add(_bare(start_url))
     kept: list[object] = []
     moved_by: object | None = None
+    # True once the case has navigated somewhere the recording never saw, so
+    # nothing is known about what is on screen. Cleared by going back to a page
+    # that was recorded.
+    off_the_map = False
 
     for step in steps:
         action = str(getattr(step, "action", "")).strip().lower()
         value = str(getattr(step, "value", "") or "").strip()
+
+        if action == "goto":
+            off_the_map = bool(known) and _bare(value) not in known
+
+        # Only the assertions that come straight off that landing are a guess.
+        # Once the case does something - clicks, fills - the browser may be
+        # anywhere, and a step that could not be performed fails on its own
+        # terms rather than being second-guessed here.
+        if action and action not in _ASSERTIONS and action != "goto":
+            off_the_map = False
+
+        if off_the_map and action in _ASSERTIONS - _URL_ASSERTIONS:
+            logger.info(
+                "%s: dropped '%s %s' - the recording never opened that address, "
+                "so nothing is known about what is on it",
+                name, action, str(getattr(step, "target", "") or "")[:80],
+            )
+            continue
 
         if action == "goto" and host and value.lower().startswith(("http://", "https://")):
             target = urlparse(value).hostname
@@ -622,6 +712,76 @@ def _drop_unverifiable(
             moved_by = step  # an observation cannot move the browser
 
     return kept
+
+
+#: Verbs that operate the page rather than look at it. Only these are checked
+#: for arrival: they need the element to be in front of them right now, and they
+#: are the ones that spend thirty seconds finding out it is not.
+_DRIVING = {"click", "fill", "check", "uncheck", "select", "press"}
+
+#: Verbs that can leave the page. Everything else - typing, ticking, choosing -
+#: leaves the browser exactly where it was, which is what makes "where are we"
+#: answerable at all.
+_MAY_NAVIGATE = {"click", "press", "goto"}
+
+
+def _assert_arrived_before_driving(
+    steps: list[object], pages: list[PageSpec], *, name: str = "?"
+) -> None:
+    """Refuse a case that reaches for an element one page too early.
+
+    From a real suite, red for a minute and two seconds:
+
+        0. goto   /login
+        1. fill   login.name_input
+        2. fill   login.email_address_input
+        3. check  signup.mr_radio          <- a /signup element
+        4. click  login.signup_button      <- the step that goes to /signup
+
+        Locator.check: Timeout 30000ms exceeded
+
+    The radio button is real and the tester checked it by hand, which is exactly
+    why this was worth catching: the failure said nothing was there, and
+    something was - just not yet. Steps 3 and 4 are the wrong way round.
+
+    Knowing this offline rests on one fact: `fill`, `check`, `uncheck` and
+    `select` cannot navigate. So after a `goto` we know which page the browser
+    is on, and we keep knowing until the case clicks or presses something. From
+    that point it could be anywhere and nothing here second-guesses it - which
+    is why steps 5 onward above are left alone.
+
+    Only driving is checked. An assertion about site chrome recorded on another
+    page is a normal thing to write, and refusing it would cost more than it
+    saves.
+    """
+    by_url = {_bare(page.url): page for page in pages}
+    by_class = {page.class_name: page for page in pages}
+
+    standing_on: PageSpec | None = None
+    for index, step in enumerate(steps):
+        action = str(getattr(step, "action", "")).strip().lower()
+
+        if action == "goto":
+            standing_on = by_url.get(_bare(str(getattr(step, "value", "") or "")))
+            continue
+
+        target = str(getattr(step, "target", "") or "")
+        page = by_class.get(target.split(".", 1)[0]) if "." in target else None
+
+        if (
+            action in _DRIVING
+            and standing_on is not None
+            and page is not None
+            and page is not standing_on
+        ):
+            raise SynthesisError(
+                f"step {index}: {target} is on {page.url}, but the case is still "
+                f"on {standing_on.url} - nothing before it goes there, and "
+                f"typing or ticking cannot"
+            )
+
+        if action in _MAY_NAVIGATE:
+            standing_on = None  # could be anywhere now; stop claiming to know
 
 
 def _drop_leaving_claims(
@@ -710,6 +870,158 @@ def _setup_within(gap: list[StepSpec]) -> list[StepSpec]:
         if step.action is not ActionType.ASSERT
         and (step.action is not ActionType.INPUT or first < index < last)
     ]
+
+
+def _sign_in(recorded: list[StepSpec]) -> tuple[list[StepSpec], set[str], str | None]:
+    """The recorded sign-in, and the pages it unlocked.
+
+    A password field is the one unambiguous marker in a recording. Whatever the
+    site calls its login, whatever the button says, typing into
+    `input[type="password"]` means an account is being used - and every page the
+    recording went on to see, it saw as somebody signed in.
+
+    From one recording of a property site:
+
+        password typed at step 5:  login.password_input
+
+        step   1  home                         open
+        step   2  login                        open
+        step   7  property_owner_dashboard     BEHIND LOGIN
+        step   9  property_owner_add_property  BEHIND LOGIN
+        step  78  property_owner_my_listings   BEHIND LOGIN
+
+    Returns the steps that did the signing in, the page variables that need it,
+    and the variable of the page it was done on. Empty when the recording never
+    signed in, which is most recordings.
+    """
+    at = next((i for i, step in enumerate(recorded) if step.is_password), None)
+    if at is None:
+        return [], set(), None
+
+    page = recorded[at].page_var
+    submitted = next(
+        (
+            i
+            for i in range(at + 1, len(recorded))
+            if recorded[i].page_var == page
+            and recorded[i].action in (ActionType.CLICK, ActionType.KEY_PRESS)
+        ),
+        None,
+    )
+    if submitted is None:
+        return [], set(), None  # typed a password and never sent it; not a sign-in
+
+    # Back to the top of the run of steps on that page: clicking the field,
+    # typing the address, and anything else the form needed.
+    start = at
+    while start > 0 and recorded[start - 1].page_var == page:
+        start -= 1
+
+    behind = {
+        step.page_var
+        for step in recorded[submitted + 1 :]
+        if step.page_var and step.page_var != page
+    }
+    return recorded[start : submitted + 1], behind, page
+
+
+def _restore_sign_in(
+    steps: list[StepSpec],
+    recorded: list[StepSpec],
+    pages: list[PageSpec],
+    used_pages: set[str],
+    class_of_var: dict[str, str],
+    *,
+    name: str = "?",
+) -> list[StepSpec]:
+    """Sign a case in before it opens a page that needs an account.
+
+    A generated case is told to open the page it is about with `goto` rather
+    than clicking through the site, which is right for a login form and wrong
+    for everything behind one:
+
+        goto  /property-owner/add-property
+        fill  PropertyOwnerAddPropertyPage.title_input
+
+        Locator.fill: Timeout 30000ms exceeded
+
+    The application did exactly what it should - bounced an anonymous visitor to
+    the login form - and the field the case wanted was not on it. Fifty-seven
+    seconds, then red, against a site behaving correctly.
+
+    The recording knows how to get in, so the case is given the same four steps
+    it used. Refusing the case instead was the alternative, and it is worse:
+    "add a property with an empty title" is a test worth having, and the only
+    thing wrong with it was a missing sign-in.
+
+    A case that signs itself in is left alone, which is what keeps a test *about*
+    logging in from having a second login glued to its front. So is one that only
+    looks at a protected page without driving it - "opening add-property signed
+    out sends me to the login form" is a real test, and it needs to stay signed
+    out to be one.
+    """
+    sequence, behind, login_var = _sign_in(recorded)
+    if not sequence or not behind:
+        return steps
+
+    if any(step.is_password for step in steps):
+        return steps  # the case signs itself in
+
+    needs_it = any(
+        step.page_var in behind
+        and step.action is not ActionType.ASSERT
+        for step in steps
+    )
+    if not needs_it:
+        return steps
+
+    login_url = next(
+        (page.url for page in pages if page.class_name == class_of_var.get(login_var or "")),
+        None,
+    )
+
+    out: list[StepSpec] = []
+    if login_url:
+        out.append(
+            StepSpec(
+                sequence=0,
+                action=ActionType.NAVIGATE,
+                verb="goto",
+                code=[f"page.goto({py_str(login_url)})"],
+                description=f"Sign in first: open {login_url}",
+            )
+        )
+    for step in sequence:
+        out.append(
+            StepSpec(
+                sequence=len(out),
+                action=step.action,
+                verb=VERB_FOR_ACTION.get(step.action),
+                # `wait_for_url` belongs to the click that navigated during the
+                # recording; the same click here is followed by the case's own
+                # `goto`, so waiting for the recorded destination would hang.
+                code=[line for line in step.code if "wait_for_url" not in line],
+                description=f"{step.description} (signing in, from the recording)",
+                page_var=step.page_var,
+                locator_name=step.locator_name,
+                input_data=step.input_data,
+                strategy=step.strategy,
+                fragile=step.fragile,
+                is_password=step.is_password,
+            )
+        )
+        class_name = class_of_var.get(step.page_var or "")
+        if class_name:
+            used_pages.add(class_name)
+
+    logger.info(
+        "%s: signed in first - the case opens a page the recording only saw "
+        "while logged in", name,
+    )
+    for step in steps:
+        step.sequence = len(out)
+        out.append(step)
+    return out
 
 
 def _restore_setup(
@@ -827,6 +1139,47 @@ def _restore_setup(
         out.append(step)
 
     return out
+
+
+def describe_step(action: str, locator_name: str | None, value: object) -> str:
+    """One step in plain English, without asking a model to write it.
+
+    The model used to send this with every step, and it was the most expensive
+    field in the schema by a wide margin - see `CaseStep`. It is also the most
+    mechanical: an action from a fourteen-word vocabulary and an element with a
+    name we chose ourselves. There is nothing to interpret.
+
+        click   LoginPage.sign_in_button   ->  Click sign in button
+        fill    LoginPage.email_input      ->  Type into email input: 'a@b.c'
+        goto                               ->  Go to /login
+
+    Recorded steps have always been described this way, so the two halves of a
+    suite now read alike - which they never did while one half was written by a
+    model and the other by `converter.py`.
+
+    A placeholder is described by what it produces rather than by its token.
+    `Type into email input: '{{unique_email}}'` in a comment above a line that
+    reads `uuid4()` looks like a substitution that failed to happen.
+    """
+    label = VERB_LABEL.get(action, action.replace("_", " ").capitalize())
+    readable = (locator_name or "").replace("_", " ").strip()
+    if isinstance(value, str):
+        # `_PLACEHOLDER` rather than the token strings, so this accepts exactly
+        # what the substitution itself accepts - one brace or two - and matches
+        # a placeholder embedded in surrounding text. `{unique_name}First` is a
+        # real thing to write, and half a token left in a comment reads worse
+        # than a whole one.
+        value = _PLACEHOLDER.sub(
+            lambda m: PLACEHOLDER_LABEL[f"{{{{{m.group(1)}}}}}"].lower(), value
+        )
+
+    if readable and value not in (None, ""):
+        return f"{label} {readable}: {value!r}"
+    if readable:
+        return f"{label} {readable}"
+    if value not in (None, ""):
+        return f"{label} {value}"
+    return label
 
 
 def _clean(text: str) -> str:

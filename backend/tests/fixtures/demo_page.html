@@ -47,6 +47,17 @@
            alt="" width="24" height="24" />
     </button>
 
+    <!-- Only on the page once the video is playing. Indistinguishable from an
+         ordinary button in a finished recording, which is why the recorder has
+         to answer "was it already on screen" while it still can. -->
+    <button type="button" id="close-video" hidden>Close video</button>
+    <script>
+      document.querySelector('[aria-label="Play video"]').addEventListener(
+        "click",
+        () => document.getElementById("close-video").removeAttribute("hidden")
+      );
+    </script>
+
     <script>
       // Keep the page on one document so the test is not racing a navigation.
       document.querySelector('[data-testid="login-submit"]').addEventListener(

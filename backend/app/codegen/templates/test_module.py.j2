@@ -28,6 +28,9 @@ from playwright.sync_api import Page, expect
 {% if helpers %}
 from pages._healing import {{ helpers | sort | join(", ") }}
 {% endif %}
+{% if ir.needs_sample_file %}
+from pages._files import sample_file
+{% endif %}
 {% for variable, class_name in page_vars %}
 from pages.{{ modules[class_name] }} import {{ class_name }}
 {% endfor %}

@@ -144,6 +144,21 @@ class GeminiClient(LLMClient):
             # Truncation is the usual cause: a response cut off at the token
             # limit is not valid JSON, so nothing parses. Say which it was.
             if _finish_reason(response) is types.FinishReason.MAX_TOKENS:
+                salvaged = _salvage(response.text or "", schema)
+                if salvaged is not None:
+                    logger.warning(
+                        "Gemini ran out of room mid-answer; kept the %d complete "
+                        "item(s) it had already written%s",
+                        len(next(iter(salvaged.__dict__.values()), []) or []),
+                        _token_split(response),
+                    )
+                    return self._to_response(
+                        response,
+                        text=response.text or "",
+                        started=started,
+                        parsed=salvaged,
+                    )
+
                 # Say how the ceiling was spent. "Hit the limit" on its own
                 # invites raising the limit, when the answer to this has twice
                 # been that thinking ate it before the answer began.
@@ -217,6 +232,66 @@ class GeminiClient(LLMClient):
             latency_ms=int((time.monotonic() - started) * 1000),
             raw={"finish_reason": str(_finish_reason(response) or "")},
         )
+
+
+def _salvage(text: str, schema: type[T]) -> T | None:
+    """Whatever whole items the model had written before it ran out of room.
+
+    A truncated answer is cut mid-object, so the JSON does not parse and the
+    entire request is lost. On a key allowed twenty requests a day, that is a
+    large fraction of the day spent on nothing - and eleven finished test cases
+    were sitting in the reply.
+
+    Only schemas that are a single list are salvageable, which is the shape that
+    actually gets truncated: many items, each self-contained. The last item is
+    dropped whether or not it looks complete, because "looks complete" is
+    exactly what a cut-off object does when the cut lands after a closing brace
+    on a nested field.
+
+    Returns None when there is nothing whole to keep, so the caller raises as
+    before.
+    """
+    fields = getattr(schema, "model_fields", {})
+    if len(fields) != 1:
+        return None
+    field = next(iter(fields))
+
+    opened = text.find("[")
+    if opened < 0:
+        return None
+
+    # Walk the array and remember where each top-level item ends. Quotes and
+    # escapes are tracked so a brace inside a string does not close an object.
+    depth = 0
+    in_string = False
+    escaped = False
+    ends: list[int] = []
+    for index in range(opened + 1, len(text)):
+        character = text[index]
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and in_string:
+            escaped = True
+        elif character == '"':
+            in_string = not in_string
+        elif in_string:
+            continue
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                ends.append(index)
+
+    if len(ends) < 2:
+        return None  # nothing, or only the item the cut may have landed inside
+
+    whole = text[opened : ends[-2] + 1] + "]"
+    try:
+        return schema.model_validate_json(f'{{"{field}": {whole}}}')
+    except Exception:  # noqa: BLE001 - a partial answer that will not validate
+        return None
 
 
 def _finish_reason(response: types.GenerateContentResponse):

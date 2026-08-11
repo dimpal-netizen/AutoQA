@@ -159,12 +159,46 @@ def set_checked(box: Locator, checked: bool) -> None:
     label.first.click()
 
 
-def heal(name: str, candidates: list) -> Locator:
+def _same_kind(locator: Locator, tag: str) -> bool:
+    """Is this the same kind of element the recording captured?
+
+    Costs one round trip, and only ever on a spare - which is already the
+    uncommon path.
+    """
+    try:
+        found = locator.first.evaluate("element => element.tagName")
+    except Exception:  # noqa: BLE001 - gone between the wait and the question
+        return False
+    return str(found).lower() == tag.lower()
+
+
+def heal(name: str, candidates: list, *, tag: str = "") -> Locator:
     """The first candidate that finds the element.
 
     `candidates` is [(strategy, () -> Locator), ...], best first. The callables
     are not evaluated until they are needed, so the common case - the first one
     works - costs exactly one lookup.
+
+    A spare must also be the same *kind* of element as the one recorded, and
+    that is not pedantry. A login form recorded this button:
+
+        role_name  get_by_role("button", name="Login")   -> 1 element
+        text       get_by_text("Login", exact=True)      -> 2: an <a>, then the button
+
+    The <a> is the Login link in the site header. When the form was slow enough
+    that the primary had not attached within PRIMARY_TIMEOUT_MS, healing tried
+    the spare, clicked the header link, and went back to the login page. The
+    test then waited thirty seconds for a dashboard that was never coming, and
+    the report read "the application remained on the login page, with no
+    indication of why the login failed" - an application bug, raised at 80%
+    confidence, against a login that works.
+
+    Substituting a different *selector* is the whole point of healing. A
+    different *element* is not a substitute at all.
+
+    The primary is exempt: it is what the recording chose, and if it matches
+    something unexpected there is nothing better to fall back on. Only the
+    guesses are held to this.
     """
     if not _substitutes_allowed:
         # Reached through `unhealed`. No spares, and no wait either: the
@@ -181,6 +215,9 @@ def heal(name: str, candidates: list) -> Locator:
                 timeout=PRIMARY_TIMEOUT_MS if index == 0 else SPARE_TIMEOUT_MS,
             )
         except Exception:
+            continue
+
+        if index and tag and not _same_kind(locator, tag):
             continue
 
         if index:

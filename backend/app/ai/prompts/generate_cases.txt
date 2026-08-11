@@ -126,7 +126,46 @@ Rules, all of which matter:
 
   If the case is about the control itself, do first whatever the recorded steps
   did to reveal it, then act on it.
+
+- **Some pages are only themselves once something has been done.** A cart, an
+  order summary, a wishlist: opening one with `goto` gives you the empty
+  version, and the controls that matter are not on it.
+
+      goto   /view_cart
+      click  ViewCartPage.proceed_to_checkout_link   <- empty cart, no button
+
+  Read the recorded steps for how the page was reached. If getting there meant
+  adding, submitting or choosing something, your case has to do the same before
+  it drives anything on that page. `goto` is a shortcut past navigation, not
+  past state.
+
+  Checking the empty version is a good test, and needs no setup at all - it is
+  the absence you are asserting:
+
+      goto           /view_cart
+      expect_hidden  ViewCartPage.proceed_to_checkout_link
+
+  Pages reached through the header, footer or nav need nothing: anyone can open
+  those cold.
 - Do not guess the wording of an error message you have not seen.
+
+- **Put the steps in the order they happen.** An element belongs to the page it
+  was recorded on, and you cannot touch it before the case has got to that page.
+
+      0. goto   /login
+      1. fill   LoginPage.name_input
+      2. fill   LoginPage.email_address_input
+      3. check  SignupPage.mr_radio        <- still on /login. Not there yet.
+      4. click  LoginPage.signup_button    <- this is what opens /signup
+
+  The radio button is real; the case simply reaches for it one page early, and
+  the run spends thirty seconds finding out. Steps 3 and 4 are the wrong way
+  round.
+
+  `fill`, `check`, `uncheck` and `select` never change the page. Only `goto`,
+  `click` and `press` can. So before touching an element of a page, make sure a
+  `goto` or a click has taken you there - and a case whose steps are out of
+  order this way is rejected rather than run.
 
 - **One case tests one thing.** A case that logs in with a bad value, then logs
   in again with a good one to check something unrelated, is two cases wearing
@@ -141,10 +180,21 @@ Rules, all of which matter:
       expect_not_url  /properties/invalid-segment    <- always false
 
   Do not assume a bad URL redirects. Plenty of sites render "Not found" at the
-  address you asked for, and that is correct behaviour. Unless the recording
-  shows a redirect, a bad-URL case asserts what the page SHOWS —
-  `expect_text` on the message, or `expect_visible` on an element that is there
-  — or it is not worth writing.
+  address you asked for, and that is correct behaviour.
+
+  And you have not seen that page, so you do not know what is on it. An element
+  recorded somewhere else is not evidence:
+
+      goto            /category_products/999
+      expect_visible  home.add_to_cart_link     <- recorded on the Home page
+
+  That claims "Add to cart" appears at an address nobody ever opened. It went
+  red against a site that had done the sensible thing and shown its generic
+  products page. Element assertions after a `goto` to an address the recording
+  never visited are dropped, and a case left with nothing is dropped with them,
+  so writing one wastes a slot you could have spent on a real test.
+
+  If the recording did not go there, do not write the case.
 - Never `goto` a host other than the application's own. A made-up subdomain does
   not resolve, so the browser raises before any assertion runs and the test
   errors instead of reporting anything.

@@ -539,3 +539,36 @@ def test_a_page_left_with_nothing_usable_is_not_listed_at_all() -> None:
     )
 
     assert describe_pages([page]) == ""
+
+
+def test_an_element_a_previous_step_revealed_is_not_offered() -> None:
+    """The one a finished recording cannot tell you about on its own.
+
+    `home.close_video_button` has a better accessible name than most of the
+    site's links, sits in no map widget, and had a perfectly good size when it
+    was recorded. Every other rule here waves it through. It is simply not on
+    the page until a video is playing, so a case that opens the home page and
+    clicks it waits thirty seconds and files a defect against a working page.
+    """
+    page = PageSpec(
+        class_name="HomePage", module="home_page", url="https://app.test/",
+        locators=[locator("house_link"), locator("close_video_button")],
+    )
+    page.locators[1].revealed = True
+
+    described = describe_pages([page])
+
+    assert "HomePage.house_link" in described
+    assert "close_video_button" not in described
+
+
+def test_an_older_recording_offers_everything_as_before() -> None:
+    """Recordings made before the recorder captured this have no answer, and no
+    answer means no. Withholding an element on a guess shrinks the suite for
+    nothing."""
+    page = PageSpec(
+        class_name="HomePage", module="home_page", url="https://app.test/",
+        locators=[locator("house_link"), locator("close_video_button")],
+    )
+
+    assert "close_video_button" in describe_pages([page])

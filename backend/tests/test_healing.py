@@ -40,8 +40,9 @@ def recording(selectors):
     ]
 
 
-def generate(selectors) -> dict[str, str]:
-    ir = build_ir(recording(selectors), suite_name="Login", start_url="https://x.test/login")
+def generate(selectors, recording=None) -> dict[str, str]:
+    actions = recording if recording is not None else globals()["recording"](selectors)
+    ir = build_ir(actions, suite_name="Login", start_url="https://x.test/login")
     return {f.path: f.content for f in render(ir, browser_info={})}
 
 
@@ -450,4 +451,140 @@ def test_when_nothing_matches_the_error_names_the_selector_you_expect(tmp_path: 
         located = healing.heal("login_button", candidates)
 
         assert "Login" in str(located)  # the primary, not the last spare
+        browser.close()
+
+
+# ---------------------------------------------------------------------------
+# A substitute has to be the same kind of thing
+# ---------------------------------------------------------------------------
+LOGIN_WAYS = [
+    {"strategy": "role_name", "value": "button|Login", "unique": True, "score": 95},
+    {"strategy": "text", "value": "Login", "unique": False, "score": 78},
+    {"strategy": "css", "value": "form fieldset button", "unique": True, "score": 40},
+]
+
+#: A header link and a submit button, both called Login. `get_by_text("Login")`
+#: finds the link first, because it comes first in the markup.
+LOGIN_PAGE = textwrap.dedent("""
+    <!doctype html><html><body>
+      <header><a href="/login" id="header-link">Login</a></header>
+      <main><form><fieldset>
+        <button type="button" id="submit">Login</button>
+      </fieldset></form></main>
+    </body></html>
+""")
+
+
+def button_recording(selectors, tag="button"):
+    return [
+        {
+            "action_type": "click",
+            "url": "https://x.test/login",
+            "frame_path": [],
+            "selectors": selectors,
+            "element": {"tag": tag, "input_type": None, "role": tag,
+                        "accessible_name": "Login", "text": "Login", "attributes": {}},
+            "payload": {},
+            "is_ignored": False,
+        }
+    ]
+
+
+def test_the_recorded_tag_reaches_the_page_object() -> None:
+    """Without it there is nothing to compare a spare against."""
+    files = generate(LOGIN_WAYS, recording=button_recording(LOGIN_WAYS))
+    page = next(v for k, v in files.items() if k.startswith("pages/") and "_healing" not in k)
+
+    assert "tag='button'" in page
+
+
+@pytest.mark.integration
+def test_a_spare_that_finds_a_link_is_refused_for_a_recorded_button(tmp_path) -> None:
+    """The failure this exists to stop, end to end.
+
+    The site header has a Login link and the form has a Login button. When the
+    form was slow enough that the primary had not attached in time, healing took
+    the text spare, clicked the header link, and went back to the login page.
+    The test then waited thirty seconds for a dashboard, and the run reported an
+    application bug against a login that works.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    files = generate(LOGIN_WAYS, recording=button_recording(LOGIN_WAYS))
+    module = tmp_path / "_healing.py"
+    module.write_text(files["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    page_file = tmp_path / "login.html"
+    page_file.write_text(LOGIN_PAGE, encoding="utf-8")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+        healing.PRIMARY_TIMEOUT_MS = 200   # stand in for a form that is slow
+        healing.SPARE_TIMEOUT_MS = 200
+
+        # The spare really does find the wrong thing - that is the premise.
+        assert page.get_by_text("Login", exact=True).count() == 2
+        assert page.get_by_text("Login", exact=True).first.evaluate(
+            "e => e.tagName"
+        ) == "A"
+
+        located = healing.heal(
+            "login_button",
+            [
+                ("role_name", lambda: page.get_by_role("button", name="Nothing")),
+                ("text", lambda: page.get_by_text("Login", exact=True).first),
+                ("css", lambda: page.locator("form fieldset button")),
+            ],
+            tag="button",
+        )
+
+        assert located.first.evaluate("e => e.id") == "submit", (
+            "healed onto the header link instead of the submit button"
+        )
+        browser.close()
+
+
+@pytest.mark.integration
+def test_a_spare_of_the_right_kind_is_still_used(tmp_path) -> None:
+    """The rule must not switch healing off. A renamed button found another way
+    is exactly what healing is for."""
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    files = generate(LOGIN_WAYS, recording=button_recording(LOGIN_WAYS))
+    module = tmp_path / "_healing.py"
+    module.write_text(files["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    page_file = tmp_path / "login.html"
+    page_file.write_text(LOGIN_PAGE, encoding="utf-8")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+        healing.PRIMARY_TIMEOUT_MS = 200
+        healing.SPARE_TIMEOUT_MS = 200
+
+        with pytest.warns(healing.Healed):
+            located = healing.heal(
+                "login_button",
+                [
+                    ("role_name", lambda: page.get_by_role("button", name="Gone")),
+                    ("css", lambda: page.locator("form fieldset button")),
+                ],
+                tag="button",
+            )
+
+        assert located.first.evaluate("e => e.id") == "submit"
         browser.close()

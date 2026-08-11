@@ -82,6 +82,15 @@ class LocatorSpec:
     # this: once two locators have been told apart their expressions differ, so
     # comparing the final ones would say there was never a clash.
     base_expression: str = ""
+    # The step before this one put it on screen: a menu opened, a modal, a video
+    # overlay. Recorded steps reach it the same way the person did, but a test
+    # case that opens the page and goes straight for it cannot - see
+    # `_was_revealed`.
+    revealed: bool = False
+    # The tag the recording captured - "button", "a", "input". A spare that
+    # finds a different kind of element is not this element, whatever its
+    # selector says. See `heal`.
+    tag: str = ""
 
 
 @dataclass
@@ -103,6 +112,10 @@ class PageSpec:
             if existing.expression == locator.expression and not conflicting(
                 existing.identity, locator.identity
             ):
+                # Reached without opening anything even once, anywhere in the
+                # recording, and it is reachable. The question is only ever
+                # whether a test case can get to it at all.
+                existing.revealed = existing.revealed and locator.revealed
                 return existing.name
 
         # Same readable name, different element — disambiguate rather than
@@ -126,6 +139,8 @@ class PageSpec:
                 visible=locator.visible,
                 identity=locator.identity,
                 base_expression=locator.base_expression,
+                revealed=locator.revealed,
+                tag=locator.tag,
             )
         )
         return name
@@ -159,6 +174,10 @@ class StepSpec:
     # back as whichever of them happened to be listed first. Empty for recorded
     # steps, which come from the recording rather than from a vocabulary.
     verb: str | None = None
+    # This step typed into a password field. The one unambiguous marker of
+    # where a recording signed in, and so of which pages after it need an
+    # account - see `_sign_in` in synth.py.
+    is_password: bool = False
 
 
 @dataclass
@@ -188,6 +207,10 @@ class TestIR:
     # Set when a step hovers, so the module imports `reveal`. A hover only opens
     # a menu for the step after it, and must never be able to fail the test.
     needs_reveal: bool = False
+    # Set when a step uploads, so the module imports `sample_file`. The file the
+    # recording names is on somebody else's machine; this one is built at run
+    # time. See pages/_files.py.
+    needs_sample_file: bool = False
     # (variable, expression, the value that was recorded) for each input the
     # application would refuse a second time. Assigned once at the top of the
     # test so two fields that were given the same address still get the same
@@ -519,6 +542,28 @@ def _accessible_name(element: dict[str, Any] | None) -> str:
     return str(element.get("accessible_name") or element.get("text") or "").strip()
 
 
+def _was_revealed(element: dict[str, Any] | None) -> bool:
+    """Did the step before this one put the element on screen?
+
+    The recorder answers this at the moment of the click, because it is the one
+    thing that cannot be worked out afterwards. In a finished recording
+    `home.close_video_button` and `home.house_link` look exactly like the site's
+    other links - same tag, same good accessible name, each clicked once - but
+    one is on the page when it loads and the other only exists while a video is
+    playing.
+
+    A recorded test reaches them the way the person did, so it keeps them. An
+    invented case opens the page and goes straight there, and there is nothing
+    to go to: thirty seconds of waiting, then a defect raised against a page
+    that is behaving perfectly. Those are the cases that must not be written -
+    see `describe_pages`.
+
+    Absent on recordings made before this was captured, and absent means no.
+    Withholding an element on a guess would shrink the suite for nothing.
+    """
+    return (element or {}).get("was_on_screen") is False
+
+
 def _is_visible(element: dict[str, Any] | None) -> bool:
     """Did this element occupy any space on the page when it was recorded?
 
@@ -688,6 +733,7 @@ def build_ir(
         step.action in (ActionType.CHECK, ActionType.UNCHECK) for step in ir.steps
     )
     ir.needs_reveal = any(step.action is ActionType.HOVER for step in ir.steps)
+    ir.needs_sample_file = any(step.action is ActionType.UPLOAD for step in ir.steps)
     return ir
 
 
@@ -820,6 +866,8 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             visible=_is_visible(element),
             identity=who,
             base_expression=base,
+            revealed=_was_revealed(element),
+            tag=str((element or {}).get("tag") or "").lower(),
         )
     )
 
@@ -871,12 +919,18 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             description = f"Untick {label}"
             expected = f"{label} is not checked"
         case ActionType.UPLOAD:
+            # A browser never tells a page where a chosen file really lives, so
+            # the recording holds a name and nothing else. Replayed as a path it
+            # looks beside the test, finds nothing, and takes every step after
+            # it down with a form that was working. `sample_file` builds one in
+            # memory instead - see pages/_files.py.
             files = [str(f) for f in (payload.get("files") or [])]
-            arg = py_str(files[0]) if len(files) == 1 else repr(files)
-            code = [
-                "# Place the file next to this test, or point at a fixture.",
-                f"{target}.set_input_files({arg})",
-            ]
+            arg = (
+                f"sample_file({py_str(files[0])})"
+                if len(files) == 1
+                else "[" + ", ".join(f"sample_file({py_str(f)})" for f in files) + "]"
+            )
+            code = [f"{target}.set_input_files({arg})"]
             description = f"Upload {', '.join(files)} to {label}"
             input_data = ", ".join(files)
         case ActionType.KEY_PRESS:
@@ -935,6 +989,10 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         expected_result=expected,
         strategy=selector.strategy.value,
         fragile=selector.is_fragile,
+        is_password=(
+            kind is ActionType.INPUT
+            and str((element or {}).get("input_type") or "").lower() == "password"
+        ),
     )
 
 

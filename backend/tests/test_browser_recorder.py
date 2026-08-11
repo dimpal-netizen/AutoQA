@@ -199,6 +199,43 @@ async def test_clicking_an_icon_records_the_control_around_it(recording_session)
         await browser_recorder.close(session_id)
 
 
+async def test_the_recorder_says_which_elements_a_step_revealed(
+    recording_session,
+) -> None:
+    """The one fact a recording cannot be made to give up afterwards.
+
+    Finished, "Close video" looks like any other button - good accessible name,
+    real size, clicked once. It is simply not on the page until the video is
+    playing, and no amount of reading the recording back will say so. Answered
+    at the moment of the click, it is exact, and it is what keeps an invented
+    case from opening the page and clicking a button that is not there.
+    """
+    session_id, project_id = recording_session
+
+    def act_like_a_user(page) -> None:
+        page.get_by_test_id("login-submit").click()      # there from the start
+        page.get_by_label("Play video").click()          # reveals the next one
+        page.get_by_text("Close video", exact=True).click()
+        page.wait_for_timeout(2500)
+
+    await launch(session_id, project_id, on_page_ready=act_like_a_user)
+    try:
+        actions = await wait_for_actions(session_id, 4)
+        on_screen = {
+            a["element"]["accessible_name"]: a["element"]["was_on_screen"]
+            for a in actions
+            if a["action_type"] is ActionType.CLICK and a["element"]
+        }
+
+        assert on_screen.get("Sign in") is True
+        assert on_screen.get("Play video") is True
+        assert on_screen.get("Close video") is False, (
+            "the play click revealed it; the recorder must say so"
+        )
+    finally:
+        await browser_recorder.close(session_id)
+
+
 async def test_close_finalises_the_session(recording_session) -> None:
     session_id, project_id = recording_session
     await launch(session_id, project_id)

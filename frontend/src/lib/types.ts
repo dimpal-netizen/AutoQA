@@ -375,14 +375,14 @@ export interface TestRun {
   suite_name: string;
 }
 
-/** How slowly to drive the browser when watching, in milliseconds per action.
- *  Offered as a choice because the right speed depends on why you are
- *  watching: proving it works, or reading every field as it is filled. */
-export const WATCH_SPEEDS: { label: string; ms: number }[] = [
-  { label: "Normal", ms: 300 },
-  { label: "Slow", ms: 1000 },
-  { label: "Step by step", ms: 2500 },
-];
+/** How slowly to drive the browser, in milliseconds per action.
+ *
+ *  Every run is watched, and at this one speed. It was a checkbox and a
+ *  three-way choice before, both defaulting to off — so the normal way to run
+ *  tests was to see nothing, and a red result was a sentence about an element
+ *  rather than a page you watched fail. Step by step is slow on purpose: it is
+ *  the speed at which a person can read the field being filled. */
+export const WATCH_SLOWMO_MS = 2500;
 
 export interface TestRunDetail extends TestRun {
   results: TestResult[];

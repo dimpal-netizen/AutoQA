@@ -17,7 +17,7 @@ import ast
 import pytest
 
 from app.ai.schemas import CaseStep, GeneratedCase
-from app.codegen.converter import LocatorSpec, PageSpec
+from app.codegen.converter import LocatorSpec, PageSpec, StepSpec
 from app.codegen.generator import render
 from app.codegen.synth import (
     PLACEHOLDER_LABEL,
@@ -305,28 +305,54 @@ def test_a_substituted_value_compiles(pages):
 # All four below came out of one real run, where ten of thirteen tests were red
 # and eight of those were the test's fault rather than the application's.
 # ---------------------------------------------------------------------------
-def test_the_contradictory_step_goes_and_the_case_stays(pages):
-    """`goto X` then `expect_not_url X` is a contradiction.
+def test_a_bad_url_case_cannot_be_written_from_a_recording(pages):
+    """`goto X` then `expect_not_url X` is a contradiction, and what is left
+    over is a guess. Both go, so the case goes.
 
-    The application rendered "Agent not found." at that address, which is
-    correct, and the test called it a failure on every run. The impossible step
-    is removed; the rest of the case is fine and is kept.
+    This asserted the opposite once, keeping "the site is still working" as a
+    survivor. That check turned out to be the same mistake in a friendlier
+    shape - it claims a Login page element is on a bad Properties URL, and
+    nothing in the recording says what is there. Seen for real as:
+
+        goto            /category_products/999
+        expect_visible  home.add_to_cart_link
+
+        AssertionError: Locator expected to be visible
+
+    reported against a site that had done the sensible thing and shown its
+    generic products page.
+
+    A bad-URL case needs to know what the bad URL renders. A recording that
+    never opened it cannot say, so the case is not writable - which is a better
+    answer than one that is red half the time for no reason.
     """
+    with pytest.raises(SynthesisError, match="no assertion"):
+        compile_case(
+            [
+                CaseStep(action="goto", value="https://x.test/properties/invalid",
+                         description="Open a bad URL"),
+                CaseStep(action="expect_not_url", value="https://x.test/properties/invalid",
+                         description="Should not stay here"),
+                CaseStep(action="expect_visible", target="LoginPage.email_input",
+                         description="The site is still working"),
+            ],
+            pages,
+        )
+
+
+def test_a_check_on_a_page_the_recording_did_visit_survives(pages):
+    """The rule is about not having seen the page, not about bad URLs. Going
+    somewhere recorded and asserting on it is exactly what a case should do."""
     source = compile_case(
         [
-            CaseStep(action="goto", value="https://x.test/properties/invalid",
-                     description="Open a bad URL"),
-            CaseStep(action="expect_not_url", value="https://x.test/properties/invalid",
-                     description="Should not stay here"),
+            CaseStep(action="goto", value="https://x.test/login", description="Open login"),
             CaseStep(action="expect_visible", target="LoginPage.email_input",
-                     description="The site is still working"),
+                     description="The form is showing"),
         ],
         pages,
     )
 
-    ast.parse(source)
-    assert "not_to_have_url" not in source
-    assert "to_be_visible" in source          # the real check survived
+    assert "to_be_visible" in source
 
 
 def test_a_vacuous_url_assertion_goes_too(pages):
@@ -512,3 +538,274 @@ def test_a_hand_written_case_compiles_to_valid_python(pages):
     # The placeholder became an expression evaluated per run, not a literal.
     assert "{{unique_email}}" not in source
     assert "uuid4()" in source
+
+
+def test_a_url_check_after_a_bad_url_still_survives(pages):
+    """The new rule takes away element assertions, not URL ones. The address is
+    knowable without having seen the page, so a claim about it keeps both its
+    answers - here, that a bad category did not quietly land on the login form.
+
+    (Asserting the address you just asked for is a separate, older rule: that
+    one is true before the test starts and is dropped for being vacuous.)"""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/nowhere",
+                     description="Open a bad URL"),
+            CaseStep(action="expect_not_url", value="/login",
+                     description="Must not have been bounced to the login form"),
+        ],
+        pages,
+    )
+
+    assert "not_to_have_url" in source
+
+
+def test_going_back_to_a_recorded_page_restores_the_checks(pages):
+    """Off the map is a place, not a state the case is stuck in."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/nowhere", description="Bad URL"),
+            CaseStep(action="goto", value="https://x.test/login", description="Back to login"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="The form is showing"),
+        ],
+        pages,
+    )
+
+    assert "to_be_visible" in source
+
+
+# ---------------------------------------------------------------------------
+# Reaching for an element one page too early
+# ---------------------------------------------------------------------------
+def two_page_signup():
+    """A site whose signup is two pages: name and email, then the full form."""
+    login = PageSpec("LoginPage", "login_page", "https://shop.test/login", [
+        LocatorSpec(name="name_input", expression="self.page.a", strategy="test_id",
+                    fragile=False),
+        LocatorSpec(name="signup_button", expression="self.page.b", strategy="role_name",
+                    fragile=False),
+    ])
+    signup = PageSpec("SignupPage", "signup_page", "https://shop.test/signup", [
+        LocatorSpec(name="mr_radio", expression="self.page.c", strategy="role_name",
+                    fragile=False),
+        LocatorSpec(name="newsletter_checkbox", expression="self.page.d",
+                    strategy="label", fragile=False),
+    ])
+    return [login, signup]
+
+
+def compile_signup(steps):
+    ir = synthesise(
+        GeneratedCase(name="Case", category="negative", priority="high",
+                      description="A case.", steps=steps),
+        pages=two_page_signup(), start_url="https://shop.test/login",
+        module_name="test_case", function_name="test_case",
+    )
+    return next(f for f in render(ir, browser_info={}) if f.path == ir.file_path).content
+
+
+def test_ticking_something_on_the_next_page_before_going_there_is_refused():
+    """A minute and two seconds of red, on a radio button that exists - the
+    tester checked by hand. It was simply not there yet."""
+    with pytest.raises(SynthesisError, match="typing or ticking cannot"):
+        compile_signup([
+            CaseStep(action="goto", value="https://shop.test/login", description="Open"),
+            CaseStep(action="fill", target="LoginPage.name_input", value="Ada",
+                     description="Name"),
+            CaseStep(action="check", target="SignupPage.mr_radio", description="Title"),
+            CaseStep(action="click", target="LoginPage.signup_button", description="Signup"),
+            CaseStep(action="expect_visible", target="SignupPage.newsletter_checkbox",
+                     description="On the form"),
+        ])
+
+
+def test_the_same_steps_in_the_right_order_compile():
+    """The case is fine. Only its order was wrong."""
+    source = compile_signup([
+        CaseStep(action="goto", value="https://shop.test/login", description="Open"),
+        CaseStep(action="fill", target="LoginPage.name_input", value="Ada", description="Name"),
+        CaseStep(action="click", target="LoginPage.signup_button", description="Signup"),
+        CaseStep(action="check", target="SignupPage.mr_radio", description="Title"),
+        CaseStep(action="uncheck", target="SignupPage.newsletter_checkbox",
+                 description="No newsletter"),
+        CaseStep(action="expect_visible", target="SignupPage.newsletter_checkbox",
+                 description="Still on the form"),
+    ])
+
+    assert "set_checked(" in source
+
+
+def test_a_goto_straight_to_the_second_page_is_fine():
+    """Arriving is arriving. The rule is about not having got there at all."""
+    source = compile_signup([
+        CaseStep(action="goto", value="https://shop.test/signup", description="Open"),
+        CaseStep(action="check", target="SignupPage.mr_radio", description="Title"),
+        CaseStep(action="expect_visible", target="SignupPage.newsletter_checkbox",
+                 description="On the form"),
+    ])
+
+    assert "set_checked(" in source
+
+
+def test_after_a_click_nothing_is_second_guessed():
+    """A click can navigate anywhere, so from there the case is on its own -
+    and a step that really cannot be performed fails on its own terms."""
+    source = compile_signup([
+        CaseStep(action="goto", value="https://shop.test/login", description="Open"),
+        CaseStep(action="click", target="LoginPage.signup_button", description="Signup"),
+        CaseStep(action="check", target="SignupPage.mr_radio", description="Title"),
+        CaseStep(action="expect_visible", target="SignupPage.newsletter_checkbox",
+                 description="On the form"),
+    ])
+
+    assert "set_checked(" in source
+
+
+def test_an_assertion_about_another_page_is_left_alone(pages):
+    """Only driving is checked. Site chrome recorded on one page and asserted on
+    another is a normal thing to write, and refusing it would cost more than it
+    saves."""
+    source = compile_signup([
+        CaseStep(action="goto", value="https://shop.test/login", description="Open"),
+        CaseStep(action="expect_hidden", target="SignupPage.mr_radio",
+                 description="Not on the first page yet"),
+    ])
+
+    assert "to_be_hidden" in source
+
+
+def test_an_invented_checkbox_step_ticks_the_way_a_recorded_one_does():
+    """The recorded path went through `set_checked` first and this one was
+    missed, so an invented case ticking a custom checkbox still spent thirty
+    seconds on a hidden input. Both halves of a suite drive it the same way."""
+    source = compile_signup([
+        CaseStep(action="goto", value="https://shop.test/signup", description="Open"),
+        CaseStep(action="uncheck", target="SignupPage.newsletter_checkbox",
+                 description="No newsletter"),
+        CaseStep(action="expect_visible", target="SignupPage.mr_radio",
+                 description="Still on the form"),
+    ])
+
+    assert "set_checked(signup.newsletter_checkbox, False)" in source
+    assert ".uncheck()" not in source
+    assert "from pages._healing import" in source
+
+
+# ---------------------------------------------------------------------------
+# Pages that need an account
+# ---------------------------------------------------------------------------
+"""A generated case is told to open the page it is about with `goto` rather than
+clicking through the site. That is right for a login form and wrong for
+everything behind one:
+
+    goto  /property-owner/add-property
+    fill  PropertyOwnerAddPropertyPage.title_input
+
+    Locator.fill: Timeout 30000ms exceeded
+
+The application did exactly what it should - bounced an anonymous visitor to the
+login form - and the field was not on it. Fifty-seven seconds, then red.
+"""
+
+
+def signed_in_recording():
+    """A recording that logs in, then works inside the account."""
+    def step(action, page_var, locator, *, code="x", password=False):
+        return StepSpec(sequence=0, action=action, code=[code], description=f"{action} {locator}",
+                        page_var=page_var, locator_name=locator, is_password=password)
+
+    return [
+        StepSpec(sequence=0, action=ActionType.NAVIGATE, code=["page.goto('https://shop.test/')"],
+                 description="Open"),
+        step(ActionType.INPUT, "login", "email_input", code="login.email_input.fill('a@b.c')"),
+        step(ActionType.INPUT, "login", "password_input",
+             code="login.password_input.fill('secret')", password=True),
+        step(ActionType.CLICK, "login", "sign_in_button", code="login.sign_in_button.click()"),
+        step(ActionType.INPUT, "dashboard", "title_input", code="dashboard.title_input.fill('t')"),
+    ]
+
+
+def account_pages():
+    login = PageSpec("LoginPage", "login_page", "https://shop.test/login", [
+        LocatorSpec(name="email_input", expression="self.page.a", strategy="css_id", fragile=False),
+        LocatorSpec(name="password_input", expression="self.page.b", strategy="css_id", fragile=False),
+        LocatorSpec(name="sign_in_button", expression="self.page.c", strategy="role_name", fragile=False),
+    ])
+    dashboard = PageSpec("DashboardPage", "dashboard_page", "https://shop.test/dashboard", [
+        LocatorSpec(name="title_input", expression="self.page.d", strategy="test_id", fragile=False),
+    ])
+    return [login, dashboard]
+
+
+def compile_account(steps):
+    ir = synthesise(
+        GeneratedCase(name="Case", category="negative", priority="high",
+                      description="A case.", steps=steps),
+        pages=account_pages(), start_url="https://shop.test/",
+        module_name="test_case", function_name="test_case",
+        recorded_steps=signed_in_recording(),
+    )
+    return next(f for f in render(ir, browser_info={}) if f.path == ir.file_path).content
+
+
+def test_a_case_that_opens_a_page_behind_a_login_is_signed_in_first():
+    """The recording knows how to get in, so the case is given the same steps.
+
+    Refusing it was the alternative and it is worse: "add a property with an
+    empty title" is a test worth having, and the only thing wrong with it was a
+    missing sign-in.
+    """
+    source = compile_account([
+        CaseStep(action="goto", value="https://shop.test/dashboard", description="Open"),
+        CaseStep(action="fill", target="DashboardPage.title_input", value="",
+                 description="Leave the title empty"),
+        CaseStep(action="expect_visible", target="DashboardPage.title_input",
+                 description="Still on the form"),
+    ])
+
+    signed_in = source.index("login.password_input")
+    assert signed_in < source.index("dashboard.title_input"), "signed in after using the page"
+    assert "page.goto('https://shop.test/login')" in source
+    assert source.count("login.password_input") == 1
+
+
+def test_a_case_that_signs_itself_in_is_left_alone():
+    """Or a test *about* logging in gets a second login glued to its front."""
+    source = compile_account([
+        CaseStep(action="goto", value="https://shop.test/login", description="Open"),
+        CaseStep(action="fill", target="LoginPage.email_input", value="a@b.c", description="Email"),
+        CaseStep(action="fill", target="LoginPage.password_input", value="wrong", description="Password"),
+        CaseStep(action="click", target="LoginPage.sign_in_button", description="Submit"),
+        CaseStep(action="expect_visible", target="LoginPage.email_input", description="Still here"),
+    ])
+
+    assert source.count("login.password_input.fill") == 1
+
+
+def test_only_looking_at_a_protected_page_stays_signed_out():
+    """"Opening the dashboard signed out sends me to the login form" is a real
+    test, and it needs to stay signed out to be one."""
+    source = compile_account([
+        CaseStep(action="goto", value="https://shop.test/dashboard", description="Open"),
+        CaseStep(action="expect_hidden", target="DashboardPage.title_input",
+                 description="Not shown to a stranger"),
+    ])
+
+    assert "login.password_input" not in source
+
+
+def test_a_recording_that_never_signed_in_changes_nothing(pages):
+    """Most recordings. Nothing to restore and nothing to look for."""
+    source = compile_case(
+        [
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(action="fill", target="LoginPage.email_input", value="a@b.c",
+                     description="Email"),
+            CaseStep(action="expect_visible", target="LoginPage.email_input",
+                     description="Still here"),
+        ],
+        pages,
+    )
+
+    assert "password" not in source
