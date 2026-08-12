@@ -24,7 +24,7 @@ from app.models.enums import (
 )
 from app.models.ai_analysis import AIAnalysis
 from app.models.bug_report import BugReport
-from app.models.project import Project
+from app.models.project import Project, SampleFile
 from app.models.recording import RecordedAction, RecordingSession
 from app.models.test_case import GeneratedFile, TestCase, TestStep, TestSuite
 from app.models.test_run import ExecutionArtifact, TestResult, TestRun
@@ -45,6 +45,7 @@ __all__ = [
     "FailureCategory",
     "GeneratedFile",
     "Project",
+    "SampleFile",
     "RecordedAction",
     "RecordingSession",
     "RecordingStatus",

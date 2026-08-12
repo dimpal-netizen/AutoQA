@@ -82,47 +82,41 @@ class GeneratedCases(BaseModel):
     cases: list[GeneratedCase] = Field(default_factory=list)
 
 
-class SuggestedCheck(BaseModel):
-    """One check to add to a recorded test that asserts nothing."""
+class SkippedRow(BaseModel):
+    """A row of somebody's sheet that could not become an automated test."""
 
-    after: int = Field(
+    row: int = Field(description="The row number in the uploaded file")
+    scenario: str = Field(description="What that row was about, as written")
+    reason: str = Field(
         description=(
-            "The number of the recorded step this check belongs after. The "
-            "check is about the state the application is in once that step has "
-            "happened."
-        )
-    )
-    target: str = Field(
-        description='The element to check, as "page_variable.locator_name"'
-    )
-    kind: str = Field(
-        description=(
-            "One of: visible (the element is on the page), text (it contains "
-            "particular words)"
-        )
-    )
-    expected: str = Field(
-        default="",
-        description="For kind=text, the words it should contain. Empty otherwise.",
-    )
-    why: str = Field(
-        description=(
-            "What breaking would look like if this check were missing, in one "
-            'sentence — "the item would be added to a cart that stays empty"'
+            "Why it cannot be automated yet, in one sentence a person can act "
+            "on - usually that it needs a flow nobody has recorded"
         )
     )
 
 
-class SuggestedChecks(BaseModel):
-    """Checks for a recorded test, which by default has none.
+class ImportedCases(BaseModel):
+    """Somebody else's test-case sheet, read and converted.
 
-    A recording captures what somebody did, not what should have been true
-    afterwards — so the test it produces passes as long as every click found
-    something to click. These are the assertions that turn it from a walkthrough
-    into a test.
+    `reading` comes back so the person who uploaded the file can see how it was
+    understood before anything is saved. A sheet misread by one column produces
+    confident nonsense, and the only way to catch that is to say out loud which
+    column was taken for what.
     """
 
-    checks: list[SuggestedCheck] = Field(default_factory=list)
+    reading: str = Field(
+        description=(
+            "How the sheet was understood, in one sentence naming the columns "
+            "used"
+        )
+    )
+    cases: list[GeneratedCase] = Field(
+        default_factory=list, description="The rows that could be automated"
+    )
+    skipped: list[SkippedRow] = Field(
+        default_factory=list,
+        description="Rows that could not be, and why. Never drop one silently.",
+    )
 
 
 class DraftedBug(BaseModel):

@@ -43,6 +43,7 @@ from app.repositories.test_run_repo import (
 from app.runner import registry
 from app.runner.executor import ExecutionOutcome, run_suite
 from app.services.codegen_service import CodegenService
+from app.services.sample_file_service import load_all as load_samples
 from app.services.exceptions import NotFound, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,9 @@ class ExecutionService:
 
         browsers = [Browser(name) for name in run.browsers]
         base_url = run.project.base_url if run.project else None
+        # Read now rather than held anywhere, so a photograph added this morning
+        # is used by this afternoon's run without regenerating the suite.
+        samples = load_samples(self.db)
 
         # Each browser gets its own process; the pool bounds how many run at
         # once so three browsers do not become three times the memory on a
@@ -181,6 +185,7 @@ class ExecutionService:
                         slow_mo_ms=run.slow_mo_ms,
                         on_progress=self._progress_reporter(run_id, browser, cases),
                         on_started=self._start_reporter(run_id, cases),
+                        samples=samples,
                     ),
                     browsers,
                 )

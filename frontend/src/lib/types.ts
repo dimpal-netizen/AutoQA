@@ -40,6 +40,18 @@ export interface ProjectCreate {
   default_browsers?: Browser[];
 }
 
+/** One file a test can upload, instead of a generated placeholder.
+ *
+ *  A browser never says where a chosen file lives, so a recording holds the
+ *  name of somebody's photograph and nothing else. A placeholder gets past the
+ *  form; a listing that shows its photographs back deserves photographs. */
+export interface SampleFile {
+  id: number;
+  filename: string;
+  content_type: string;
+  size: number;
+}
+
 // --- recordings -----------------------------------------------------------
 
 export type RecordingStatus = "recording" | "completed" | "discarded";
@@ -178,6 +190,29 @@ export interface CaseWrite {
   category: CaseCategory;
   priority: CasePriority;
   steps: CaseStepWrite[];
+}
+
+/** A row of an uploaded sheet that could not become an automated test. */
+export interface SkippedRow {
+  row: number;
+  scenario: string;
+  reason: string;
+}
+
+/** A team's own manual test-case sheet, read and drafted - saved by nobody yet.
+ *
+ *  `reading` is how the sheet was understood, naming the columns used. It comes
+ *  back because a sheet misread by one column produces confident nonsense, and
+ *  saying which column was taken for what is the only way to catch that before
+ *  anything is saved. */
+export interface ImportPreview {
+  reading: string;
+  rows: number;
+  cases: CaseWrite[];
+  skipped: SkippedRow[];
+  model: string;
+  tokens: number;
+  cost_usd: number;
 }
 
 export interface TestCase {
@@ -374,15 +409,6 @@ export interface TestRun {
    *  point of keeping it. */
   suite_name: string;
 }
-
-/** How slowly to drive the browser, in milliseconds per action.
- *
- *  Every run is watched, and at this one speed. It was a checkbox and a
- *  three-way choice before, both defaulting to off — so the normal way to run
- *  tests was to see nothing, and a red result was a sentence about an element
- *  rather than a page you watched fail. Step by step is slow on purpose: it is
- *  the speed at which a person can read the field being filled. */
-export const WATCH_SLOWMO_MS = 2500;
 
 export interface TestRunDetail extends TestRun {
   results: TestResult[];
@@ -633,18 +659,6 @@ export interface AskAnswer {
  *  A recording captures what somebody did, not what should have been true
  *  afterwards — so the test it produces passes as long as every click found
  *  something to click. */
-export interface SuggestedCheck {
-  after: number;
-  /** What the step it follows actually does, so the row reads "after clicking
-   *  Login" rather than "after step 7" — a number nobody can check. */
-  step: string;
-  target: string;
-  kind: "visible" | "text";
-  expected: string;
-  /** What breaking would look like without it. This is how somebody decides
-   *  whether to keep it. */
-  why: string;
-}
 
 export interface Untouched {
   page: string;

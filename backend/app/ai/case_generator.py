@@ -273,12 +273,22 @@ def describe_pages(pages: list[PageSpec]) -> str:
 
     Thirty seconds, then a defect against a page that is working. Not offering
     the element is the only reliable way to not write that case.
+
+    And elements that were not on screen when the page was opened cold. That one
+    is measured rather than reasoned about - see probe.py - which is why it also
+    catches the shapes nobody has run into yet: a Checkout button that needs a
+    full cart, a field on the second step of a wizard, a form replaced by
+    "Listing Limit Reached". None of those are visible in a recording, because
+    the recording was made in the state where they were fine.
     """
     lines: list[str] = []
     for page in pages:
         usable = [
             loc for loc in page.locators
-            if loc.strategy not in _POSITIONAL and loc.visible and not loc.revealed
+            if loc.strategy not in _POSITIONAL
+            and loc.visible
+            and not loc.revealed
+            and loc.reachable
         ]
         if not usable:
             continue

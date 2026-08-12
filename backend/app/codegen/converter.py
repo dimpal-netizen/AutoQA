@@ -91,6 +91,11 @@ class LocatorSpec:
     # finds a different kind of element is not this element, whatever its
     # selector says. See `heal`.
     tag: str = ""
+    # Was it on screen when the page was opened cold? False means a case that
+    # goes straight there finds nothing - a Checkout button on an empty cart, a
+    # field on the second step of a wizard. True when nothing was measured, so a
+    # suite generated without a probe behaves exactly as it did. See probe.py.
+    reachable: bool = True
 
 
 @dataclass
@@ -141,6 +146,7 @@ class PageSpec:
                 base_expression=locator.base_expression,
                 revealed=locator.revealed,
                 tag=locator.tag,
+                reachable=locator.reachable,
             )
         )
         return name
@@ -176,7 +182,7 @@ class StepSpec:
     verb: str | None = None
     # This step typed into a password field. The one unambiguous marker of
     # where a recording signed in, and so of which pages after it need an
-    # account - see `_sign_in` in synth.py.
+    # account - see `sign_in_sequence` in synth.py.
     is_password: bool = False
 
 
@@ -667,8 +673,28 @@ def _arrives_at(destination: str) -> str:
     Anchored at both ends, and only a query or a fragment may follow, so this
     stays a real check: `/properties` does not match `/properties/cmryim584...`,
     which is a different page.
+
+    A record id in the path becomes a wildcard, because it is a different record
+    every run. The recording added a property and landed on
+
+        /property-owner/my-listings/cmsoao69n001501pd
+
+    so the test waited for that exact listing - the one made during the
+    recording, which the test does not create and can never reach. Thirty
+    seconds, then red, on a property that had been added perfectly well. What
+    is being checked is that adding a listing lands on a listing page, and the
+    id is the one part of that which cannot be part of the claim.
     """
-    return rf"^{re.escape(destination.rstrip('/'))}/?(?:[?#].*)?$"
+    scheme, _, rest = destination.partition("://")
+    host, _, path = rest.partition("/")
+    parts = [
+        r"[^/]+" if _is_identifier_segment(segment) else re.escape(segment)
+        for segment in path.rstrip("/").split("/")
+        if segment
+    ]
+    prefix = re.escape(f"{scheme}://{host}") if scheme else re.escape(destination)
+    body = "/" + "/".join(parts) if parts else ""
+    return rf"^{prefix}{body}/?(?:[?#].*)?$"
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ from app.api import (
     projects,
     recordings,
     reports,
+    sample_files,
     runs,
     test_cases,
 )
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(analysis.router, prefix=settings.API_V1_PREFIX)
     app.include_router(bugs.router, prefix=settings.API_V1_PREFIX)
     app.include_router(reports.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(sample_files.router, prefix=settings.API_V1_PREFIX)
 
     # Later phases add: integrations, agent, websocket.
 

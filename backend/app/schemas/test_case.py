@@ -221,6 +221,39 @@ class CaseWrite(BaseModel):
     steps: list[CaseStepWrite] = Field(min_length=1)
 
 
+class SkippedRowRead(BaseModel):
+    """A row of the uploaded sheet that could not become an automated test."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    row: int
+    scenario: str
+    reason: str
+
+
+class ImportPreview(BaseModel):
+    """An uploaded sheet, read and drafted - saved by nobody yet.
+
+    `reading` is how the sheet was understood, in one sentence naming the
+    columns used. It comes back because a sheet misread by one column produces
+    confident nonsense, and saying which column was taken for what is the only
+    way anyone can catch that before it is saved.
+
+    `cases` are `CaseWrite` - the same shape the editor sends - so saving one
+    goes through the identical path a typed case does.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    reading: str
+    rows: int
+    cases: list[CaseWrite] = []
+    skipped: list[SkippedRowRead] = []
+    model: str = ""
+    tokens: int = 0
+    cost_usd: float = 0.0
+
+
 class VerbRead(BaseModel):
     """One action the editor may offer, and what it needs alongside it."""
 
@@ -263,22 +296,3 @@ class CaseVocabulary(BaseModel):
     max_steps: int
 
 
-class SuggestedCheckRead(BaseModel):
-    """One check proposed for a recorded test that asserts nothing."""
-
-    after: int
-    # What the step it follows actually does, so a tickbox reads "after clicking
-    # Login" rather than "after step 7" — a number nobody can check.
-    step: str = ""
-    target: str
-    kind: str
-    expected: str = ""
-    # What breaking would look like without it. This is how somebody decides
-    # whether to keep it, so it is about the application, not the test.
-    why: str = ""
-
-
-class ChecksWrite(BaseModel):
-    """The checks somebody accepted. Replaces whatever was stored before."""
-
-    checks: list[SuggestedCheckRead] = []

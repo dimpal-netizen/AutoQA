@@ -21,7 +21,6 @@ import { api, downloadReport } from "@/lib/api";
 import {
   BROWSER_LABEL,
   RUN_BADGE,
-  WATCH_SLOWMO_MS,
   formatDuration,
   isRunActive,
   type Browser,
@@ -66,10 +65,12 @@ export function RunPanel({
   onRunningChange?: (caseIds: number[] | null) => void;
 }) {
   const [browsers, setBrowsers] = useState<Browser[]>(["chromium"]);
-  // Every run is watched, stepping through one action at a time. Not a choice:
-  // see WATCH_SLOWMO_MS.
+  // Every run is watched, stepping through one action at a time. Not a choice.
+  //
+  // How slowly is the server's decision, not this one. Sending a number from
+  // here meant two places held it, they drifted - 700 there, 2500 here - and
+  // every run took three and a half times as long as the setting claimed.
   const headless = false;
-  const slowMo = WATCH_SLOWMO_MS;
   const [run, setRun] = useState<TestRunDetail | null>(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -150,7 +151,6 @@ export function RunPanel({
         const started = await api.runs.start(suiteId, {
           browsers,
           headless,
-          slow_mo_ms: slowMo,
           // Omitted entirely when running everything — the API reads an absent
           // case_ids as "the whole suite", and [] would mean "no tests".
           ...(caseIds && caseIds.length > 0 ? { case_ids: caseIds } : {}),
@@ -166,7 +166,7 @@ export function RunPanel({
         setStarting(false);
       }
     },
-    [suiteId, browsers, headless, slowMo, loadHistory],
+    [suiteId, browsers, headless, loadHistory],
   );
 
   // A row below pressed its play button.
@@ -335,7 +335,7 @@ export function RunPanel({
         )}
         {!active && (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            A browser window opens and pauses {slowMo}ms between each action, so
+            A browser window opens and pauses between each action, so
             you can follow every step. Runs take noticeably longer this way.
           </p>
         )}

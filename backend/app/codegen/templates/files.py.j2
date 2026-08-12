@@ -23,8 +23,15 @@ was never in the recording.
 """
 
 import base64
+import itertools
 import struct
 import zlib
+from pathlib import Path
+
+#: Real files the project keeps for this, copied in beside the tests. Empty on a
+#: project that has not uploaded any, and then everything below builds a
+#: placeholder exactly as it always did.
+SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
 WIDTH, HEIGHT = 800, 600
 
@@ -199,6 +206,55 @@ def _png(width: int = WIDTH, height: int = HEIGHT) -> bytes:
     )
 
 
+def _from_the_library(suffix: str) -> dict | None:
+    """The next real file of that kind the project uploaded, or None.
+
+    Round-robin rather than always the first, so a form asking for six
+    photographs gets six different ones. A listing whose gallery is the same
+    picture six times is not what anybody meant by uploading a library.
+
+    Matched on the kind of file, because a form that takes images will not take
+    the PDF sitting next to them.
+    """
+    if not SAMPLES.is_dir():
+        return None
+
+    kind = MIME_TYPES.get(suffix)
+    matches = sorted(
+        path
+        for path in SAMPLES.iterdir()
+        if path.is_file() and MIME_TYPES.get(path.suffix.lower()) == kind
+    ) if kind else []
+
+    # Nothing of that kind. An image asked for where only PDFs were uploaded
+    # falls through to the placeholder rather than uploading the wrong thing.
+    if not matches:
+        return None
+
+    path = matches[next(_TURN) % len(matches)]
+    return {
+        "name": path.name,
+        "mimeType": MIME_TYPES[path.suffix.lower()],
+        "buffer": path.read_bytes(),
+    }
+
+
+#: One counter for the whole run, so consecutive uploads move through the
+#: library rather than each starting at the front of it.
+_TURN = itertools.count()
+
+MIME_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+}
+
+
 def sample_file(name: str) -> dict:
     """The file to upload in place of the one that was picked by hand.
 
@@ -211,6 +267,14 @@ def sample_file(name: str) -> dict:
     """
     stem, dot, extension = name.rpartition(".")
     suffix = f".{extension.lower()}" if dot else ""
+
+    # A real one if the project has uploaded any of that kind. A placeholder
+    # uploads fine and gets past the form, but it is a grey rectangle - a site
+    # that shows the photograph back on the listing deserves a photograph, and
+    # a test that checks the gallery cannot be written against a rectangle.
+    real = _from_the_library(suffix or ".png")
+    if real is not None:
+        return real
 
     if suffix in (".jpg", ".jpeg"):
         return {"name": name, "mimeType": "image/jpeg",

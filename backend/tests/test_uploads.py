@@ -214,3 +214,95 @@ def test_the_base64_in_the_template_is_a_real_jpeg(tmp_path) -> None:
     assert raw[:3].hex() == "ffd8ff"       # SOI, and it is a JFIF stream
     assert raw[-2:].hex() == "ffd9"        # EOI: the file is whole, not truncated
     assert len(raw) > 1_000
+
+
+# ---------------------------------------------------------------------------
+# The project's own files, when it has any
+# ---------------------------------------------------------------------------
+"""A generated placeholder uploads correctly and gets past the form. It is still
+a grey rectangle, so a site that shows the photograph back on the listing has
+nothing to show, and a test that checks the gallery cannot be written against
+it. A project that has uploaded real ones gets those instead."""
+
+
+def with_samples(tmp_path, files: dict[str, bytes]):
+    """The generated helper, with a `samples/` folder beside it as a run has."""
+    _, generated = built([upload(["IMG_1234.jpg"])])
+    source = next(f.content for f in generated if f.path == "pages/_files.py")
+
+    pages = tmp_path / "pages"
+    pages.mkdir(exist_ok=True)
+    (pages / "_files.py").write_text(source, encoding="utf-8")
+    samples = tmp_path / "samples"
+    samples.mkdir(exist_ok=True)
+    for name, data in files.items():
+        (samples / name).write_bytes(data)
+
+    spec = importlib.util.spec_from_file_location("_files_lib", pages / "_files.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+REAL_JPEG = b"\xff\xd8\xff" + b"a photograph" * 20 + b"\xff\xd9"
+
+
+def test_a_real_photograph_is_used_instead_of_the_placeholder(tmp_path) -> None:
+    module = with_samples(tmp_path, {"house-01.jpg": REAL_JPEG})
+
+    sample = module.sample_file("IMG_1234.jpg")
+
+    assert sample["buffer"] == REAL_JPEG
+    assert sample["name"] == "house-01.jpg"
+    assert sample["mimeType"] == "image/jpeg"
+
+
+def test_a_form_asking_for_six_photographs_gets_six_different_ones(tmp_path) -> None:
+    """A listing whose gallery is the same picture six times is not what anybody
+    meant by uploading a library."""
+    module = with_samples(tmp_path, {
+        f"house-{n}.jpg": b"\xff\xd8\xff" + bytes([n]) * 50 + b"\xff\xd9" for n in range(3)
+    })
+
+    picked = [module.sample_file("IMG.jpg")["name"] for _ in range(3)]
+
+    assert len(set(picked)) == 3
+
+
+def test_the_library_wraps_round_rather_than_running_out(tmp_path) -> None:
+    module = with_samples(tmp_path, {"only.jpg": REAL_JPEG})
+
+    assert [module.sample_file("x.jpg")["name"] for _ in range(3)] == ["only.jpg"] * 3
+
+
+def test_a_kind_nobody_uploaded_falls_back_to_the_placeholder(tmp_path) -> None:
+    """An image asked for where only PDFs were uploaded must not upload the PDF.
+    A form that takes images will not take it, and the failure would read as a
+    bug in the upload."""
+    module = with_samples(tmp_path, {"terms.pdf": b"%PDF-1.4 ..."})
+
+    sample = module.sample_file("IMG_1234.jpg")
+
+    assert sample["mimeType"] == "image/jpeg"
+    assert sample["buffer"][:3].hex() == "ffd8ff"      # the built-in one
+    assert b"%PDF" not in sample["buffer"]
+
+
+def test_a_project_with_no_library_behaves_exactly_as_before(tmp_path) -> None:
+    module = with_samples(tmp_path, {})
+
+    sample = module.sample_file("IMG_1234.jpg")
+
+    assert sample["name"] == "IMG_1234.jpg"
+    assert sample["buffer"][:3].hex() == "ffd8ff"
+
+
+def test_a_png_asked_for_takes_a_png_from_the_library(tmp_path) -> None:
+    """Matched on the kind of file, not just on there being one."""
+    module = with_samples(tmp_path, {
+        "photo.jpg": REAL_JPEG,
+        "plan.png": b"\x89PNG\r\n\x1a\n" + b"pixels" * 10,
+    })
+
+    assert module.sample_file("anything.png")["name"] == "plan.png"
+    assert module.sample_file("anything.jpg")["name"] == "photo.jpg"

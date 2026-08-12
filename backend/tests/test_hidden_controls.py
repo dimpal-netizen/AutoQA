@@ -410,3 +410,50 @@ def test_a_test_id_is_preferred_over_a_link() -> None:
     element = {"attributes": {"href": "/properties?x=1", "data-testid": "house-filter"}}
 
     assert distinguisher(element) == ("data-testid", "house-filter")
+
+
+def test_a_record_id_in_a_navigation_wait_becomes_a_wildcard() -> None:
+    """The recording added a property and landed on
+
+        /property-owner/my-listings/cmsoao69n001501pd
+
+    so the test waited for that exact listing - the one made during the
+    recording, which the test does not create and can never reach. Thirty
+    seconds, then red, on a property that had been added perfectly well.
+    """
+    import re as _re
+
+    from app.codegen.converter import _arrives_at
+
+    pattern = _re.compile(
+        _arrives_at("https://x.test/property-owner/my-listings/cmsoao69n001501pd")
+    )
+
+    assert pattern.match("https://x.test/property-owner/my-listings/cmsoao69n001501pd")
+    assert pattern.match("https://x.test/property-owner/my-listings/a-different-one99")
+
+
+def test_the_wait_still_says_which_page_it_wanted() -> None:
+    """Only the id is a wildcard. Landing on the listings index, or on some
+    other page carrying an id, is not arriving where the click said it would."""
+    import re as _re
+
+    from app.codegen.converter import _arrives_at
+
+    pattern = _re.compile(
+        _arrives_at("https://x.test/property-owner/my-listings/cmsoao69n001501pd")
+    )
+
+    assert not pattern.match("https://x.test/property-owner/my-listings")
+    assert not pattern.match("https://x.test/property-owner/drafts/cmsoao69n001501pd")
+
+
+def test_a_path_with_no_id_is_unchanged() -> None:
+    import re as _re
+
+    from app.codegen.converter import _arrives_at
+
+    pattern = _re.compile(_arrives_at("https://x.test/properties"))
+
+    assert pattern.match("https://x.test/properties?listing-type=NEW_PROJECT")
+    assert not pattern.match("https://x.test/properties/cmryim584000q01p42kj4ts8q")

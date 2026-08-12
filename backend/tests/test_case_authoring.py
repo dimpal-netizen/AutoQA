@@ -809,3 +809,158 @@ def test_a_recording_that_never_signed_in_changes_nothing(pages):
     )
 
     assert "password" not in source
+
+
+def test_the_sign_in_waits_before_the_case_navigates_away():
+    """Without the wait, the case's own `goto` fires the moment the button is
+    pressed and cancels the sign-in that is still in the air:
+
+        Locator.fill: Timeout 30000ms exceeded
+        1 network request failed: POST /users/auth/login -> net::ERR_ABORTED
+
+    which reads as the application dropping logins, and is the test cancelling
+    its own.
+    """
+    recorded = signed_in_recording()
+    # As a recording has it: the click that submits carries the navigation.
+    recorded[3].code = [
+        "login.sign_in_button.click()",
+        "page.wait_for_url(re.compile('dashboard'))",
+    ]
+
+    ir = synthesise(
+        GeneratedCase(name="Case", category="negative", priority="high",
+                      description="A case.", steps=[
+                          CaseStep(action="goto", value="https://shop.test/dashboard",
+                                   description="Open"),
+                          CaseStep(action="fill", target="DashboardPage.title_input",
+                                   value="", description="Leave it empty"),
+                          CaseStep(action="expect_visible", target="DashboardPage.title_input",
+                                   description="Still there"),
+                      ]),
+        pages=account_pages(), start_url="https://shop.test/",
+        module_name="test_case", function_name="test_case", recorded_steps=recorded,
+    )
+    source = next(f for f in render(ir, browser_info={}) if f.path == ir.file_path).content
+
+    signed_in = source.index("login.sign_in_button.click()")
+    waited = source.index("wait_for_url")
+    navigated = source.index("page.goto('https://shop.test/dashboard')")
+    assert signed_in < waited < navigated, "navigated away before the sign-in landed"
+
+
+def test_only_the_submitting_step_keeps_its_wait():
+    """Clicking into a field does not navigate, so a wait there is one the
+    recording happened to attach and nothing needs."""
+    recorded = signed_in_recording()
+    recorded[1].code = [
+        "login.email_input.fill('a@b.c')",
+        "page.wait_for_url(re.compile('never'))",
+    ]
+
+    ir = synthesise(
+        GeneratedCase(name="Case", category="negative", priority="high",
+                      description="A case.", steps=[
+                          CaseStep(action="goto", value="https://shop.test/dashboard",
+                                   description="Open"),
+                          CaseStep(action="fill", target="DashboardPage.title_input",
+                                   value="", description="Leave it empty"),
+                          CaseStep(action="expect_visible", target="DashboardPage.title_input",
+                                   description="Still there"),
+                      ]),
+        pages=account_pages(), start_url="https://shop.test/",
+        module_name="test_case", function_name="test_case", recorded_steps=recorded,
+    )
+    source = next(f for f in render(ir, browser_info={}) if f.path == ir.file_path).content
+
+    assert "never" not in source
+
+
+def test_a_restored_sign_in_brings_its_import_with_it():
+    """The recording's own wait is a `re.compile`, and the module only imported
+    `re` when the case itself asserted on a URL. Missed, every case in the suite
+    died on `NameError: name 're' is not defined` - a whole generation lost to a
+    line that was copied in rather than written.
+    """
+    import ast
+
+    recorded = signed_in_recording()
+    recorded[3].code = [
+        "login.sign_in_button.click()",
+        "page.wait_for_url(re.compile('dashboard'))",
+    ]
+
+    ir = synthesise(
+        GeneratedCase(name="Case", category="negative", priority="high",
+                      description="A case.", steps=[
+                          CaseStep(action="goto", value="https://shop.test/dashboard",
+                                   description="Open"),
+                          CaseStep(action="fill", target="DashboardPage.title_input",
+                                   value="", description="Leave it empty"),
+                          CaseStep(action="expect_visible", target="DashboardPage.title_input",
+                                   description="Still there"),
+                      ]),
+        pages=account_pages(), start_url="https://shop.test/",
+        module_name="test_case", function_name="test_case", recorded_steps=recorded,
+    )
+    source = next(f for f in render(ir, browser_info={}) if f.path == ir.file_path).content
+
+    assert "re.compile(" in source
+    assert "import re" in source
+    # Every name the module uses is one it defined or imported.
+    tree = ast.parse(source)
+    imported = {
+        alias.asname or alias.name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert "re" in imported
+
+
+def test_a_restored_upload_brings_its_import_too():
+    """The same shape as `re`, found the same way and one release later: a
+    restored step calls `sample_file`, nothing raised that flag, and the module
+    used a name it never imported.
+
+    Every flag is now read off the finished lines rather than set where each
+    line is written, because a line copied in from the recording never passes
+    through the code that would have set it.
+    """
+    from app.models.enums import ActionType
+
+    recorded = signed_in_recording()
+    recorded.append(
+        StepSpec(
+            sequence=9, action=ActionType.UPLOAD,
+            code=["dashboard.photos_input.set_input_files(sample_file('a.jpg'))"],
+            description="Upload a photo", page_var="dashboard",
+            locator_name="photos_input",
+        )
+    )
+    # Between two fields the case fills, so `_restore_setup` puts it back.
+    recorded.append(
+        StepSpec(sequence=10, action=ActionType.INPUT, code=["dashboard.title_input.fill('t')"],
+                 description="Title", page_var="dashboard", locator_name="title_input")
+    )
+
+    pages = account_pages()
+    pages[1].locators.append(
+        LocatorSpec(name="photos_input", expression="self.page.e", strategy="test_id",
+                    fragile=False)
+    )
+
+    ir = synthesise(
+        GeneratedCase(name="Case", category="positive", priority="high",
+                      description="A case.", steps=[
+                          CaseStep(action="goto", value="https://shop.test/dashboard"),
+                          CaseStep(action="fill", target="DashboardPage.title_input", value="t"),
+                          CaseStep(action="expect_visible", target="DashboardPage.title_input"),
+                      ]),
+        pages=pages, start_url="https://shop.test/",
+        module_name="test_case", function_name="test_case", recorded_steps=recorded,
+    )
+    source = next(f for f in render(ir, browser_info={}) if f.path == ir.file_path).content
+
+    if "sample_file(" in source:
+        assert "from pages._files import sample_file" in source

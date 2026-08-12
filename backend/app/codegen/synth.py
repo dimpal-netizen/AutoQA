@@ -411,6 +411,22 @@ def synthesise(
         name=getattr(case, "name", "?"),
     )
 
+    # What the finished steps actually call, read off the lines themselves.
+    #
+    # Every other flag on the IR is set where the line is written, which works
+    # right up until a line arrives from somewhere else. Restoring a recorded
+    # sign-in copies the recording's own `wait_for_url(re.compile(...))` in;
+    # restoring setup copies its uploads, which call `sample_file`. Neither
+    # goes through the code that would have raised the flag, so the module used
+    # a name it never imported and every case in the suite died on
+    #
+    #     NameError: name 're' is not defined
+    #
+    # once the browser was already open. These lines were not written here -
+    # they were copied out of the recorded test verbatim - so reading them is
+    # the only honest way to know what they need.
+    emitted = chr(10).join(line for step in steps for line in step.code)
+
     ir = TestIR(
         suite_name=_clean(getattr(case, "name", "Generated test")),
         function_name=function_name,
@@ -420,11 +436,11 @@ def synthesise(
         # import page objects it never uses.
         pages=[p for p in pages if p.class_name in used_pages],
         steps=steps,
-        needs_regex=needs_regex,
-        needs_set_checked=any(
-            step.action in (ActionType.CHECK, ActionType.UNCHECK) for step in steps
-        ),
-        needs_uuid=needs_uuid,
+        needs_regex=needs_regex or "re.compile(" in emitted,
+        needs_set_checked="set_checked(" in emitted,
+        needs_reveal="reveal(" in emitted,
+        needs_sample_file="sample_file(" in emitted,
+        needs_uuid=needs_uuid or "uuid4(" in emitted,
         needs_unhealed=uses_unhealed(steps),
     )
     ir.fragile_count = sum(1 for step in steps if step.fragile)
@@ -872,7 +888,7 @@ def _setup_within(gap: list[StepSpec]) -> list[StepSpec]:
     ]
 
 
-def _sign_in(recorded: list[StepSpec]) -> tuple[list[StepSpec], set[str], str | None]:
+def sign_in_sequence(recorded: list[StepSpec]) -> tuple[list[StepSpec], set[str], str | None]:
     """The recorded sign-in, and the pages it unlocked.
 
     A password field is the one unambiguous marker in a recording. Whatever the
@@ -960,7 +976,7 @@ def _restore_sign_in(
     out sends me to the login form" is a real test, and it needs to stay signed
     out to be one.
     """
-    sequence, behind, login_var = _sign_in(recorded)
+    sequence, behind, login_var = sign_in_sequence(recorded)
     if not sequence or not behind:
         return steps
 
@@ -991,16 +1007,28 @@ def _restore_sign_in(
                 description=f"Sign in first: open {login_url}",
             )
         )
-    for step in sequence:
+    for position, step in enumerate(sequence):
+        # The last one is the click that submits, and its wait stays. Stripped,
+        # the case's own `goto` fires the moment the button is pressed and
+        # navigates away while the sign-in request is still in the air:
+        #
+        #     Locator.fill: Timeout 30000ms exceeded
+        #     1 network request failed: POST /users/auth/login -> net::ERR_ABORTED
+        #
+        # which reads as the application dropping logins, and is the test
+        # cancelling its own. The waits on the steps before it are dropped:
+        # clicking into a field does not navigate, so a wait there is one the
+        # recording happened to attach and nothing needs.
+        submits = position == len(sequence) - 1
         out.append(
             StepSpec(
                 sequence=len(out),
                 action=step.action,
                 verb=VERB_FOR_ACTION.get(step.action),
-                # `wait_for_url` belongs to the click that navigated during the
-                # recording; the same click here is followed by the case's own
-                # `goto`, so waiting for the recorded destination would hang.
-                code=[line for line in step.code if "wait_for_url" not in line],
+                code=[
+                    line for line in step.code
+                    if submits or "wait_for_url" not in line
+                ],
                 description=f"{step.description} (signing in, from the recording)",
                 page_var=step.page_var,
                 locator_name=step.locator_name,

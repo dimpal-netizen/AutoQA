@@ -614,3 +614,50 @@ def test_first_step_is_always_a_goto(sample) -> None:
 
     assert ir.steps[0].action is ActionType.NAVIGATE
     assert ir.steps[0].code == ["page.goto('https://shop.example.com/login')"]
+
+
+# ---------------------------------------------------------------------------
+# Using something the module never imported
+# ---------------------------------------------------------------------------
+def test_a_file_that_uses_an_unimported_name_is_refused() -> None:
+    """`ast.parse` cannot catch this: the file is perfectly good Python, it just
+    refers to something that is not there. So it survives generation and fails
+    once the browser is open and a person is watching."""
+    from app.codegen.generator import GeneratedCodeError, validate
+    from app.models.enums import FileType
+
+    spec = GeneratedFileSpec(
+        path="tests/test_x.py",
+        content="def test_x(page):\n    page.wait_for_url(re.compile('x'))\n",
+        file_type=FileType.TEST,
+    )
+
+    with pytest.raises(GeneratedCodeError, match="uses re without importing"):
+        validate(spec)
+
+
+def test_the_same_file_with_the_import_is_fine() -> None:
+    from app.codegen.generator import validate
+    from app.models.enums import FileType
+
+    validate(
+        GeneratedFileSpec(
+            path="tests/test_x.py",
+            content="import re\n\n\ndef test_x(page):\n    page.wait_for_url(re.compile('x'))\n",
+            file_type=FileType.TEST,
+        )
+    )
+
+
+def test_a_name_defined_in_the_file_counts_as_provided() -> None:
+    """A helper module defines `sample_file` rather than importing it."""
+    from app.codegen.generator import validate
+    from app.models.enums import FileType
+
+    validate(
+        GeneratedFileSpec(
+            path="pages/_files.py",
+            content="def sample_file(name):\n    return sample_file\n",
+            file_type=FileType.HELPER,
+        )
+    )

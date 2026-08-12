@@ -31,6 +31,7 @@ import { api, downloadTestCaseSheet } from "@/lib/api";
 import {
   formatRelative,
   hasRole,
+  type ImportPreview,
   type TestCase,
   type TestResult,
   type TestSuite,
@@ -39,8 +40,8 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { CaseEditor } from "@/components/case-editor";
 import { GenerateCases } from "@/components/generate-cases";
-import { SuggestChecks } from "@/components/suggest-checks";
 import { RunPanel } from "@/components/run-panel";
+import { ImportCasesButton, ImportReview } from "@/components/import-cases";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/card";
@@ -111,6 +112,8 @@ export function SuiteWorkspace({
   // the button, because anything that button renders beneath itself grows the
   // toolbar row it sits in and knocks the buttons beside it out of line.
   const [generateOutcome, setGenerateOutcome] = useState<string | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   // The case editor, or null when it is closed. `testCase: null` inside it
   // means "write a new one" — the same panel does both, because creating and
@@ -317,6 +320,14 @@ export function SuiteWorkspace({
                   </Button>
                 )}
 
+                {canEdit && suite.recording_id && (
+                  <ImportCasesButton
+                    suiteId={suite.id}
+                    onPreview={setImportPreview}
+                    onError={setImportError}
+                  />
+                )}
+
                 <ExportSheet suite={suite} />
               </>
             )}
@@ -379,11 +390,24 @@ export function SuiteWorkspace({
                   said, because nothing else on the page would show it. */}
               {generateOutcome && <Alert>{generateOutcome}</Alert>}
 
-              {/* Only where there is a recording to read. The recorded test is
-                  the baseline every other case is written around, and it
-                  asserts nothing at all. */}
-              {canEdit && suite.recording_id && (
-                <SuggestChecks suiteId={suite.id} onSaved={onChange} />
+              {/* One row, below the toolbar rather than in it. Both of these
+                  open a panel of their own underneath, and anything that grows
+                  under a toolbar button knocks the buttons beside it out of
+                  line - the same reason the generate button reports upward.
+                  Stacked one per row they read as two unrelated features and
+                  left a ragged column of buttons down the left. */}
+              {importError && <Alert>{importError}</Alert>}
+
+              {importPreview && (
+                <ImportReview
+                  suiteId={suite.id}
+                  preview={importPreview}
+                  onError={setImportError}
+                  onDone={(saved) => {
+                    setImportPreview(null);
+                    if (saved) void reload();
+                  }}
+                />
               )}
 
               {/* The pass/fail summary was here. Every row already carries its
