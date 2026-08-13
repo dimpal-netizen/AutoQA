@@ -266,6 +266,54 @@ def _failed_step(trace: str) -> int | None:
         return None
 
 
+#: A traceback frame: a file, the line it stopped on, and the function.
+#:
+#:     tests\test_can_fill_property_title.py:51: in test_can_fill_property_title
+#:         login.email_input.fill('lilian@yopmail.com')
+#:     ..\.venv\Lib\site-packages\playwright\sync_api\_generated.py:18030: in fill
+#:
+#: Only the first is a line we wrote, so the frame is required to be inside
+#: `tests/` - where generated tests live and nothing else does. Matching any
+#: frame would index `conftest.py:31` or `pages/login_page.py:12` into the
+#: case's own file and name whichever step happens to sit on line 31, which is
+#: a confidently wrong answer where None was merely an unhelpful one.
+_FRAME = re.compile(r"^\s*(?:\S*[\\/])?tests[\\/]\S*\.py:(\d+): in ", re.M)
+
+
+def step_from_traceback(trace: str | None, code: str | None) -> int | None:
+    """Which numbered step the failing line belongs to.
+
+    The comment hunt above almost never finds anything, and that turns out to
+    matter a great deal. pytest prints the line that failed, not the comment
+    above it, so across thirty-nine real failures it named the step in none of
+    them - and the analyser then asked for an explanation with the step given as
+    "unknown" every single time. A model told a test failed somewhere is being
+    invited to pick a plausible somewhere, which is most of the way to
+    explaining a part of the test that was never reached.
+
+    The traceback does carry a line number, and the file it points at is the
+    code stored on the case. So: go to that line and walk back to the nearest
+    `# 7.` heading. Exact rather than inferred, because both halves are ours.
+    """
+    if not trace or not code:
+        return None
+
+    frame = _FRAME.search(trace)
+    if frame is None:
+        return None
+
+    lines = code.splitlines()
+    index = min(int(frame.group(1)), len(lines)) - 1
+    if index < 0:
+        return None
+
+    for line in reversed(lines[: index + 1]):
+        found = _STEP_HINT.match(line)
+        if found:
+            return int(found.group(1))
+    return None
+
+
 def summarise(results: list[ParsedResult]) -> dict[str, int]:
     """Totals for the run row."""
     counts = {"total": len(results), "passed": 0, "failed": 0, "skipped": 0}

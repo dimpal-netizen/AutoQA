@@ -87,6 +87,44 @@ def test_the_tests_own_steps_are_part_of_the_prompt():
     assert "Type the email" in client.calls[0]
 
 
+def test_the_step_it_stopped_on_is_marked_in_the_list():
+    """Stating the number alongside fifteen steps is a lookup, not an answer.
+
+    Getting that lookup wrong is exactly how an explanation ends up describing
+    a part of the test that never ran, so the mark goes on the line itself.
+    """
+    client = FakeLLM(good())
+    steps = [
+        FakeStep(1, "Open the login page"),
+        FakeStep(2, "Type the email"),
+        FakeStep(3, "Click Sign in"),
+        FakeStep(4, "Expect the dashboard"),
+    ]
+
+    analyse(FakeResult(failed_step=3), steps=steps, client=client)
+
+    prompt = client.calls[0]
+    assert ">> 3. Click Sign in   <-- STOPPED HERE" in prompt
+    # And what came after it is off the table: the test never got there, so
+    # nothing about the dashboard is known either way.
+    assert "4. Expect the dashboard   (never reached)" in prompt
+    assert "never reached" not in prompt.split("Type the email")[0]
+
+
+def test_an_unknown_step_marks_nothing():
+    """No mark beats a wrong one — the steps read as they always did."""
+    client = FakeLLM(good())
+    steps = [FakeStep(1, "Open the login page"), FakeStep(2, "Type the email")]
+
+    analyse(FakeResult(failed_step=None), steps=steps, client=client)
+
+    # The prompt explains what the marks mean either way, so look for a mark on
+    # a step line rather than for its words anywhere in the prompt.
+    assert ">> 1." not in client.calls[0]
+    assert ">> 2." not in client.calls[0]
+    assert "Type the email   (never reached)" not in client.calls[0]
+
+
 def test_a_single_browser_run_says_so_rather_than_implying_agreement():
     client = FakeLLM(good())
     analyse(FakeResult(), siblings=[FakeResult(id=1)], client=client)
@@ -329,3 +367,37 @@ def test_the_traceback_per_failure_is_shorter_than_a_single_analysis():
     from app.ai.analyser import MAX_TRACE, MAX_TRIAGE_TRACE
 
     assert MAX_TRIAGE_TRACE < MAX_TRACE
+
+
+# ---------------------------------------------------------------------------
+# An answer filed against the wrong row
+# ---------------------------------------------------------------------------
+"""Numbering is what matches a triage answer back to a failure, and nothing
+checked that the numbering held. An answer that slipped by one was stored
+against a row it did not describe - and read as a confident explanation of some
+other test, which is exactly what it was.
+
+The name the model copies back is a check, never a key: names repeat across
+browsers, so matching on them is how this goes wrong in the other direction.
+"""
+
+from app.services.analysis_service import _same_test
+
+
+def test_the_name_it_copied_back_has_to_agree() -> None:
+    assert _same_test("Login works", "Login works")
+    assert not _same_test("Add property with no title", "Login works")
+
+
+def test_retyping_wobble_is_forgiven() -> None:
+    """The model retypes the name, so case and whitespace drift and a trailing
+    full stop appears. What it cannot do is come back with a different test."""
+    assert _same_test("  login WORKS  ", "Login works")
+    assert _same_test("Login works.", "Login works")
+
+
+def test_a_provider_that_omits_it_costs_nothing() -> None:
+    """The field is optional. One that never fills it in must not throw away
+    every explanation in the run."""
+    assert _same_test("", "Login works")
+    assert _same_test("   ", "Login works")

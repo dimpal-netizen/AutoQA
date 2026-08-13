@@ -94,7 +94,7 @@ def analyse(
                 case_description=describe_case(result),
                 browser=result.browser.value,
                 base_url=base_url or "unknown",
-                steps=describe_steps(steps),
+                steps=describe_steps(steps, result.failed_step),
                 status=result.status.value,
                 failed_step=(
                     result.failed_step if result.failed_step is not None else "unknown"
@@ -249,7 +249,7 @@ def describe_failures(failures: list, steps_by_result: dict) -> str:
                     f"{result.failed_step if result.failed_step is not None else 'unknown'}",
                     f"Error: {result.error_message or '(none recorded)'}",
                     "Steps:",
-                    describe_steps(steps),
+                    describe_steps(steps, result.failed_step),
                     "Traceback:",
                     (result.stack_trace or "(none recorded)")[:MAX_TRIAGE_TRACE],
                 ]
@@ -291,17 +291,35 @@ def describe_case(result) -> str:
     return description or "(no description recorded)"
 
 
-def describe_steps(steps) -> str:
+def describe_steps(steps, failed_step: int | None = None) -> str:
+    """The test's steps, with the one it stopped on marked.
+
+    Marked in the list rather than only stated alongside it. "Failed at step 7"
+    above fifteen numbered lines is a lookup the reader has to perform
+    correctly, and an explanation that performs it wrong describes a step the
+    test never reached - which is the complaint this whole path exists to fix.
+    An arrow on the line, and "never reached" on everything below it, leaves
+    nothing to match up.
+    """
     if not steps:
         return "(the test's steps were not recorded)"
 
     lines = []
+    stopped = False
     for step in steps:
         line = f"{step.sequence}. {step.description}"
         if getattr(step, "input_data", None):
             line += f"  (data: {str(step.input_data)[:60]!r})"
         if getattr(step, "expected_result", None):
             line += f"  (expects: {str(step.expected_result)[:60]})"
+
+        if failed_step is not None and step.sequence == failed_step:
+            line = f">> {line}   <-- STOPPED HERE"
+            stopped = True
+        elif stopped:
+            line = f"   {line}   (never reached)"
+        elif failed_step is not None:
+            line = f"   {line}"
         lines.append(line)
     return "\n".join(lines)
 

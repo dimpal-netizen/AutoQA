@@ -164,6 +164,13 @@ class TriagedFailure(BaseModel):
     """
 
     number: int = Field(description="The number this failure was listed under")
+    test: str = Field(
+        default="",
+        description=(
+            "The name of the test this is about, copied exactly from the list. "
+            "Used only to check the numbering did not drift."
+        ),
+    )
     expected: str = Field(description="What the test was waiting to see, in one sentence")
     actual: str = Field(description="What happened instead, in one sentence")
     root_cause: str = Field(description="Why, in one or two sentences")

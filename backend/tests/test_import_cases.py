@@ -18,10 +18,14 @@ import io
 import pytest
 from openpyxl import Workbook
 
+from app.ai.schemas import CaseStep, GeneratedCase
+from app.codegen.converter import LocatorSpec, PageSpec, TestIR
 from app.services.exceptions import ValidationError
 from app.services.import_service import (
     MAX_CELL,
     MAX_ROWS,
+    ImportOutcome,
+    ImportService,
     as_text,
     read_sheet,
     read_without_ai,
@@ -245,3 +249,69 @@ def test_rows_with_no_action_are_skipped_not_turned_into_steps() -> None:
     cases = read_without_ai(rows)
 
     assert len(cases) == 1 and len(cases[0].steps) == 1
+
+
+# ---------------------------------------------------------------------------
+# Compiling the drafts
+#
+# Until now nothing here called `_checked`, and a NameError sat in its closing
+# log line where every import ended up. It cost two paid model calls and a
+# 500 before anyone saw it, because the crash lands *after* the reading is
+# done - the sheet is understood, the cases are built, and then the request
+# dies on the way out.
+# ---------------------------------------------------------------------------
+def compiles(cases: list, **kwargs) -> ImportOutcome:
+    """Run the drafts through the real checker, with no database behind it."""
+    page = PageSpec(class_name="LoginPage", module="login_page", url="https://x.test/login")
+    page.locators.append(
+        LocatorSpec(
+            name="email_input",
+            expression="self.page.locator('#email')",
+            strategy="css_id",
+            fragile=False,
+        )
+    )
+    recorded = TestIR(
+        suite_name="Login",
+        function_name="test_login",
+        module_name="test_login",
+        start_url="https://x.test/login",
+        pages=[page],
+    )
+    return ImportService(None)._checked(
+        cases, recorded, suite_id=7, rows=len(cases), reading="read", **kwargs
+    )
+
+
+def test_an_import_survives_the_walk_out() -> None:
+    """The whole outcome, built and returned. No cases needed to prove it."""
+    outcome = compiles([])
+
+    assert outcome.rows == 0
+    assert outcome.cases == []
+
+
+def test_a_draft_that_cannot_compile_is_reported_not_dropped() -> None:
+    """A row that came back and then vanished is worse than one never read:
+    the sheet does not add up and there is nothing to look at to find out why."""
+    nonexistent = GeneratedCase(
+        name="Click a button nobody has",
+        category="positive",
+        priority="medium",
+        description="Built on an element the recording never saw.",
+        steps=[
+            CaseStep(action="goto", value="https://x.test/login", description="Open"),
+            CaseStep(
+                action="click",
+                target="LoginPage.no_such_button",
+                description="Click it",
+            ),
+        ],
+    )
+
+    outcome = compiles([nonexistent])
+
+    assert outcome.cases == []
+    assert len(outcome.skipped) == 1
+    assert outcome.skipped[0].scenario == "Click a button nobody has"
+    assert outcome.skipped[0].reason

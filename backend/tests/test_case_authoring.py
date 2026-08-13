@@ -771,7 +771,19 @@ def test_a_case_that_opens_a_page_behind_a_login_is_signed_in_first():
 
 
 def test_a_case_that_signs_itself_in_is_left_alone():
-    """Or a test *about* logging in gets a second login glued to its front."""
+    """Or a test *about* logging in gets a second login glued to its front.
+
+    Asked by looking at which elements the case drives. It used to ask
+    `is_password`, which the converter sets on recorded steps and nothing sets
+    here - so the answer was always no, and a case that wrote its own login got
+    a second one in front of it:
+
+        0-5  sign in        (restored)
+        6-9  sign in again  (the case's own)
+
+    The second ran on the dashboard, where there is no email field, and the test
+    spent thirty seconds looking for one.
+    """
     source = compile_account([
         CaseStep(action="goto", value="https://shop.test/login", description="Open"),
         CaseStep(action="fill", target="LoginPage.email_input", value="a@b.c", description="Email"),
@@ -964,3 +976,24 @@ def test_a_restored_upload_brings_its_import_too():
 
     if "sample_file(" in source:
         assert "from pages._files import sample_file" in source
+
+
+def test_a_case_that_logs_in_without_naming_a_password_is_left_alone_too():
+    """The model writes its own login as ordinary fills - it has no way to mark
+    one as a password, and no reason to. Recognising the *elements* is what
+    makes this work where the flag did not."""
+    source = compile_account([
+        CaseStep(action="goto", value="https://shop.test/login", description="Open"),
+        CaseStep(action="fill", target="LoginPage.email_input", value="a@b.c",
+                 description="Email"),
+        CaseStep(action="fill", target="LoginPage.password_input", value="secret",
+                 description="Password"),
+        CaseStep(action="click", target="LoginPage.sign_in_button", description="Submit"),
+        CaseStep(action="fill", target="DashboardPage.title_input", value="t",
+                 description="Title"),
+        CaseStep(action="expect_visible", target="DashboardPage.title_input",
+                 description="Saved"),
+    ])
+
+    assert source.count("login.password_input.fill") == 1
+    assert source.count("login.sign_in_button.click") == 1

@@ -28,6 +28,7 @@ from app.models.user import User
 from app.repositories.analysis_repo import AnalysisRepository
 from app.repositories.test_case_repo import TestCaseRepository
 from app.repositories.test_run_repo import ArtifactRepository, TestResultRepository
+from app.runner.parser import step_from_traceback
 from app.services.exceptions import NotFound, ValidationError
 from app.services.execution_service import ExecutionService
 
@@ -89,6 +90,8 @@ class AnalysisService:
             raise ValidationError(
                 f"This test {result.status.value}. Only failures can be analysed."
             )
+
+        self._locate_failure(result)
 
         outcome = analyse(
             result,
@@ -161,6 +164,9 @@ class AnalysisService:
                 "Every failure in this run has already been explained."
             )
 
+        for result in pending:
+            self._locate_failure(result)
+
         outcome = triage_run(
             pending,
             steps_by_result={r.id: self._steps_for(r) for r in pending},
@@ -187,6 +193,18 @@ class AnalysisService:
                 # The model skipped one. Better to store nothing for it than to
                 # file the next failure's explanation against this row.
                 logger.info("Run %s: no triage returned for failure %s", run_id, number)
+                continue
+
+            # The name it copied back, against the name it was given. Numbering
+            # is what matches an answer to a row, and nothing checked that the
+            # numbering held - so an answer that slipped by one was filed
+            # against a row it did not describe, and read as an explanation of
+            # some other test. Which is what it was.
+            if not _same_test(found.test, result.case_name):
+                logger.warning(
+                    "Run %s: triage for failure %s came back about %r, not %r - dropped",
+                    run_id, number, found.test, result.case_name,
+                )
                 continue
 
             stored.append(
@@ -269,3 +287,45 @@ class AnalysisService:
             return []
         case = self.cases.get_with_steps(result.test_case_id)
         return list(case.steps) if case else []
+
+    def _locate_failure(self, result) -> None:
+        """Work out which step this failure stopped on, if nobody has yet.
+
+        Runs recorded before the traceback was read this way have `failed_step`
+        empty, and asking for an explanation is exactly when that starts to
+        matter - a model told the step is unknown picks one, and picking wrong
+        is the complaint. Derived from evidence already stored, so it is the
+        same answer the run would give today.
+
+        Stored rather than only passed along, so the result's own "stopped at
+        step N" agrees with the explanation underneath it.
+        """
+        if result.failed_step is not None or result.test_case_id is None:
+            return
+
+        case = self.cases.get_with_steps(result.test_case_id)
+        step = step_from_traceback(result.stack_trace, getattr(case, "code", None))
+        if step is None:
+            return
+
+        result.failed_step = step
+        self.db.commit()
+
+
+def _same_test(echoed: str, expected: str) -> bool:
+    """Is the answer about the test it was filed against?
+
+    Lenient on purpose - the model retypes the name, so case and whitespace
+    drift and a trailing full stop appears. What it cannot do is come back with
+    a different test's name, which is the only thing being ruled out here.
+
+    An empty echo passes: the field is optional, and a provider that omits it
+    should not cost every explanation in the run.
+    """
+    if not echoed.strip():
+        return True
+
+    def tidy(text: str) -> str:
+        return " ".join(text.split()).strip(" .").casefold()
+
+    return tidy(echoed) == tidy(expected or "")

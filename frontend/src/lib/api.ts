@@ -229,10 +229,14 @@ export const api = {
     bundle: (id: number) => request<Record<string, string>>(`/suites/${id}/bundle`),
 
     /** Invent positive, negative, edge and security cases. Needs an AI key. */
-    generateCases: (id: number, count = 12) =>
+    /** `guidance` is what the person wants this batch to concentrate on, in
+     *  their own words. It steers which tests get written; it cannot loosen
+     *  what a test is allowed to do — the vocabulary and the element list are
+     *  still the only things a case can be built from. */
+    generateCases: (id: number, count = 12, guidance?: string) =>
       request<GenerateCasesResult>(`/suites/${id}/generate-cases`, {
         method: "POST",
-        body: JSON.stringify({ count }),
+        body: JSON.stringify({ count, guidance: guidance?.trim() || null }),
       }),
 
     /** Rebuild from the recording, replacing the current output. */

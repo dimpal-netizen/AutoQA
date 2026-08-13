@@ -42,6 +42,7 @@ from app.repositories.test_run_repo import (
 )
 from app.runner import registry
 from app.runner.executor import ExecutionOutcome, run_suite
+from app.runner.parser import step_from_traceback
 from app.services.codegen_service import CodegenService
 from app.services.sample_file_service import load_all as load_samples
 from app.services.exceptions import NotFound, ValidationError
@@ -265,6 +266,14 @@ class ExecutionService:
 
         for parsed in outcome.results:
             case = cases.get(parsed.function_name)
+            # The traceback names a line; the case holds the file that line is
+            # in. Only here do both exist, which is why the step is worked out
+            # at recording time rather than while parsing the report.
+            failed_step = parsed.failed_step
+            if failed_step is None:
+                failed_step = step_from_traceback(
+                    parsed.stack_trace, getattr(case, "code", None)
+                )
             result = self.results.upsert(
                 run_id=run.id,
                 browser=outcome.browser,
@@ -275,7 +284,7 @@ class ExecutionService:
                 duration_ms=parsed.duration_ms,
                 error_message=parsed.error_message,
                 stack_trace=parsed.stack_trace,
-                failed_step=parsed.failed_step,
+                failed_step=failed_step,
             )
             self.db.flush()  # need the id to attach artifacts
             by_function[parsed.function_name] = result.id

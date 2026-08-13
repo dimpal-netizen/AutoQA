@@ -16,9 +16,19 @@ from app.models.enums import (
 
 
 class GenerateCasesRequest(BaseModel):
-    """How many cases to invent around the recorded flow."""
+    """How many cases to invent around the recorded flow, and what to aim at."""
 
     count: int = Field(default=12, ge=1, le=25)
+    guidance: str | None = Field(
+        default=None,
+        max_length=1000,
+        description=(
+            "What this batch should concentrate on, in your own words - the "
+            "areas that matter, the rules the form is supposed to enforce, the "
+            "cases your team already knows about. Steers what gets written; it "
+            "cannot loosen what a test is allowed to do."
+        ),
+    )
 
 
 class GenerateCasesResult(BaseModel):

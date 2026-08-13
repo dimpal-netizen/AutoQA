@@ -980,8 +980,27 @@ def _restore_sign_in(
     if not sequence or not behind:
         return steps
 
-    if any(step.is_password for step in steps):
-        return steps  # the case signs itself in
+    # Does the case already sign itself in? Asked by looking at which elements
+    # it drives, not at `is_password` - that flag is set by the converter on
+    # recorded steps and is never true here, so the question always answered no
+    # and every case that wrote its own login got a second one glued in front:
+    #
+    #     0-5  sign in        (restored)
+    #     6-9  sign in again  (the case's own)
+    #
+    # The second one ran on a dashboard, where there is no email field, and the
+    # test spent thirty seconds looking for it.
+    signing_in = {
+        (step.page_var, step.locator_name)
+        for step in sequence
+        if step.page_var and step.locator_name
+    }
+    if any(
+        (step.page_var, step.locator_name) in signing_in
+        for step in steps
+        if step.action is not ActionType.ASSERT
+    ):
+        return steps
 
     needs_it = any(
         step.page_var in behind

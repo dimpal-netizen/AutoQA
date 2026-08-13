@@ -244,6 +244,7 @@ class ImportService:
             return self._checked(
                 plain,
                 recorded,
+                suite_id=suite_id,
                 rows=len(rows),
                 reading=(
                     "Read as a vocabulary sheet - one row per step, with the "
@@ -294,6 +295,7 @@ class ImportService:
         return self._checked(
             read.cases,
             recorded,
+            suite_id=suite_id,
             rows=len(rows),
             reading=read.reading,
             skipped=list(read.skipped),
@@ -307,6 +309,7 @@ class ImportService:
         cases: list[GeneratedCase],
         recorded,
         *,
+        suite_id: int,
         rows: int,
         reading: str,
         skipped: list[SkippedRow] | None = None,

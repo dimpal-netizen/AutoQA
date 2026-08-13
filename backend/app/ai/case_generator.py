@@ -67,6 +67,7 @@ def generate_cases(
     recorded: TestIR,
     *,
     count: int = DEFAULT_COUNT,
+    guidance: str | None = None,
     client: LLMClient | None = None,
     taken_modules: set[str] | None = None,
 ) -> GenerationOutcome:
@@ -121,6 +122,7 @@ def generate_cases(
                 pages=described,
                 steps=describe_steps(recorded),
                 target_count=count,
+                guidance=_asked_for(guidance, count),
             ),
             GeneratedCases,
             system=SYSTEM,
@@ -295,6 +297,46 @@ def describe_pages(pages: list[PageSpec]) -> str:
         lines.append(f"{page.class_name}  (url: {page.url})")
         lines.extend(f"  {page.class_name}.{locator.name}" for locator in usable)
     return "\n".join(lines)
+
+
+#: What the person asking for cases wants this batch to be about. Theirs to
+#: write, so it goes in as a quoted instruction rather than as prose the model
+#: might read as part of the rules above it.
+_GUIDANCE = """
+WHAT THESE TEST CASES ARE FOR
+
+The person asking has said what this batch is for:
+
+    {asked}
+
+This is the brief. Write the cases they asked for first, and spend most of
+{target_count} on it - a batch that covers their subject thoroughly is worth more
+than one that mentions it twice and spreads the rest over things they did not
+ask about. Fill any remainder with the categories below.
+
+It decides which tests are worth writing. It does not change what a test may do:
+the actions, the elements you may name and what counts as a real check all still
+hold, because those are what make a generated test safe to run.
+
+If the brief needs something this recording never reached - a page nobody
+recorded, an element that does not exist - say so in `skipped` reasoning or
+simply write fewer cases. Do not invent an element to satisfy it.
+"""
+
+
+def _asked_for(guidance: str | None, count: int = DEFAULT_COUNT) -> str:
+    """The person's own words as a brief, or nothing at all.
+
+    Nothing at all is the common case, and an empty heading reads as a
+    requirement the model has to satisfy somehow.
+
+    When there is something, it is put first among equals rather than added as
+    a hint: somebody typing "the phone number rules" wants a batch about phone
+    numbers, not one case about phone numbers and eleven about whatever the
+    model would have chosen anyway.
+    """
+    asked = " ".join((guidance or "").split())[:1000]
+    return _GUIDANCE.format(asked=asked, target_count=count) if asked else ""
 
 
 def describe_steps(ir: TestIR) -> str:

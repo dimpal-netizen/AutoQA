@@ -344,7 +344,12 @@ class CodegenService:
     # AI test case generation
     # ------------------------------------------------------------------
     def generate_cases(
-        self, suite_id: int, user: User, *, count: int = DEFAULT_COUNT
+        self,
+        suite_id: int,
+        user: User,
+        *,
+        count: int = DEFAULT_COUNT,
+        guidance: str | None = None,
     ) -> tuple[TestSuite, GenerationOutcome]:
         """Add positive, negative, edge and security cases around the recording.
 
@@ -376,7 +381,7 @@ class CodegenService:
 
         self._mark_reachable(recorded_ir)
 
-        outcome = generate_cases(recorded_ir, count=count)
+        outcome = generate_cases(recorded_ir, count=count, guidance=guidance)
         if outcome.skipped:
             raise ValidationError(outcome.skipped)
         if not outcome.cases:

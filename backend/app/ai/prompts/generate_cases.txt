@@ -24,6 +24,7 @@ a dropdown, choosing from it, and so on. If your case fills two fields the
 recording also filled, whatever the recording did in between is put back for you
 before any code is written. Leave it out and keep the case readable.
 
+{guidance}
 Write {target_count} additional test cases covering these categories:
 
 - **positive** - other flows that should succeed. Session persists after a

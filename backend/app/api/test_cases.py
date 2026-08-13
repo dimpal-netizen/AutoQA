@@ -61,7 +61,9 @@ def generate_cases(
     vocabulary and an element that already exists, and the same deterministic
     converter writes the Python.
     """
-    suite, outcome = CodegenService(db).generate_cases(suite_id, user, count=data.count)
+    suite, outcome = CodegenService(db).generate_cases(
+        suite_id, user, count=data.count, guidance=data.guidance
+    )
 
     return GenerateCasesResult(
         suite=TestSuiteDetail.model_validate(suite),
