@@ -184,6 +184,12 @@ class StepSpec:
     # where a recording signed in, and so of which pages after it need an
     # account - see `sign_in_sequence` in synth.py.
     is_password: bool = False
+    # Which of the tests the person performed this step belongs to. A recording
+    # is rarely one test - see `codegen/segments.py` - and the cut is worked out
+    # from the actions, before any of them became steps. Carried here so the
+    # split survives normalisation, which drops and merges actions and would
+    # otherwise leave nothing to line the two up by.
+    segment: int = 0
 
 
 @dataclass
@@ -777,6 +783,7 @@ def uses_unhealed(steps: list[StepSpec]) -> bool:
 
 def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpec | None:
     kind = ActionType(action["action_type"])
+    segment = int(action.get("segment") or 0)
     payload = action.get("payload") or {}
     element = action.get("element")
     # Everything below reads `usable`, not the raw list. A candidate that would
@@ -790,6 +797,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         url = _clean_url(str(payload.get("url", "")))
         return StepSpec(
             sequence=sequence,
+            segment=segment,
             action=kind,
             code=[f"page.goto({py_str(url)})"],
             description=f"Go to {url}",
@@ -800,6 +808,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         y = int(payload.get("y", 0))
         return StepSpec(
             sequence=sequence,
+            segment=segment,
             action=kind,
             code=[f"page.mouse.wheel(0, {y})"],
             description=f"Scroll down {y}px",
@@ -809,6 +818,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         key = str(payload.get("key", "Enter"))
         return StepSpec(
             sequence=sequence,
+            segment=segment,
             action=kind,
             code=[f"page.keyboard.press({py_str(key)})"],
             description=f"Press {key}",
@@ -1006,6 +1016,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
 
     return StepSpec(
         sequence=sequence,
+        segment=segment,
         action=kind,
         code=code,
         description=description,

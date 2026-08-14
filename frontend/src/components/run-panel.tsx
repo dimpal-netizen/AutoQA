@@ -46,6 +46,7 @@ const POLL_MS = 2000;
 export function RunPanel({
   suiteId,
   caseCount,
+  recordedCaseIds = [],
   request,
   reloadToken = 0,
   onDeleted,
@@ -53,6 +54,12 @@ export function RunPanel({
 }: {
   suiteId: number;
   caseCount: number;
+  /** The cases that came from the recording: the walkthrough a tester
+   *  performed, with the checks they made while performing it.
+   *
+   *  Held as ids rather than a count because the two buttons below differ only
+   *  in what they send: the whole suite, or these. */
+  recordedCaseIds?: number[];
   /** A row below asked for one case to be run. The token changes per press. */
   request?: { caseIds: number[]; token: number } | null;
   /** Bumped when the suite's cases are replaced, so the panel drops the run it
@@ -315,17 +322,49 @@ export function RunPanel({
                 {stopping ? "Stopping…" : "Stop"}
               </Button>
             ) : null}
+            {/* Two ways to run, and the difference is only what gets sent.
+                The first is the recording: the journey a tester walked through
+                and the checks they made along the way. Fewer tests, every one
+                of them a flow that really happens - which is the regression
+                run. The second is unchanged: no case ids at all, which the API
+                already reads as the whole suite. */}
+            {recordedCaseIds.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void start(recordedCaseIds)}
+                disabled={starting || active || browsers.length === 0}
+                title={
+                  `Runs the ${recordedCaseIds.length} recorded case` +
+                  `${recordedCaseIds.length === 1 ? "" : "s"}: the walkthrough a tester ` +
+                  "performed and the checks they made during it. Nothing written by " +
+                  "hand afterwards, nothing a model invented."
+                }
+              >
+                <Play className="size-4" />
+                Run Recorded Test Cases
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={() => void start()}
               disabled={starting || active || browsers.length === 0 || caseCount === 0}
+              title={
+                `Runs all ${caseCount} case${caseCount === 1 ? "" : "s"} — the ` +
+                "recording, anything written by hand, and every case the model " +
+                "generated around them."
+              }
             >
               {active ? (
                 <RefreshCw className="size-4 animate-spin" />
               ) : (
                 <Play className="size-4" />
               )}
-              {active ? "Running…" : starting ? "Starting…" : "Run tests"}
+              {active
+                ? "Running…"
+                : starting
+                  ? "Starting…"
+                  : "Run All AI Test Cases"}
             </Button>
           </div>
         </div>

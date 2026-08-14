@@ -31,6 +31,7 @@ import { api, downloadTestCaseSheet } from "@/lib/api";
 import {
   formatRelative,
   hasRole,
+  isRecorded,
   type ImportPreview,
   type TestCase,
   type TestResult,
@@ -445,6 +446,12 @@ export function SuiteWorkspace({
             <RunPanel
               suiteId={suite.id}
               caseCount={suite.cases.length}
+              // The recording and nothing else: the walkthrough a tester
+              // performed, with the checks they made while performing it. Not
+              // hand-written cases, and not invented ones.
+              recordedCaseIds={suite.cases
+                .filter(isRecorded)
+                .map((testCase) => testCase.id)}
               request={runRequest}
               reloadToken={statusToken}
               onDeleted={() => void onChange(suite)}

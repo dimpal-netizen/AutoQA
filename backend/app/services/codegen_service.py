@@ -12,6 +12,8 @@ from app.ai.enhancer import enhance
 from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
 from app.codegen.probe import probe
+from app.codegen.segments import as_tests
+from app.codegen.segments import split as split_recording
 from app.codegen.synth import (
     SynthesisError,
     module_for,
@@ -199,22 +201,38 @@ class CodegenService:
 
         suite_name = (name or session.name).strip() or f"Recording {recording_id}"
 
-        ir = build_ir(
-            [
-                {
-                    "action_type": a.action_type.value,
-                    "url": a.url,
-                    "frame_path": a.frame_path,
-                    "selectors": a.selectors,
-                    "element": a.element,
-                    "payload": a.payload,
-                    "is_ignored": a.is_ignored,
-                }
-                for a in actions
-            ],
-            suite_name=suite_name,
-            start_url=session.start_url,
-        )
+        raw = [
+            {
+                "action_type": a.action_type.value,
+                "url": a.url,
+                "frame_path": a.frame_path,
+                "selectors": a.selectors,
+                "element": a.element,
+                "payload": a.payload,
+                "is_ignored": a.is_ignored,
+            }
+            for a in actions
+        ]
+
+        # A recording is rarely one test. Somebody tries logging in, gets an
+        # error, tries again, then goes off to register - see `segments.py`.
+        # Cut here, before `build_ir`, because normalisation drops and merges
+        # actions and afterwards there is nothing to line the two up by. Each
+        # action carries the number of the test it belongs to, and the steps
+        # built from it inherit that.
+        segments = split_recording(raw)
+        starts: list[str] = []
+        for number, segment in enumerate(segments):
+            starts.append(str(segment[0].get("url") or session.start_url))
+            for action in segment:
+                action["segment"] = number
+
+        # One IR for the whole recording, not one per segment. The page objects
+        # and the locator names on them come from here, so every case in the
+        # suite refers to `login.email_input` and means the same element. Built
+        # per segment they would be numbered independently, and a case would
+        # import a property the page object does not have.
+        ir = build_ir(raw, suite_name=suite_name, start_url=session.start_url)
 
         # AI pass: better names and descriptions on code that already works.
         # `enhance` never raises and never writes code, so the worst case here
@@ -257,48 +275,69 @@ class CodegenService:
                 suite, name=suite_name, description=description, generator=generator
             )
 
-        test_file = next(f for f in rendered if f.path == ir.file_path)
-        case = self.cases.create(
-            suite_id=suite.id,
-            project_id=session.project_id,
-            name=suite_name,
-            description=(
-                (polish.description + " " if polish.description else "")
-                + f"{len(ir.steps)} steps across {len(ir.pages)} page(s)."
-                + (
-                    f" {ir.fragile_count} step(s) use a fragile selector."
-                    if ir.fragile_count
-                    else ""
+        # One case per test the person performed, not one per recording. The
+        # slices share this suite's pages, so every case says
+        # `login.email_input` and means the same element - see `segments.py`.
+        slices = list(as_tests(ir, starts))
+        for number, slice_ir in slices:
+            try:
+                slice_files = render(slice_ir, browser_info=session.browser_info)
+            except GeneratedCodeError as exc:
+                # One unrenderable slice must not lose the others. Nothing about
+                # a recording says its third attempt is more important than its
+                # first, so dropping the batch over one of them is the wrong
+                # trade every time.
+                logger.exception(
+                    "Recording %s: could not render test %d", recording_id, number + 1
                 )
-            ),
-            function_name=ir.function_name,
-            file_path=ir.file_path,
-            code=test_file.content,
-            source=CaseSource.RECORDING,
-            status=CaseStatus.DRAFT,
-            category=CaseCategory.RECORDED,
-            priority=CasePriority.HIGH,
-            generated_by=GENERATOR,
-            tags=["recorded"],
-            is_enabled=True,
-            version=1,
-        )
+                raise ValidationError(
+                    f"Generated code was not valid Python: {exc}"
+                ) from exc
 
-        for step in ir.steps:
-            self.cases.add_step(
-                test_case_id=case.id,
-                sequence=step.sequence,
-                action=step.action,
-                description=step.description,
-                locator=(
-                    f"{step.page_var}.{step.locator_name}"
-                    if step.page_var and step.locator_name
-                    else None
+            test_file = next(f for f in slice_files if f.path == slice_ir.file_path)
+            case = self.cases.create(
+                suite_id=suite.id,
+                project_id=session.project_id,
+                # Numbered only when there is more than one. A recording of a
+                # single journey keeps the name it has always had.
+                name=suite_name if len(slices) == 1 else f"{suite_name} {number + 1}",
+                description=(
+                    (polish.description + " " if polish.description and len(slices) == 1 else "")
+                    + f"{len(slice_ir.steps)} steps across {len(ir.pages)} page(s)."
+                    + (
+                        f" {slice_ir.fragile_count} step(s) use a fragile selector."
+                        if slice_ir.fragile_count
+                        else ""
+                    )
                 ),
-                input_data=step.input_data,
-                expected_result=step.expected_result,
-                selector_strategy=step.strategy,
+                function_name=slice_ir.function_name,
+                file_path=slice_ir.file_path,
+                code=test_file.content,
+                source=CaseSource.RECORDING,
+                status=CaseStatus.DRAFT,
+                category=CaseCategory.RECORDED,
+                priority=CasePriority.HIGH,
+                generated_by=GENERATOR,
+                tags=["recorded"],
+                is_enabled=True,
+                version=1,
             )
+
+            for step in slice_ir.steps:
+                self.cases.add_step(
+                    test_case_id=case.id,
+                    sequence=step.sequence,
+                    action=step.action,
+                    description=step.description,
+                    locator=(
+                        f"{step.page_var}.{step.locator_name}"
+                        if step.page_var and step.locator_name
+                        else None
+                    ),
+                    input_data=step.input_data,
+                    expected_result=step.expected_result,
+                    selector_strategy=step.strategy,
+                )
 
         for spec in rendered:
             if spec.path == ir.file_path:
@@ -325,7 +364,20 @@ class CodegenService:
 
         previous = suite.output_dir
         try:
-            write_suite(target, {spec.path: spec.content for spec in rendered})
+            # The page objects and config from the whole recording, plus one
+            # test file per case. Not `rendered` alone: that carries the
+            # combined test module, which no case owns and which would sit on
+            # disk running the whole recording as one test beside the split
+            # ones.
+            on_disk = {
+                spec.path: spec.content
+                for spec in rendered
+                if spec.path != ir.file_path
+            }
+            on_disk.update(
+                {case.file_path: case.code for case in self.suites.get_full(suite.id).cases}
+            )
+            write_suite(target, on_disk)
             self.suites.update(suite, output_dir=str(target))
 
             # A rename moves the folder. Remove the old one, or `generated/`

@@ -317,6 +317,26 @@ export function hasRole(user: User | null, minimum: UserRole): boolean {
   return ROLE_LEVEL[user.role] >= ROLE_LEVEL[minimum];
 }
 
+/** Did this case come from the recording itself?
+ *
+ *  Not the category, and not `source`. Every case in a recorded suite carries
+ *  `source: "recording"`, invented ones included — it says where the suite came
+ *  from, not where the test came from. `generated_by` is the field that
+ *  answers this:
+ *
+ *    `deterministic_v1`  the recording. The tester's own walkthrough and every
+ *                        check they made in assert mode along the way,
+ *                        compiled by the converter rather than invented.
+ *    `manual`            one a tester wrote by hand in the editor afterwards.
+ *    anything else       the name of the model that wrote it.
+ *
+ *  Only the first counts. A hand-written case is somebody's own work too, but
+ *  it is not what was recorded, and the run mode is named after the recording.
+ */
+export function isRecorded(testCase: TestCase): boolean {
+  return (testCase.generated_by || "").startsWith("deterministic");
+}
+
 // ---------------------------------------------------------------------------
 // Test execution
 // ---------------------------------------------------------------------------

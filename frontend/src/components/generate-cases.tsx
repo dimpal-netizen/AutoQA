@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { MousePointerClick, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import type { TestSuiteDetail } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -96,6 +96,29 @@ export function GenerateCases({
     </>
   );
 }
+
+
+/** The brief behind "From what I did".
+ *
+ *  A sentence rather than a flag, because that is genuinely all the difference
+ *  is. Both buttons run the same generation against the same elements — the
+ *  recording only ever captured the ones somebody touched — so what separates
+ *  them is which cases are worth writing, and that is a thing you say, not a
+ *  switch you throw.
+ *
+ *  What it asks for is narrow on purpose: the journeys that were performed,
+ *  tried the ways they are actually got wrong. Left to itself the model will
+ *  reach for whatever it judges worth testing, which is the other button and
+ *  is often what you want — but not when you have just recorded the flow that
+ *  matters and want it covered properly before anything else.
+ */
+const FROM_MY_ACTIONS = [
+  "Stay on the journeys this recording performed. Write cases that repeat those",
+  "same flows, varying the data and the order the way a person gets them wrong:",
+  "a required field left empty, a value the field should refuse, a step taken out",
+  "of sequence, a submission repeated. Do not invent scenarios about parts of the",
+  "application this recording did not visit.",
+].join(" ");
 
 
 /** Ask what this batch should be about, before spending a request on it.
@@ -213,6 +236,23 @@ function AskWhatToCoverOn({
           <Button variant="ghost" size="sm" onClick={onCancel}>
             Cancel
           </Button>
+          {/* Two ways to generate, and the difference is the brief. This one
+              keeps the model on the ground the recording covered: the same
+              journeys, tried the ways they are actually got wrong. The other
+              lets it go wherever it judges is worth testing. Only offered with
+              the box empty, because a brief that has been typed is the brief -
+              silently replacing it would be the worst of both. */}
+          {!text.trim() && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onGenerate(FROM_MY_ACTIONS)}
+              title="Stays on what you did while recording — the same steps, with the data and outcomes that go wrong. Nothing about parts of the site the recording never visited."
+            >
+              <MousePointerClick />
+              From what I did
+            </Button>
+          )}
           <Button size="sm" onClick={() => onGenerate(text)}>
             <Sparkles />
             Generate
