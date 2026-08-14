@@ -615,7 +615,7 @@ function ExportSheet({ suite }: { suite: TestSuiteDetail }) {
       className={error ? "border-destructive/40 text-destructive" : undefined}
     >
       <FileSpreadsheet />
-      {busy ? "Exporting…" : error ? "Export failed" : "Export Excel"}
+      {busy ? "Exporting…" : error ? "Export failed" : "Export test log"}
     </Button>
   );
 }
