@@ -26,6 +26,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt, RGBColor
 
 from app.models.enums import BugStatus, Severity
+from app.reports import mantis
 from app.reports.bugs import BugRow
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,55 @@ def _screenshot(document, image: bytes | None) -> None:
     document.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
+
+def _issue(document, bug: BugRow, *, index: int, project_name: str) -> None:
+    """One bug, laid out as Mantis's Report Issue form.
+
+    The form rather than the issue view, because of what this document is for:
+    somebody has it open beside the tracker and is filling the form in. Matching
+    the view would mean reading fields in one order and typing them in another,
+    which is where a field gets missed.
+
+    So the labels, their order, and the little templates Mantis puts inside
+    Description and Additional Information are all its own. Every box that has
+    an answer arrives filled in; the ones only a person can decide - who to
+    assign it to, which profile - are present and blank, because a form with a
+    row missing is harder to work through than one with a row to skip.
+    """
+    heading = document.add_heading(level=1)
+    run = heading.add_run(f"{mantis.issue_id(index)}: {bug.title}")
+    run.font.color.rgb = _SEVERITY_RGB.get(bug.severity, RGBColor(0, 0, 0))
+
+    rows = mantis.fields(bug, index=index, project_name=project_name)
+
+    table = document.add_table(rows=0, cols=2)
+    table.style = "Table Grid"
+    for label, value in rows:
+        cells = table.add_row().cells
+        label_run = cells[0].paragraphs[0].add_run(label)
+        label_run.bold = True
+        label_run.font.size = Pt(9)
+        cells[0].width = Inches(1.9)
+
+        # A paragraph per line. Word renders a string containing newlines as one
+        # run on one line, so the steps would arrive as a single sentence and
+        # the templated boxes would lose their shape entirely.
+        first = True
+        for line in str(value or "").splitlines() or [""]:
+            paragraph = cells[1].paragraphs[0] if first else cells[1].add_paragraph()
+            paragraph.add_run(line).font.size = Pt(9)
+            first = False
+        cells[1].width = Inches(5.1)
+
+    # Mantis's own last row before submitting, and the reason this format exists
+    # rather than the spreadsheet: the error text says what the test expected,
+    # the picture says what was actually on screen, and that is the difference
+    # between an application bug and a test one.
+    document.add_paragraph()
+    document.add_paragraph().add_run("Upload Files").bold = True
+    _screenshot(document, bug.screenshot)
+
+
 def build_bug_document(bugs: list[BugRow], *, project_name: str) -> bytes:
     """Every bug in the project as a .docx, worst first, screenshots included."""
     ordered = sorted(
@@ -124,52 +174,7 @@ def build_bug_document(bugs: list[BugRow], *, project_name: str) -> bytes:
 
     for index, bug in enumerate(ordered, 1):
         document.add_page_break() if index > 1 else None
-
-        heading = document.add_heading(level=1)
-        run = heading.add_run(f"{index}. {bug.title}")
-        run.font.color.rgb = _SEVERITY_RGB.get(bug.severity, RGBColor(0, 0, 0))
-
-        meta = document.add_paragraph()
-        meta.add_run(
-            f"{bug.severity.value.capitalize()} severity · "
-            f"{bug.priority.value.capitalize()} priority · "
-            f"{_STATUS_TEXT.get(bug.status, bug.status.value)} · "
-            f"{'Reviewed' if bug.drafted else 'Not reviewed yet'}"
-        ).font.size = Pt(9)
-
-        _field(document, "Test case:", bug.case_name)
-        _field(document, "Browser:", bug.browsers)
-        _field(document, "Reported:", bug.reported_on.strftime("%d-%m-%Y") if bug.reported_on else "")
-
-        if bug.description:
-            document.add_heading("What is wrong", level=2)
-            document.add_paragraph(bug.description)
-
-        if bug.steps_to_reproduce:
-            document.add_heading("Steps to reproduce", level=2)
-            for step in bug.steps_to_reproduce:
-                document.add_paragraph(str(step), style="List Number")
-
-        document.add_heading("Expected vs actual", level=2)
-        _field(document, "Expected:", bug.expected)
-        _field(document, "Actual:", bug.actual)
-
-        environment = bug.environment if isinstance(bug.environment, dict) else {}
-        details = [
-            f"{key.replace('_', ' ')}: {value}"
-            for key, value in environment.items()
-            if value not in (None, "") and key != "browser"
-        ]
-        if details:
-            document.add_heading("Environment", level=2)
-            for line in details:
-                document.add_paragraph(line, style="List Bullet")
-
-        # Last, and the reason this format exists at all. The error text says
-        # what the test expected; the picture says what was actually on screen,
-        # and that is the difference between an application bug and a test one.
-        document.add_heading("Screenshot at the moment of failure", level=2)
-        _screenshot(document, bug.screenshot)
+        _issue(document, bug, index=index, project_name=project_name)
 
     buffer = io.BytesIO()
     document.save(buffer)
