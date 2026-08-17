@@ -388,7 +388,12 @@ export function SuiteWorkspace({
                   just filled with twelve new rows and a tab badge that had
                   just changed to match — the same news three times, and the
                   only copy of it you had to dismiss. A failure still has to be
-                  said, because nothing else on the page would show it. */}
+                  said, because nothing else on the page would show it.
+
+                  "Built from the recording because no provider is configured"
+                  went the same way, and for the same reason. It is true, and it
+                  is three sentences of blue prose above a table that has just
+                  answered the question you pressed the button to ask. */}
               {generateOutcome && <Alert>{generateOutcome}</Alert>}
 
               {/* One row, below the toolbar rather than in it. Both of these

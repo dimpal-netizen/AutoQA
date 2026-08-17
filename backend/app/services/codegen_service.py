@@ -7,11 +7,22 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.ai.case_generator import DEFAULT_COUNT, GenerationOutcome, generate_cases
+from app.ai.case_generator import (
+    DEFAULT_COUNT,
+    MAX_COUNT,
+    GenerationOutcome,
+    accept_all,
+    generate_cases,
+)
 from app.ai.enhancer import enhance
 from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
 from app.codegen.probe import probe
+from app.codegen.recorded_cases import (
+    FROM_RECORDING,
+    cases_from_recording,
+    why_nothing,
+)
 from app.codegen.segments import as_tests
 from app.codegen.segments import split as split_recording
 from app.codegen.synth import (
@@ -434,6 +445,24 @@ class CodegenService:
         self._mark_reachable(recorded_ir)
 
         outcome = generate_cases(recorded_ir, count=count, guidance=guidance)
+
+        # Nothing came back from the model, for any of the reasons there are: no
+        # key configured, a provider that was down, an answer that parsed into
+        # nothing, or a dozen suggestions every one of which was rejected. The
+        # recording is still here either way, and a recording says which pages
+        # exist, what was on them, which fields somebody filled in and which
+        # button they pressed to send it. Several kinds of case follow from that
+        # with no judgement at all, and they are worth more than a 422 telling
+        # somebody to go and buy an API key - see codegen/recorded_cases.py.
+        #
+        # This runs before the `skipped` check rather than after it, and that
+        # order is the whole change: `skipped` is what "no AI provider" arrives
+        # as, so testing it first is what used to make this a dead end.
+        if not outcome.cases:
+            outcome = self._from_the_recording_alone(
+                recorded_ir, outcome, count=count, guidance=guidance
+            )
+
         if outcome.skipped:
             raise ValidationError(outcome.skipped)
         if not outcome.cases:
@@ -471,6 +500,57 @@ class CodegenService:
         suite = self.suites.get_full(suite.id)  # type: ignore[assignment]
         self._rewrite_folder(suite)
         return suite, outcome
+
+    def _from_the_recording_alone(
+        self,
+        recorded_ir: TestIR,
+        ai: GenerationOutcome,
+        *,
+        count: int,
+        guidance: str | None,
+    ) -> GenerationOutcome:
+        """Build the cases the recording supports on its own.
+
+        Held to exactly the rules a model's suggestion is held to: `accept_all`
+        is the same loop, so an element that does not exist, an order that
+        cannot happen and a case that checks nothing are refused here as well.
+        Nothing new can reach a subprocess by this route that could not already
+        reach it by the other one.
+
+        `cost_usd` and `tokens` stay at zero because nothing was bought, and the
+        one place this tool reports what it spent is not the place to round up.
+        """
+        drafts = cases_from_recording(recorded_ir, count=min(count, MAX_COUNT))
+        outcome = GenerationOutcome(model=FROM_RECORDING)
+        accept_all(drafts, recorded_ir, outcome)
+
+        if not outcome.cases:
+            # Both halves, in one breath. Told only that a key is missing,
+            # somebody adds one, presses the button again, and gets the same
+            # empty table - having paid for the privilege.
+            return GenerationOutcome(
+                skipped=(
+                    f"{ai.skipped or _why_nothing_was_usable(ai)} Without one, "
+                    f"cases can only be built from the recording itself - and "
+                    f"this recording {why_nothing(recorded_ir)}"
+                )
+            )
+
+        # Said in the log and nowhere else.
+        #
+        # A banner explaining this sat above a table that had just filled with
+        # the answer - three sentences of prose telling somebody what they could
+        # see. That is the same reason this endpoint stopped announcing its own
+        # successes at all, and it applies here identically. Anyone who wants to
+        # know which generator wrote a case can read `generated_by` on the case
+        # itself, next to the case.
+        logger.info(
+            "Suite: built %d case(s) from the recording alone (%s)%s",
+            len(outcome.cases),
+            ai.skipped or "the model returned nothing usable",
+            "; the brief could not be honoured" if (guidance or "").strip() else "",
+        )
+        return outcome
 
     def _mark_reachable(self, recorded_ir) -> None:
         """Look at each page cold, so cases are not written against what is not

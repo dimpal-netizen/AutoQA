@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from app.ai.client import LLMClient, LLMError, ai_available, get_llm_client, load_prompt
 from app.ai.schemas import GeneratedCase, GeneratedCases
 from app.codegen.converter import PageSpec, TestIR
+from app.codegen.recorded_cases import usable_locators
 from app.codegen.synth import SynthesisError, module_for, synthesise
 from app.models.enums import CaseCategory, CasePriority
 
@@ -61,6 +62,28 @@ class GenerationOutcome:
     @property
     def ok(self) -> bool:
         return bool(self.cases)
+
+
+def accept_all(
+    cases: list,
+    recorded: TestIR,
+    outcome: GenerationOutcome,
+    *,
+    taken_modules: set[str] | None = None,
+) -> GenerationOutcome:
+    """Validate a batch of described cases into `outcome`.
+
+    No model involved, and there never was one: `_accept` normalises a name,
+    asks `module_for` for a free module, and hands the case to `synthesise`.
+    Public because the deterministic fallback in `codegen_service` has to be
+    held to exactly these rules — an element that does not exist, an order that
+    cannot happen, a case that checks nothing. A second copy of this loop is a
+    second place those rules can quietly stop being applied.
+    """
+    taken = set(taken_modules or ()) | {recorded.module_name}
+    for case in cases:
+        _accept(case, recorded, taken, outcome)
+    return outcome
 
 
 def generate_cases(
@@ -149,9 +172,7 @@ def generate_cases(
         model=response.model,
     )
 
-    taken = set(taken_modules or ()) | {recorded.module_name}
-    for case in suggestion.cases:
-        _accept(case, recorded, taken, outcome)
+    accept_all(suggestion.cases, recorded, outcome, taken_modules=taken_modules)
 
     logger.info(
         "Generated %d case(s), rejected %d (%d tokens, $%.4f)",
@@ -226,12 +247,6 @@ def _priority(value: str) -> CasePriority:
 # ---------------------------------------------------------------------------
 # What the model is shown
 # ---------------------------------------------------------------------------
-#: Locators that say where an element sits rather than what it is. An element
-#: that has one of these as its *best* way of being found had no name, no role,
-#: no label and no test id — nothing to recognise it by at all.
-_POSITIONAL = {"css", "xpath", "nth_child"}
-
-
 def describe_pages(pages: list[PageSpec]) -> str:
     """Pages and locators as text — the only elements a case may reference.
 
@@ -285,13 +300,13 @@ def describe_pages(pages: list[PageSpec]) -> str:
     """
     lines: list[str] = []
     for page in pages:
-        usable = [
-            loc for loc in page.locators
-            if loc.strategy not in _POSITIONAL
-            and loc.visible
-            and not loc.revealed
-            and loc.reachable
-        ]
+        # The four conditions this used to spell out inline now live in
+        # `codegen/recorded_cases.py`, because the generator that runs when
+        # there is no model has to build on exactly the same elements. Two
+        # copies of "safe to build on" would agree right up until one of them
+        # was edited, and the day they disagree is the day the no-AI path starts
+        # writing the cases this list is careful to withhold.
+        usable = usable_locators(page)
         if not usable:
             continue
         lines.append(f"{page.class_name}  (url: {page.url})")

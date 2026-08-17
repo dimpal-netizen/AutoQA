@@ -53,13 +53,17 @@ def generate_cases(
 ) -> GenerateCasesResult:
     """Invent positive, negative, edge and security cases around the recording.
 
-    Unlike code generation this genuinely needs an AI provider — inventing
-    "what if the email is 320 characters" from a successful login is judgement,
-    not a lookup. With no key configured it returns 422 saying so.
+    An AI provider is what makes this good — inventing "what if the email is 320
+    characters" from a successful login is judgement, not a lookup. It is no
+    longer what makes it work. When no model can be reached, the cases are built
+    from the recording itself: the pages that were opened, the fields that were
+    filled in and the button that sent them. Narrower, and `model` on the
+    response says which of the two wrote them.
 
-    The model returns steps, never code: each step names an action from a fixed
-    vocabulary and an element that already exists, and the same deterministic
-    converter writes the Python.
+    Neither half returns code. A step names an action from a fixed vocabulary
+    and an element that already exists, and the same deterministic converter
+    writes the Python — which is what lets a model's suggestion and a
+    recording's arithmetic travel the identical path.
     """
     suite, outcome = CodegenService(db).generate_cases(
         suite_id, user, count=data.count, guidance=data.guidance

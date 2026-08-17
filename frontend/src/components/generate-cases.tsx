@@ -41,7 +41,11 @@ export function GenerateCases({
   /** Why it failed, or null when it did not. Success says nothing: the table
    *  fills with the new cases and the tab badge changes to match, so a banner
    *  announcing it is the same news a third time and the only copy you have to
-   *  dismiss. */
+   *  dismiss.
+   *
+   *  That holds for "these were built from the recording, not by a model" too.
+   *  It was worth a line in theory and was a paragraph of blue prose in
+   *  practice, sitting above a table that had just answered the question. */
   onOutcome?: (error: string | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
