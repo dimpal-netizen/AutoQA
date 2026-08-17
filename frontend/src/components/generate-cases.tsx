@@ -103,22 +103,30 @@ export function GenerateCases({
  *  A sentence rather than a flag, because that is genuinely all the difference
  *  is. Both buttons run the same generation against the same elements — the
  *  recording only ever captured the ones somebody touched — so what separates
- *  them is which cases are worth writing, and that is a thing you say, not a
- *  switch you throw.
+ *  them is which cases may be written, and that is a thing you say.
  *
- *  What it asks for is narrow on purpose: the journeys that were performed,
- *  tried the ways they are actually got wrong. Left to itself the model will
- *  reach for whatever it judges worth testing, which is the other button and
- *  is often what you want — but not when you have just recorded the flow that
- *  matters and want it covered properly before anything else.
+ *  This one is a fence, not a hint. Every clause below closes a door the model
+ *  would otherwise walk through: it may not add a step, may not touch an
+ *  element the recording did not, may not think of a scenario of its own. What
+ *  is left is the recorded journey with different values in it — which is
+ *  exactly what somebody means by "test what I did", and nothing else.
+ *
+ *  The other button is where the model's own judgement belongs. Wanting both
+ *  from one press is how you get a batch that claims to be your flow and is
+ *  half invented.
  */
 const FROM_MY_ACTIONS = [
-  "Stay on the journeys this recording performed. Write cases that repeat those",
-  "same flows, varying the data and the order the way a person gets them wrong:",
-  "a required field left empty, a value the field should refuse, a step taken out",
-  "of sequence, a submission repeated. Do not invent scenarios about parts of the",
-  "application this recording did not visit.",
-].join(" ");
+  "HARD LIMIT: build every case only out of the steps in the recorded flow above.",
+  "",
+  "You may: reuse those steps, in the order they were recorded; stop the flow",
+  "early; leave a field empty that was filled; and change the value typed into a",
+  "field to one the application should refuse.",
+  "",
+  "You may NOT: add a step that is not in the recording; use an element the",
+  "recorded steps did not use; reorder the steps; or invent a scenario of your",
+  "own, however worthwhile it looks. Do not test anything the recording did not",
+  "do. If that leaves fewer cases than asked for, write fewer.",
+].join("\n");
 
 
 /** Ask what this batch should be about, before spending a request on it.
@@ -237,22 +245,29 @@ function AskWhatToCoverOn({
             Cancel
           </Button>
           {/* Two ways to generate, and the difference is the brief. This one
-              keeps the model on the ground the recording covered: the same
-              journeys, tried the ways they are actually got wrong. The other
-              lets it go wherever it judges is worth testing. Only offered with
-              the box empty, because a brief that has been typed is the brief -
-              silently replacing it would be the worst of both. */}
-          {!text.trim() && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onGenerate(FROM_MY_ACTIONS)}
-              title="Stays on what you did while recording — the same steps, with the data and outcomes that go wrong. Nothing about parts of the site the recording never visited."
-            >
-              <MousePointerClick />
-              From what I did
-            </Button>
-          )}
+              fences the model into the recorded steps; the other lets it use
+              its own judgement about what is worth testing.
+
+              Always offered, including once something has been typed. What you
+              wrote is added to the fence rather than replacing it, because
+              "the phone rules, but only with what I recorded" is a sensible
+              thing to want and hiding the button made it impossible to ask
+              for. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              onGenerate(
+                text.trim()
+                  ? `${FROM_MY_ACTIONS}\n\nWithin that, concentrate on: ${text.trim()}`
+                  : FROM_MY_ACTIONS,
+              )
+            }
+            title="Only the steps you recorded — reused, stopped early, or with values the application should refuse. Nothing added, nothing invented."
+          >
+            <MousePointerClick />
+            From what I did
+          </Button>
           <Button size="sm" onClick={() => onGenerate(text)}>
             <Sparkles />
             Generate

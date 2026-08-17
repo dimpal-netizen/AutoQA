@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # Override when the default model is not available to your key. Gemini
     # model ids change often, so this is a setting rather than a constant.
     GEMINI_MODEL: str = ""
+    # Same, for Claude - though the useful reason here is cost rather than
+    # churn: dropping to Sonnet or Haiku for a week is a line in .env. Prices
+    # and per-model request rules travel with it; see app/ai/claude.py.
+    CLAUDE_MODEL: str = ""
 
     # --- Code generation ---
     # Generate a test suite the moment a recording stops. Deterministic and
