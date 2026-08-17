@@ -47,3 +47,14 @@ class ProjectRead(BaseModel):
     owner_id: int
     created_at: datetime
     updated_at: datetime
+
+
+class SampleFileRead(BaseModel):
+    """One file a test can upload, instead of a generated placeholder."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    filename: str
+    content_type: str
+    size: int

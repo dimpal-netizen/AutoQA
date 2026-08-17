@@ -12,6 +12,27 @@ Application under test: {base_url}
 Its steps, in order:
 {steps}
 
+If that says the steps were not recorded, they are genuinely unavailable - the
+test was regenerated after this run, and the version that produced this failure
+no longer exists. Explain from the error, the traceback and the screenshot
+alone, and say in `root_cause` that the test's steps were not available. Do NOT
+describe steps, number them, or say which one failed. A confident account of a
+test nobody can see reads as an explanation of a different test, because that is
+exactly what it is.
+
+If one step is marked `<-- STOPPED HERE`, that is where the test stopped, worked
+out from the line number in the traceback. It is a fact, not a hint. Explain
+THAT step.
+
+Everything below it is marked `(never reached)` and did not run. Do not explain
+one of those, do not say it failed, and do not say the application did the wrong
+thing there - the test never got that far, so nothing is known about it either
+way. Reaching past the marked step for a more interesting-sounding explanation
+is the single way this analysis goes wrong: the reader is told to look at a page
+the test never opened.
+
+Nothing before the marked step failed either. Those steps ran and passed.
+
 WHAT HAPPENED
 
 Status: {status}
@@ -28,6 +49,13 @@ SAME TEST IN OTHER BROWSERS
 HOW TO DECIDE
 
 Work through these in order — the first that fits is usually right:
+
+0. Read the status first. `error` means the test could not act on the element
+   it needed - Playwright found it and refused, because it was hidden, covered,
+   disabled, or matched more than once. The test never got as far as asking the
+   application anything, so it CANNOT be `application_bug`. Say plainly that
+   the step could not be performed and what stood in the way. This one rule
+   overrides everything below it.
 
 1. Did the element not exist, or match nothing? If the test looked for
    something by placeholder or CSS and the page has changed, that is

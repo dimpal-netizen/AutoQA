@@ -44,3 +44,4 @@ def update_project(
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: int, db: DbSession, user: CurrentUser) -> None:
     ProjectService(db).delete(project_id, user)
+

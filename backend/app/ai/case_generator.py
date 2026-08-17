@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from app.ai.client import LLMClient, LLMError, ai_available, get_llm_client, load_prompt
 from app.ai.schemas import GeneratedCase, GeneratedCases
 from app.codegen.converter import PageSpec, TestIR
+from app.codegen.recorded_cases import usable_locators
 from app.codegen.synth import SynthesisError, module_for, synthesise
 from app.models.enums import CaseCategory, CasePriority
 
@@ -63,10 +64,33 @@ class GenerationOutcome:
         return bool(self.cases)
 
 
+def accept_all(
+    cases: list,
+    recorded: TestIR,
+    outcome: GenerationOutcome,
+    *,
+    taken_modules: set[str] | None = None,
+) -> GenerationOutcome:
+    """Validate a batch of described cases into `outcome`.
+
+    No model involved, and there never was one: `_accept` normalises a name,
+    asks `module_for` for a free module, and hands the case to `synthesise`.
+    Public because the deterministic fallback in `codegen_service` has to be
+    held to exactly these rules — an element that does not exist, an order that
+    cannot happen, a case that checks nothing. A second copy of this loop is a
+    second place those rules can quietly stop being applied.
+    """
+    taken = set(taken_modules or ()) | {recorded.module_name}
+    for case in cases:
+        _accept(case, recorded, taken, outcome)
+    return outcome
+
+
 def generate_cases(
     recorded: TestIR,
     *,
     count: int = DEFAULT_COUNT,
+    guidance: str | None = None,
     client: LLMClient | None = None,
     taken_modules: set[str] | None = None,
 ) -> GenerationOutcome:
@@ -82,6 +106,18 @@ def generate_cases(
             skipped=(
                 "This recording only navigates — there are no elements to write "
                 "test cases against."
+            )
+        )
+
+    described = describe_pages(recorded.pages)
+    if not described:
+        return GenerationOutcome(
+            skipped=(
+                "Every element in this recording can only be found by its "
+                "position in the page, so any test case written against one "
+                "would pass or fail on where things happen to sit rather than "
+                "on whether they work. Add a data-testid to the controls you "
+                "want covered and record again."
             )
         )
 
@@ -106,9 +142,10 @@ def generate_cases(
                 "generate_cases",
                 suite_name=recorded.suite_name,
                 start_url=recorded.start_url,
-                pages=describe_pages(recorded.pages),
+                pages=described,
                 steps=describe_steps(recorded),
                 target_count=count,
+                guidance=_asked_for(guidance, count),
             ),
             GeneratedCases,
             system=SYSTEM,
@@ -135,9 +172,7 @@ def generate_cases(
         model=response.model,
     )
 
-    taken = set(taken_modules or ()) | {recorded.module_name}
-    for case in suggestion.cases:
-        _accept(case, recorded, taken, outcome)
+    accept_all(suggestion.cases, recorded, outcome, taken_modules=taken_modules)
 
     logger.info(
         "Generated %d case(s), rejected %d (%d tokens, $%.4f)",
@@ -213,13 +248,110 @@ def _priority(value: str) -> CasePriority:
 # What the model is shown
 # ---------------------------------------------------------------------------
 def describe_pages(pages: list[PageSpec]) -> str:
-    """Pages and locators as text — the only elements a case may reference."""
+    """Pages and locators as text — the only elements a case may reference.
+
+    Elements that can only be found by their position are left out, and that
+    omission is the point.
+
+    The recorded test keeps them: it is a faithful record of what someone did,
+    and dropping a step would make it a record of something else. An invented
+    case has no such claim on them. Built on
+
+        home.body_section_5_div_1_section_1_div_2_div_1
+
+    it is a coin toss — the element has no name because it is a wrapper inside a
+    third-party map widget, so the test either clicks whatever now sits at that
+    path or waits thirty seconds and reports a bug against a page that is fine.
+    Either way the red tells you nothing.
+
+    So the vocabulary offered here is the elements a person could name. Fewer
+    cases, and every one of them about something real. Anything left out shows
+    up in the suite as a fragile-selector warning, which is the honest fix: the
+    element needs a `data-testid`, not a cleverer guess.
+
+    Elements that had no size when they were recorded go for the same reason,
+    and they are not always the ones without names. A marker inside a map widget
+    carried the text "Zenith Towers, Upper Hill, Nairobi" - a perfectly good
+    name - on a `<div>` stretched to zero height. Playwright will not act on it,
+    so an invented case that clicks it spends thirty seconds and then reports a
+    broken property listing.
+
+    And elements that were not on screen until the step before reached them: a
+    modal's close button, a video overlay, an item in a menu that has to be
+    opened. In a finished recording these are indistinguishable from the site's
+    ordinary links - `home.close_video_button` has a better accessible name than
+    most of them. The recorded test reaches them the way the person did. A case
+    that opens the page and goes straight there finds nothing:
+
+        goto   /
+        click  home.close_video_button
+
+        Locator.click: Timeout 30000ms exceeded
+
+    Thirty seconds, then a defect against a page that is working. Not offering
+    the element is the only reliable way to not write that case.
+
+    And elements that were not on screen when the page was opened cold. That one
+    is measured rather than reasoned about - see probe.py - which is why it also
+    catches the shapes nobody has run into yet: a Checkout button that needs a
+    full cart, a field on the second step of a wizard, a form replaced by
+    "Listing Limit Reached". None of those are visible in a recording, because
+    the recording was made in the state where they were fine.
+    """
     lines: list[str] = []
     for page in pages:
+        # The four conditions this used to spell out inline now live in
+        # `codegen/recorded_cases.py`, because the generator that runs when
+        # there is no model has to build on exactly the same elements. Two
+        # copies of "safe to build on" would agree right up until one of them
+        # was edited, and the day they disagree is the day the no-AI path starts
+        # writing the cases this list is careful to withhold.
+        usable = usable_locators(page)
+        if not usable:
+            continue
         lines.append(f"{page.class_name}  (url: {page.url})")
-        for locator in page.locators:
-            lines.append(f"  {page.class_name}.{locator.name}")
+        lines.extend(f"  {page.class_name}.{locator.name}" for locator in usable)
     return "\n".join(lines)
+
+
+#: What the person asking for cases wants this batch to be about. Theirs to
+#: write, so it goes in as a quoted instruction rather than as prose the model
+#: might read as part of the rules above it.
+_GUIDANCE = """
+WHAT THESE TEST CASES ARE FOR
+
+The person asking has said what this batch is for:
+
+    {asked}
+
+This is the brief. Write the cases they asked for first, and spend most of
+{target_count} on it - a batch that covers their subject thoroughly is worth more
+than one that mentions it twice and spreads the rest over things they did not
+ask about. Fill any remainder with the categories below.
+
+It decides which tests are worth writing. It does not change what a test may do:
+the actions, the elements you may name and what counts as a real check all still
+hold, because those are what make a generated test safe to run.
+
+If the brief needs something this recording never reached - a page nobody
+recorded, an element that does not exist - say so in `skipped` reasoning or
+simply write fewer cases. Do not invent an element to satisfy it.
+"""
+
+
+def _asked_for(guidance: str | None, count: int = DEFAULT_COUNT) -> str:
+    """The person's own words as a brief, or nothing at all.
+
+    Nothing at all is the common case, and an empty heading reads as a
+    requirement the model has to satisfy somehow.
+
+    When there is something, it is put first among equals rather than added as
+    a hint: somebody typing "the phone number rules" wants a batch about phone
+    numbers, not one case about phone numbers and eleven about whatever the
+    model would have chosen anyway.
+    """
+    asked = " ".join((guidance or "").split())[:1000]
+    return _GUIDANCE.format(asked=asked, target_count=count) if asked else ""
 
 
 def describe_steps(ir: TestIR) -> str:

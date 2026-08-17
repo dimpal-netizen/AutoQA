@@ -44,7 +44,11 @@ class {{ page.class_name }}:
 {% for strategy, expression in locator.candidates %}
             ({{ strategy | pystr }}, lambda: {{ expression }}),
 {% endfor %}
+{% if locator.tag %}
+        ], tag={{ locator.tag | pystr }})
+{% else %}
         ])
+{% endif %}
 {% else %}
         return {{ locator.expression }}
 {% endif %}

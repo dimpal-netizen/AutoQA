@@ -78,3 +78,7 @@ RULES
 - Return exactly one entry per failure listed above, using its number. Do not
   skip one because it looks like another — the reader is matching your answers
   back to their rows.
+- Copy that failure's `Test:` name into `test`, exactly as written. It is not
+  used to match; it is checked against the row your number chose, and an entry
+  whose name does not agree is thrown away. An answer filed against the wrong
+  test is worse than no answer, because nothing in it looks wrong.

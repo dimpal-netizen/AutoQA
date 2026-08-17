@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # Override when the default model is not available to your key. Gemini
     # model ids change often, so this is a setting rather than a constant.
     GEMINI_MODEL: str = ""
+    # Same, for Claude - though the useful reason here is cost rather than
+    # churn: dropping to Sonnet or Haiku for a week is a line in .env. Prices
+    # and per-model request rules travel with it; see app/ai/claude.py.
+    CLAUDE_MODEL: str = ""
 
     # --- Code generation ---
     # Generate a test suite the moment a recording stops. Deterministic and
@@ -91,7 +95,23 @@ class Settings(BaseSettings):
     # Pause between actions when running headed, in milliseconds. Playwright
     # drives a browser far faster than anyone can follow, so watching a run
     # without this shows a window flickering open and shut.
-    WATCH_SLOWMO_MS: int = 700
+    #
+    # The single place this is decided. The browser sent its own number for a
+    # while and the two drifted apart - 700 here, 2500 there - so every run took
+    # three and a half times as long as this file claimed, and turning it down
+    # meant knowing to look in the other one.
+    #
+    # 600 is still one action at a time and still readable; 2500 made a
+    # thirty-step test take a minute and a half of watching.
+    WATCH_SLOWMO_MS: int = 600
+    # Open each page once before inventing test cases, to see what is actually
+    # on it when you arrive cold. A recording shows one state - the cart had
+    # something in it, the wizard was on step one - and without looking, cases
+    # get written against elements that are only there in that state.
+    #
+    # Costs a browser launch and one page load per page, once per generation.
+    # Turn off where generation runs somewhere the application is unreachable.
+    PROBE_PAGES: bool = True
     # Comma-separated. Read it through `default_browsers`, not directly:
     # pydantic-settings tries to JSON-parse list-typed fields, which chokes on "a,b".
     DEFAULT_BROWSERS: str = "chromium,firefox,webkit"

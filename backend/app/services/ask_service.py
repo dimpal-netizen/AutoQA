@@ -192,7 +192,7 @@ class AskService:
                     case_description=describe_case(result),
                     browser=result.browser.value,
                     base_url=(run.project.base_url if run.project else "unknown"),
-                    steps=describe_steps(self._steps_for(result)),
+                    steps=describe_steps(self._steps_for(result), result.failed_step),
                     status=result.status.value,
                     failed_step=(
                         result.failed_step

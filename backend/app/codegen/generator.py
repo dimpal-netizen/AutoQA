@@ -95,6 +95,17 @@ def render(ir: TestIR, *, browser_info: dict[str, Any] | None = None) -> list[Ge
             )
         )
 
+    # Only when something is uploaded: a 9 KB JPEG in a suite that never asks
+    # for one is dead weight in every checkout.
+    if ir.needs_sample_file:
+        files.append(
+            GeneratedFileSpec(
+                path="pages/_files.py",
+                content=env.get_template("files.py.j2").render(),
+                file_type=FileType.HELPER,
+            )
+        )
+
     width, height = _viewport(browser_info)
     files.append(
         GeneratedFileSpec(
@@ -134,6 +145,54 @@ def _viewport(browser_info: dict[str, Any] | None) -> tuple[int, int]:
     return width, height
 
 
+#: Names a generated module can only have because it imported them. Each is
+#: brought in by a flag on the IR - `needs_regex`, `needs_uuid`, and so on - and
+#: every one of those flags is a chance to emit a line that uses the name while
+#: forgetting to ask for it.
+#:
+#: That is not hypothetical. Restoring a recorded sign-in copied a
+#: `wait_for_url(re.compile(...))` into cases that had no URL assertion of their
+#: own, `needs_regex` stayed false, and every case in the suite died on
+#:
+#:     NameError: name 're' is not defined
+#:
+#: once the browser was already open. `ast.parse` cannot catch it: the file is
+#: perfectly good Python, it just refers to something that is not there.
+_MUST_BE_IMPORTED = (
+    "re", "uuid4", "expect", "sample_file", "set_checked", "reveal", "unhealed",
+)
+
+
+def _undefined(source: str) -> list[str]:
+    """Which of those the module uses without importing or defining.
+
+    Only that handful is checked. Deciding whether an arbitrary name is bound is
+    a much larger job, and every bug of this kind has been one of these -
+    because each arrives through a flag somebody has to remember to set.
+    """
+    tree = ast.parse(source)
+
+    provided: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            provided |= {a.asname or a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            provided |= {a.asname or a.name for a in node.names}
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            provided.add(node.name)
+        elif isinstance(node, ast.arg):
+            provided.add(node.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            provided.add(node.id)
+
+    used = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    return sorted(set(_MUST_BE_IMPORTED) & (used - provided))
+
+
 def validate(spec: GeneratedFileSpec) -> None:
     """Parse Python files. Raises GeneratedCodeError with the offending line."""
     if not spec.path.endswith(".py"):
@@ -146,3 +205,10 @@ def validate(spec: GeneratedFileSpec) -> None:
         raise GeneratedCodeError(
             f"{spec.path} line {exc.lineno}: {exc.msg}\n  {line.strip()}"
         ) from exc
+
+    missing = _undefined(spec.content)
+    if missing:
+        raise GeneratedCodeError(
+            f"{spec.path} uses {', '.join(missing)} without importing "
+            f"{'it' if len(missing) == 1 else 'them'}"
+        )

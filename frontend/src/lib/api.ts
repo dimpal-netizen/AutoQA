@@ -16,12 +16,13 @@ import type {
   CaseVocabulary,
   CaseWrite,
   GenerateCasesResult,
+  ImportPreview,
   Project,
   ProjectCreate,
   RecordingSession,
+  SampleFile,
   RecordingSessionDetail,
   RunTriage,
-  SuggestedCheck,
   TestCase,
   TestResult,
   TestResultDetail,
@@ -79,7 +80,12 @@ async function rawRequest<T>(
   token: string | null,
 ): Promise<T> {
   const headers = new Headers(options.headers);
-  headers.set("Content-Type", "application/json");
+  // Everything here sends JSON except a file upload, and that one must be left
+  // alone: only the browser knows the multipart boundary it just generated, so
+  // setting the type by hand produces a body the server cannot parse.
+  if (!(options.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
@@ -173,6 +179,21 @@ export const api = {
       request<void>(`/projects/${id}`, { method: "DELETE" }),
   },
 
+  /** Files a test uploads when a form asks for one, instead of a generated
+   *  placeholder. Shared by every project — a photograph is a photograph. */
+  sampleFiles: {
+    list: () => request<SampleFile[]>("/sample-files"),
+
+    add: (file: File) => {
+      const body = new FormData();
+      body.append("file", file);
+      return request<SampleFile>("/sample-files", { method: "POST", body });
+    },
+
+    remove: (fileId: number) =>
+      request<void>(`/sample-files/${fileId}`, { method: "DELETE" }),
+  },
+
   recordings: {
     list: (projectId?: number) =>
       request<RecordingSession[]>(
@@ -208,10 +229,14 @@ export const api = {
     bundle: (id: number) => request<Record<string, string>>(`/suites/${id}/bundle`),
 
     /** Invent positive, negative, edge and security cases. Needs an AI key. */
-    generateCases: (id: number, count = 12) =>
+    /** `guidance` is what the person wants this batch to concentrate on, in
+     *  their own words. It steers which tests get written; it cannot loosen
+     *  what a test is allowed to do — the vocabulary and the element list are
+     *  still the only things a case can be built from. */
+    generateCases: (id: number, count = 12, guidance?: string) =>
       request<GenerateCasesResult>(`/suites/${id}/generate-cases`, {
         method: "POST",
-        body: JSON.stringify({ count }),
+        body: JSON.stringify({ count, guidance: guidance?.trim() || null }),
       }),
 
     /** Rebuild from the recording, replacing the current output. */
@@ -224,20 +249,20 @@ export const api = {
     remove: (id: number) => request<void>(`/suites/${id}`, { method: "DELETE" }),
 
     /** Propose the assertions the recorded test is missing. Saves nothing. */
-    suggestChecks: (suiteId: number) =>
-      request<SuggestedCheck[]>(`/suites/${suiteId}/suggest-checks`, {
-        method: "POST",
-      }),
-
-    /** Store the accepted checks and rewrite the recorded test with them.
+    /** Read a team's own manual test-case sheet and draft what can be
+     *  automated from it.
      *
-     *  A whole replacement, not an append — the checks are a list somebody
-     *  curates, and "drop the third one" is clearer as the list you want. */
-    saveChecks: (suiteId: number, checks: SuggestedCheck[]) =>
-      request<TestSuiteDetail>(`/suites/${suiteId}/checks`, {
-        method: "PUT",
-        body: JSON.stringify({ checks }),
-      }),
+     *  Saves nothing. The drafts come back for review, and each is saved
+     *  through the ordinary `cases.create` - so an imported case goes through
+     *  exactly the path a typed one does. */
+    importCases: (suiteId: number, file: File) => {
+      const body = new FormData();
+      body.append("file", file);
+      return request<ImportPreview>(`/suites/${suiteId}/import-cases`, {
+        method: "POST",
+        body,
+      });
+    },
   },
 
   cases: {

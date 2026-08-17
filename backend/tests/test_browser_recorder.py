@@ -159,6 +159,83 @@ async def test_interaction_in_the_launched_browser_is_recorded(recording_session
         await browser_recorder.close(session_id)
 
 
+async def test_clicking_an_icon_records_the_control_around_it(recording_session) -> None:
+    """`event.target` is the deepest node under the cursor, which is routinely
+    not what anyone means. Clicking a logo gives the <svg> inside the link;
+    clicking a play button gives the <img> inside the button. Neither icon has a
+    name, so the only way left to describe it is where it sits:
+
+        html body header.Navbar-module__Sl14ZG__navbar a...logo svg
+
+    which reads as nothing and breaks the moment anything above it moves. One
+    recording of a property site produced four such steps, and every one of them
+    was a link or a button with a perfectly good accessible name one level up.
+    """
+    session_id, project_id = recording_session
+
+    def act_like_a_user(page) -> None:
+        page.get_by_label("Homeske home").locator("svg").click()
+        page.get_by_label("Play video").locator("img").click()
+        page.wait_for_timeout(2500)
+
+    await launch(session_id, project_id, on_page_ready=act_like_a_user)
+    try:
+        actions = await wait_for_actions(session_id, 3)
+        clicks = [a for a in actions if a["action_type"] is ActionType.CLICK]
+        recorded = {a["element"]["tag"]: a["element"]["accessible_name"] for a in clicks}
+
+        assert "svg" not in recorded, "recorded the icon, not the link around it"
+        assert "img" not in recorded, "recorded the icon, not the button around it"
+        assert recorded.get("a") == "Homeske home"
+        assert recorded.get("button") == "Play video"
+
+        # And so the selector is one a person would recognise, rather than a
+        # path that describes the markup of the day it was recorded.
+        assert all(
+            a["selectors"][0]["strategy"] not in {"css", "xpath", "nth_child"}
+            for a in clicks
+        )
+    finally:
+        await browser_recorder.close(session_id)
+
+
+async def test_the_recorder_says_which_elements_a_step_revealed(
+    recording_session,
+) -> None:
+    """The one fact a recording cannot be made to give up afterwards.
+
+    Finished, "Close video" looks like any other button - good accessible name,
+    real size, clicked once. It is simply not on the page until the video is
+    playing, and no amount of reading the recording back will say so. Answered
+    at the moment of the click, it is exact, and it is what keeps an invented
+    case from opening the page and clicking a button that is not there.
+    """
+    session_id, project_id = recording_session
+
+    def act_like_a_user(page) -> None:
+        page.get_by_test_id("login-submit").click()      # there from the start
+        page.get_by_label("Play video").click()          # reveals the next one
+        page.get_by_text("Close video", exact=True).click()
+        page.wait_for_timeout(2500)
+
+    await launch(session_id, project_id, on_page_ready=act_like_a_user)
+    try:
+        actions = await wait_for_actions(session_id, 4)
+        on_screen = {
+            a["element"]["accessible_name"]: a["element"]["was_on_screen"]
+            for a in actions
+            if a["action_type"] is ActionType.CLICK and a["element"]
+        }
+
+        assert on_screen.get("Sign in") is True
+        assert on_screen.get("Play video") is True
+        assert on_screen.get("Close video") is False, (
+            "the play click revealed it; the recorder must say so"
+        )
+    finally:
+        await browser_recorder.close(session_id)
+
+
 async def test_close_finalises_the_session(recording_session) -> None:
     session_id, project_id = recording_session
     await launch(session_id, project_id)
@@ -200,7 +277,9 @@ async def test_closing_generates_a_test_suite(recording_session) -> None:
 
     assert "def test_" in code
     assert ".fill('buyer@example.com')" in code
-    assert ".check()" in code
+    # Not `.check()`. Sites hide the real input behind a styled box, and
+    # Playwright will not act on an element with no size — see `set_checked`.
+    assert "set_checked(" in code
     assert "conftest.py" in paths
     assert any(p.startswith("pages/") for p in paths)
 

@@ -7,11 +7,31 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.ai.case_generator import DEFAULT_COUNT, GenerationOutcome, generate_cases
+from app.ai.case_generator import (
+    DEFAULT_COUNT,
+    MAX_COUNT,
+    GenerationOutcome,
+    accept_all,
+    generate_cases,
+)
 from app.ai.enhancer import enhance
 from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
-from app.codegen.synth import SynthesisError, module_for, synthesise, vocabulary
+from app.codegen.probe import probe
+from app.codegen.recorded_cases import (
+    FROM_RECORDING,
+    cases_from_recording,
+    why_nothing,
+)
+from app.codegen.segments import as_tests
+from app.codegen.segments import split as split_recording
+from app.codegen.synth import (
+    SynthesisError,
+    module_for,
+    sign_in_sequence,
+    synthesise,
+    vocabulary,
+)
 from app.codegen.writer import remove_suite_directory, suite_directory, write_suite
 from app.core.config import settings
 from app.models.enums import (
@@ -34,12 +54,6 @@ from app.repositories.test_case_repo import (
     TestSuiteRepository,
 )
 from app.repositories.test_run_repo import TestResultRepository, TestRunRepository
-from app.services.checks import (
-    Check,
-    apply as apply_checks,
-    page_at as page_at_step,
-    parse as parse_checks,
-)
 from app.services.coverage import Coverage, coverage
 from app.services.exceptions import NotFound, ValidationError
 from app.services.flakiness import Flaky, flakiness
@@ -198,22 +212,38 @@ class CodegenService:
 
         suite_name = (name or session.name).strip() or f"Recording {recording_id}"
 
-        ir = build_ir(
-            [
-                {
-                    "action_type": a.action_type.value,
-                    "url": a.url,
-                    "frame_path": a.frame_path,
-                    "selectors": a.selectors,
-                    "element": a.element,
-                    "payload": a.payload,
-                    "is_ignored": a.is_ignored,
-                }
-                for a in actions
-            ],
-            suite_name=suite_name,
-            start_url=session.start_url,
-        )
+        raw = [
+            {
+                "action_type": a.action_type.value,
+                "url": a.url,
+                "frame_path": a.frame_path,
+                "selectors": a.selectors,
+                "element": a.element,
+                "payload": a.payload,
+                "is_ignored": a.is_ignored,
+            }
+            for a in actions
+        ]
+
+        # A recording is rarely one test. Somebody tries logging in, gets an
+        # error, tries again, then goes off to register - see `segments.py`.
+        # Cut here, before `build_ir`, because normalisation drops and merges
+        # actions and afterwards there is nothing to line the two up by. Each
+        # action carries the number of the test it belongs to, and the steps
+        # built from it inherit that.
+        segments = split_recording(raw)
+        starts: list[str] = []
+        for number, segment in enumerate(segments):
+            starts.append(str(segment[0].get("url") or session.start_url))
+            for action in segment:
+                action["segment"] = number
+
+        # One IR for the whole recording, not one per segment. The page objects
+        # and the locator names on them come from here, so every case in the
+        # suite refers to `login.email_input` and means the same element. Built
+        # per segment they would be numbered independently, and a case would
+        # import a property the page object does not have.
+        ir = build_ir(raw, suite_name=suite_name, start_url=session.start_url)
 
         # AI pass: better names and descriptions on code that already works.
         # `enhance` never raises and never writes code, so the worst case here
@@ -256,48 +286,69 @@ class CodegenService:
                 suite, name=suite_name, description=description, generator=generator
             )
 
-        test_file = next(f for f in rendered if f.path == ir.file_path)
-        case = self.cases.create(
-            suite_id=suite.id,
-            project_id=session.project_id,
-            name=suite_name,
-            description=(
-                (polish.description + " " if polish.description else "")
-                + f"{len(ir.steps)} steps across {len(ir.pages)} page(s)."
-                + (
-                    f" {ir.fragile_count} step(s) use a fragile selector."
-                    if ir.fragile_count
-                    else ""
+        # One case per test the person performed, not one per recording. The
+        # slices share this suite's pages, so every case says
+        # `login.email_input` and means the same element - see `segments.py`.
+        slices = list(as_tests(ir, starts))
+        for number, slice_ir in slices:
+            try:
+                slice_files = render(slice_ir, browser_info=session.browser_info)
+            except GeneratedCodeError as exc:
+                # One unrenderable slice must not lose the others. Nothing about
+                # a recording says its third attempt is more important than its
+                # first, so dropping the batch over one of them is the wrong
+                # trade every time.
+                logger.exception(
+                    "Recording %s: could not render test %d", recording_id, number + 1
                 )
-            ),
-            function_name=ir.function_name,
-            file_path=ir.file_path,
-            code=test_file.content,
-            source=CaseSource.RECORDING,
-            status=CaseStatus.DRAFT,
-            category=CaseCategory.RECORDED,
-            priority=CasePriority.HIGH,
-            generated_by=GENERATOR,
-            tags=["recorded"],
-            is_enabled=True,
-            version=1,
-        )
+                raise ValidationError(
+                    f"Generated code was not valid Python: {exc}"
+                ) from exc
 
-        for step in ir.steps:
-            self.cases.add_step(
-                test_case_id=case.id,
-                sequence=step.sequence,
-                action=step.action,
-                description=step.description,
-                locator=(
-                    f"{step.page_var}.{step.locator_name}"
-                    if step.page_var and step.locator_name
-                    else None
+            test_file = next(f for f in slice_files if f.path == slice_ir.file_path)
+            case = self.cases.create(
+                suite_id=suite.id,
+                project_id=session.project_id,
+                # Numbered only when there is more than one. A recording of a
+                # single journey keeps the name it has always had.
+                name=suite_name if len(slices) == 1 else f"{suite_name} {number + 1}",
+                description=(
+                    (polish.description + " " if polish.description and len(slices) == 1 else "")
+                    + f"{len(slice_ir.steps)} steps across {len(ir.pages)} page(s)."
+                    + (
+                        f" {slice_ir.fragile_count} step(s) use a fragile selector."
+                        if slice_ir.fragile_count
+                        else ""
+                    )
                 ),
-                input_data=step.input_data,
-                expected_result=step.expected_result,
-                selector_strategy=step.strategy,
+                function_name=slice_ir.function_name,
+                file_path=slice_ir.file_path,
+                code=test_file.content,
+                source=CaseSource.RECORDING,
+                status=CaseStatus.DRAFT,
+                category=CaseCategory.RECORDED,
+                priority=CasePriority.HIGH,
+                generated_by=GENERATOR,
+                tags=["recorded"],
+                is_enabled=True,
+                version=1,
             )
+
+            for step in slice_ir.steps:
+                self.cases.add_step(
+                    test_case_id=case.id,
+                    sequence=step.sequence,
+                    action=step.action,
+                    description=step.description,
+                    locator=(
+                        f"{step.page_var}.{step.locator_name}"
+                        if step.page_var and step.locator_name
+                        else None
+                    ),
+                    input_data=step.input_data,
+                    expected_result=step.expected_result,
+                    selector_strategy=step.strategy,
+                )
 
         for spec in rendered:
             if spec.path == ir.file_path:
@@ -324,7 +375,20 @@ class CodegenService:
 
         previous = suite.output_dir
         try:
-            write_suite(target, {spec.path: spec.content for spec in rendered})
+            # The page objects and config from the whole recording, plus one
+            # test file per case. Not `rendered` alone: that carries the
+            # combined test module, which no case owns and which would sit on
+            # disk running the whole recording as one test beside the split
+            # ones.
+            on_disk = {
+                spec.path: spec.content
+                for spec in rendered
+                if spec.path != ir.file_path
+            }
+            on_disk.update(
+                {case.file_path: case.code for case in self.suites.get_full(suite.id).cases}
+            )
+            write_suite(target, on_disk)
             self.suites.update(suite, output_dir=str(target))
 
             # A rename moves the folder. Remove the old one, or `generated/`
@@ -343,7 +407,12 @@ class CodegenService:
     # AI test case generation
     # ------------------------------------------------------------------
     def generate_cases(
-        self, suite_id: int, user: User, *, count: int = DEFAULT_COUNT
+        self,
+        suite_id: int,
+        user: User,
+        *,
+        count: int = DEFAULT_COUNT,
+        guidance: str | None = None,
     ) -> tuple[TestSuite, GenerationOutcome]:
         """Add positive, negative, edge and security cases around the recording.
 
@@ -373,7 +442,27 @@ class CodegenService:
                 "This suite has no recording to generate test cases from."
             )
 
-        outcome = generate_cases(recorded_ir, count=count)
+        self._mark_reachable(recorded_ir)
+
+        outcome = generate_cases(recorded_ir, count=count, guidance=guidance)
+
+        # Nothing came back from the model, for any of the reasons there are: no
+        # key configured, a provider that was down, an answer that parsed into
+        # nothing, or a dozen suggestions every one of which was rejected. The
+        # recording is still here either way, and a recording says which pages
+        # exist, what was on them, which fields somebody filled in and which
+        # button they pressed to send it. Several kinds of case follow from that
+        # with no judgement at all, and they are worth more than a 422 telling
+        # somebody to go and buy an API key - see codegen/recorded_cases.py.
+        #
+        # This runs before the `skipped` check rather than after it, and that
+        # order is the whole change: `skipped` is what "no AI provider" arrives
+        # as, so testing it first is what used to make this a dead end.
+        if not outcome.cases:
+            outcome = self._from_the_recording_alone(
+                recorded_ir, outcome, count=count, guidance=guidance
+            )
+
         if outcome.skipped:
             raise ValidationError(outcome.skipped)
         if not outcome.cases:
@@ -386,8 +475,23 @@ class CodegenService:
         self.db.flush()
 
         browser_info = suite.recording.browser_info if suite.recording else {}
+        kept = []
         for synthesised in outcome.cases:
-            self._store_case(suite, synthesised, browser_info, outcome.model)
+            # One case that will not render must not take the others with it.
+            # A generation is a paid request and a minute of waiting; losing
+            # eleven good cases because the twelfth used a name it did not
+            # import is the same arithmetic as a truncated answer, and the same
+            # answer applies - keep what is whole and say what was dropped.
+            try:
+                self._store_case(suite, synthesised, browser_info, outcome.model)
+                kept.append(synthesised)
+            except GeneratedCodeError as exc:
+                logger.warning("Dropped %s: %s", synthesised.name, exc)
+                outcome.rejected.append(f"{synthesised.name}: {exc}")
+        outcome.cases = kept
+
+        if not outcome.cases:
+            raise ValidationError(_why_nothing_was_usable(outcome))
 
         self._refresh_files(suite, recorded_ir)
         self._discard_runs(suite)
@@ -396,6 +500,90 @@ class CodegenService:
         suite = self.suites.get_full(suite.id)  # type: ignore[assignment]
         self._rewrite_folder(suite)
         return suite, outcome
+
+    def _from_the_recording_alone(
+        self,
+        recorded_ir: TestIR,
+        ai: GenerationOutcome,
+        *,
+        count: int,
+        guidance: str | None,
+    ) -> GenerationOutcome:
+        """Build the cases the recording supports on its own.
+
+        Held to exactly the rules a model's suggestion is held to: `accept_all`
+        is the same loop, so an element that does not exist, an order that
+        cannot happen and a case that checks nothing are refused here as well.
+        Nothing new can reach a subprocess by this route that could not already
+        reach it by the other one.
+
+        `cost_usd` and `tokens` stay at zero because nothing was bought, and the
+        one place this tool reports what it spent is not the place to round up.
+        """
+        drafts = cases_from_recording(recorded_ir, count=min(count, MAX_COUNT))
+        outcome = GenerationOutcome(model=FROM_RECORDING)
+        accept_all(drafts, recorded_ir, outcome)
+
+        if not outcome.cases:
+            # Both halves, in one breath. Told only that a key is missing,
+            # somebody adds one, presses the button again, and gets the same
+            # empty table - having paid for the privilege.
+            return GenerationOutcome(
+                skipped=(
+                    f"{ai.skipped or _why_nothing_was_usable(ai)} Without one, "
+                    f"cases can only be built from the recording itself - and "
+                    f"this recording {why_nothing(recorded_ir)}"
+                )
+            )
+
+        # Said in the log and nowhere else.
+        #
+        # A banner explaining this sat above a table that had just filled with
+        # the answer - three sentences of prose telling somebody what they could
+        # see. That is the same reason this endpoint stopped announcing its own
+        # successes at all, and it applies here identically. Anyone who wants to
+        # know which generator wrote a case can read `generated_by` on the case
+        # itself, next to the case.
+        logger.info(
+            "Suite: built %d case(s) from the recording alone (%s)%s",
+            len(outcome.cases),
+            ai.skipped or "the model returned nothing usable",
+            "; the brief could not be honoured" if (guidance or "").strip() else "",
+        )
+        return outcome
+
+    def _mark_reachable(self, recorded_ir) -> None:
+        """Look at each page cold, so cases are not written against what is not
+        there.
+
+        Everything else the model is shown comes from one recording, and a
+        recording shows one state: the cart had something in it, the wizard was
+        on step one, the account was under its listing limit. Opening the pages
+        is the only way to know which elements survive arriving with none of
+        that true - see `codegen/probe.py`.
+
+        A probe that cannot run changes nothing, which is why nothing here
+        checks whether it did.
+        """
+        if not settings.PROBE_PAGES:
+            return
+
+        # Belt and braces around the whole thing, not just inside `probe`.
+        # `probe` promises never to raise and keeps that promise; the promise
+        # stopped at its own front door, and a missing import here turned
+        # "generate some test cases" into a 500 with a stack trace. Looking at
+        # the application is an extra source of truth. It is never a gate.
+        try:
+            sequence, _, _ = sign_in_sequence(recorded_ir.steps)
+            found = probe(recorded_ir, sign_in=sequence)
+            if found is None:
+                return
+
+            for page in recorded_ir.pages:
+                for locator in page.locators:
+                    locator.reachable = found.offers(page, locator.name)
+        except Exception:  # noqa: BLE001 - generation proceeds without it
+            logger.warning("Could not work out what is on each page", exc_info=True)
 
     def _discard_runs(self, suite: TestSuite) -> None:
         """Throw away runs that tested code that has since been replaced.
@@ -553,7 +741,7 @@ class CodegenService:
             suite_name=suite.name,
             start_url=suite.recording.start_url,
         )
-        return apply_checks(ir, parse_checks(suite.checks))
+        return ir
 
     def _store_case(
         self, suite: TestSuite, synthesised, browser_info: dict, model: str
@@ -876,142 +1064,6 @@ class CodegenService:
         suite = self.get_suite(suite_id, user)
         cases = [self.cases.get_with_steps(case.id) for case in suite.cases]
         return coverage(self._pages_for(suite), [c for c in cases if c])
-
-    def suggest_checks(self, suite_id: int, user: User):
-        """Ask what the recorded test should be checking, and check the answer.
-
-        The recorded test asserts nothing — it replays what somebody did, and a
-        recording has no opinion about what should have been true afterwards. So
-        it passes as long as every click found something to click.
-
-        Saves nothing. The suggestions come back for somebody to accept, because
-        a check nobody agreed to is how a suite acquires assertions it does not
-        believe.
-        """
-        from app.ai.client import LLMError, ai_available, get_llm_client, load_prompt
-        from app.ai.schemas import SuggestedChecks
-
-        suite = self.get_suite(suite_id, user)
-        ir = self._recorded_ir(suite)
-        if ir is None or not ir.pages:
-            raise ValidationError(
-                "This suite has no recording behind it, so there are no steps "
-                "to add checks to."
-            )
-
-        if not ai_available():
-            raise ValidationError(
-                "Suggesting checks needs an AI provider. Add a key to .env and "
-                "restart the API."
-            )
-
-        try:
-            client = get_llm_client()
-            response = client.complete_model(
-                load_prompt(
-                    "suggest_checks",
-                    suite_name=ir.suite_name,
-                    start_url=ir.start_url,
-                    steps=_describe_recorded_steps(ir),
-                    pages=describe_elements(ir.pages),
-                ),
-                SuggestedChecks,
-                system=(
-                    "You add the assertions a recorded test is missing. You only "
-                    "ever reference elements you have been shown, and you check "
-                    "what changed rather than what was always there."
-                ),
-                max_tokens=8000,
-            )
-        except LLMError as exc:
-            raise ValidationError(str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - a provider bug must not 500
-            logger.exception("Suggesting checks failed unexpectedly")
-            raise ValidationError(f"Could not suggest checks: {exc}") from exc
-
-        parsed = response.parsed
-        if not isinstance(parsed, SuggestedChecks) or not parsed.checks:
-            raise ValidationError(
-                "No checks were suggested for this recording. It may be too "
-                "short, or nothing it touched can prove anything."
-            )
-
-        # Two things have to be true, and only the first is obvious.
-        #
-        # The element must exist — a suggestion naming an invented one must not
-        # reach a tickbox saying "add".
-        #
-        # And the test must actually be on that element's page at that point. A
-        # check on the first-name field placed one click before the form is
-        # reached compiles perfectly and fails on every run, which is the worst
-        # of both: it looks like cover and behaves like a bug.
-        known = {
-            f"{var}.{locator.name}"
-            for var, page in _pages_by_variable(ir)
-            for locator in page.locators
-        }
-        last = ir.steps[-1].sequence if ir.steps else 0
-
-        kept = []
-        for check in parsed.checks:
-            after = max(0, min(int(check.after), last))
-            if check.target not in known:
-                continue
-
-            here = page_at_step(ir.steps, after)
-            if here and check.target.split(".", 1)[0] != here:
-                logger.info(
-                    "Dropped a suggested check on %s after step %s - the test "
-                    "is on %s there",
-                    check.target, after, here,
-                )
-                continue
-
-            kept.append(
-                {
-                    "after": after,
-                    "target": check.target,
-                    "kind": check.kind if check.kind in ("visible", "text") else "visible",
-                    "expected": check.expected or "",
-                    "why": " ".join(str(check.why or "").split())[:300],
-                    "step": _step_description(ir, after),
-                }
-            )
-
-        if not kept:
-            raise ValidationError(
-                "Every suggested check was about a page the test is not on at "
-                "that point. Try again — if it keeps happening, the recording "
-                "may move between pages too quickly to check anything."
-            )
-        return kept
-
-    def save_checks(self, suite_id: int, user: User, checks: list[dict]) -> TestSuite:
-        """Store accepted checks and rewrite the recorded test with them.
-
-        Stored on the suite rather than written into the case: the case is
-        rebuilt from the recording on every regeneration, so a check written
-        onto it would last until the next press of a button.
-        """
-        suite = self.get_suite(suite_id, user)
-
-        suite.checks = [
-            Check(
-                after=int(raw.get("after", 0)),
-                target=str(raw.get("target", "")),
-                kind=str(raw.get("kind", "visible")),
-                expected=str(raw.get("expected") or ""),
-            ).as_dict()
-            for raw in checks
-            if "." in str(raw.get("target", ""))
-        ]
-
-        ir = self._recorded_ir(suite)  # applies them on the way out
-        if ir is not None:
-            self._refresh_files(suite, ir)
-
-        self.db.commit()
-        return self.suites.get_full(suite.id)  # type: ignore[return-value]
 
     def flaky(self, suite_id: int, user: User) -> list[Flaky]:
         """Tests in this suite whose verdict changes without the test changing."""

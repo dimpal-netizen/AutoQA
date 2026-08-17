@@ -27,6 +27,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.models.enums import ArtifactType, Browser, ResultStatus
 from app.runner import registry
+from app.runner.network import alongside
 from app.runner.parser import ParsedResult, parse_junit
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ def run_suite(
     bundle: dict[str, str],
     *,
     run_id: int,
+    samples: dict[str, bytes] | None = None,
     browser: Browser,
     headless: bool = True,
     base_url: str | None = None,
@@ -105,7 +107,7 @@ def run_suite(
     started = time.monotonic()
 
     try:
-        _materialise(bundle, workspace)
+        _materialise(bundle, workspace, samples or {})
     except OSError as exc:
         outcome.error = f"Could not prepare the workspace: {exc}"
         logger.exception("Run %s (%s): workspace failed", run_id, browser.value)
@@ -145,6 +147,8 @@ def run_suite(
     except OSError:
         logger.exception("Run %s (%s): could not save artifacts", run_id, browser.value)
 
+    _explain_with_the_network(outcome)
+
     if registry.is_cancelled(run_id):
         # Stopping on purpose is not a failure, and must not be diagnosed as one.
         outcome.cancelled = True
@@ -154,6 +158,32 @@ def run_suite(
 
     _cleanup(workspace)
     return outcome
+
+
+def _explain_with_the_network(outcome: ExecutionOutcome) -> None:
+    """Add what the browser could not fetch to the failures that need it.
+
+    The trace is already saved; nothing here reads it back for a test that
+    passed, and nothing here decides what the failure means. It puts one fact
+    next to the error - see `app/runner/network.py` for why that fact was worth
+    going and getting.
+    """
+    traces = {
+        artifact.function_name: settings.storage_dir / artifact.relative_path
+        for artifact in outcome.artifacts
+        if artifact.type is ArtifactType.TRACE and artifact.function_name
+    }
+    if not traces:
+        return
+
+    for result in outcome.results:
+        if result.status not in (ResultStatus.FAILED, ResultStatus.ERROR):
+            continue
+        trace = traces.get(result.function_name)
+        if trace is None:
+            continue
+        result.error_message = alongside(result.error_message, trace)
+
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +203,9 @@ def _workspace(run_id: int, browser: Browser) -> Path:
     return path
 
 
-def _materialise(bundle: dict[str, str], workspace: Path) -> None:
+def _materialise(
+    bundle: dict[str, str], workspace: Path, samples: dict[str, bytes] | None = None
+) -> None:
     """Write the suite into the workspace, refusing anything outside it."""
     for relative, content in bundle.items():
         destination = (workspace / relative).resolve()
@@ -184,6 +216,19 @@ def _materialise(bundle: dict[str, str], workspace: Path) -> None:
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(content, encoding="utf-8", newline="\n")
+
+    # The project's own files for a test to upload. Beside the suite rather
+    # than in the database, because `sample_file` reads them off disk - and a
+    # name is somebody else's string, so it is reduced to its last segment
+    # before it is joined to anything.
+    for name, data in (samples or {}).items():
+        leaf = Path(name.replace("\\", "/")).name
+        if not leaf or leaf in (".", ".."):
+            logger.error("Refusing to write a sample file called %r", name)
+            continue
+        destination = workspace / "samples" / leaf
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
 
 
 # "tests/test_login.py::test_signs_in[chromium] PASSED   [ 15%]"

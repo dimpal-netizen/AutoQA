@@ -420,10 +420,17 @@ def test_the_test_body_covers_every_action(generated, sample) -> None:
         "page.goto(",
         ".click()",
         ".fill(",
-        ".check()",
-        ".uncheck()",
+        # Not `.check()`/`.uncheck()`: a custom checkbox hides its real input,
+        # and Playwright refuses to act on an element with no size. See
+        # `set_checked` in the healing template.
+        "set_checked(",
+        ", True)",
+        ", False)",
         ".select_option(",
-        ".hover()",
+        # Not `.hover()`. A hover only opens a menu for the step after it and
+        # asserts nothing, so it must not be able to fail the test - see
+        # `reveal` in the healing template.
+        "reveal(",
         ".dblclick()",
         ".press(",
         ".set_input_files(",
@@ -546,6 +553,25 @@ def test_conftest_uses_the_recorded_viewport(sample) -> None:
     assert '"height": 900' in conftest
 
 
+def test_assertions_are_given_longer_than_playwrights_default(sample) -> None:
+    """Actions wait 30s for an element; assertions waited Playwright's default 5.
+
+    So a click that really did navigate, on an app slower than five seconds,
+    failed with "Page URL expected to be '/find-agent'". Driving the same click
+    by hand reached /find-agent every time. The navigation was fine and the test
+    reported a broken link, which is the exact failure AutoQA exists to avoid.
+    """
+    ir = build_ir(sample["actions"], suite_name="Flow", start_url="https://x.test/")
+    conftest = next(
+        s for s in render(ir, browser_info=sample["session"]["browser_info"])
+        if s.path == "conftest.py"
+    ).content
+
+    assert "expect.set_options(" in conftest
+    assert "AUTOQA_EXPECT_TIMEOUT_MS" in conftest, "must stay overridable per run"
+    assert "10_000" in conftest
+
+
 def test_absurd_viewport_falls_back_to_a_sane_default() -> None:
     ir = build_ir([], suite_name="Flow", start_url="https://x.test/")
     conftest = next(
@@ -588,3 +614,50 @@ def test_first_step_is_always_a_goto(sample) -> None:
 
     assert ir.steps[0].action is ActionType.NAVIGATE
     assert ir.steps[0].code == ["page.goto('https://shop.example.com/login')"]
+
+
+# ---------------------------------------------------------------------------
+# Using something the module never imported
+# ---------------------------------------------------------------------------
+def test_a_file_that_uses_an_unimported_name_is_refused() -> None:
+    """`ast.parse` cannot catch this: the file is perfectly good Python, it just
+    refers to something that is not there. So it survives generation and fails
+    once the browser is open and a person is watching."""
+    from app.codegen.generator import GeneratedCodeError, validate
+    from app.models.enums import FileType
+
+    spec = GeneratedFileSpec(
+        path="tests/test_x.py",
+        content="def test_x(page):\n    page.wait_for_url(re.compile('x'))\n",
+        file_type=FileType.TEST,
+    )
+
+    with pytest.raises(GeneratedCodeError, match="uses re without importing"):
+        validate(spec)
+
+
+def test_the_same_file_with_the_import_is_fine() -> None:
+    from app.codegen.generator import validate
+    from app.models.enums import FileType
+
+    validate(
+        GeneratedFileSpec(
+            path="tests/test_x.py",
+            content="import re\n\n\ndef test_x(page):\n    page.wait_for_url(re.compile('x'))\n",
+            file_type=FileType.TEST,
+        )
+    )
+
+
+def test_a_name_defined_in_the_file_counts_as_provided() -> None:
+    """A helper module defines `sample_file` rather than importing it."""
+    from app.codegen.generator import validate
+    from app.models.enums import FileType
+
+    validate(
+        GeneratedFileSpec(
+            path="pages/_files.py",
+            content="def sample_file(name):\n    return sample_file\n",
+            file_type=FileType.HELPER,
+        )
+    )

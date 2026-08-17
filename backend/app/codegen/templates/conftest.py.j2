@@ -8,11 +8,33 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Page, expect
 
 # Where the recording was made. Override with BASE_URL to run the same tests
 # against staging or a local build.
 DEFAULT_BASE_URL = {{ base_url | pystr }}
+
+# Assertions get their own timeout, and it is deliberately not Playwright's
+# default of five seconds.
+#
+# An action waits thirty seconds for its element. An assertion waited five. So a
+# click that really did navigate, on an app that took longer than five seconds
+# to render the next page, failed like this:
+#
+#     AssertionError: Page URL expected to be '/find-agent'
+#     Actual value: https://.../properties
+#       13 x unexpected value "https://.../properties"
+#
+# Nothing was wrong. Driven by hand afterwards, that same click reached
+# /find-agent every time - in about two and a half seconds on an idle machine,
+# and the suite runs three browsers at once. The test was impatient, and it
+# reported a broken link.
+#
+# Waiting longer costs nothing when the assertion passes: `expect` polls and
+# returns the moment the condition holds. The extra time is only ever spent on a
+# genuine failure, which is precisely when being sure is worth it.
+EXPECT_TIMEOUT_MS = int(os.environ.get("AUTOQA_EXPECT_TIMEOUT_MS", 10_000))
+expect.set_options(timeout=EXPECT_TIMEOUT_MS)
 
 ARTIFACTS = Path(__file__).parent / "artifacts"
 

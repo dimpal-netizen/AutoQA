@@ -290,7 +290,15 @@ def test_prose_cannot_escape_a_comment_or_a_docstring(ir, sample):
     )
     tree = ast.parse(module.content)  # would raise if the docstring was broken
     # The payload survives only as prose inside the docstring — never as code.
-    assert not [node for node in ast.walk(tree) if isinstance(node, ast.Import)]
+    # `re` is the one module the generator itself imports, for the URL patterns
+    # a navigation waits on; anything else here came from the model.
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert imported <= {"re"}, f"smuggled an import: {imported - {'re'}}"
     assert "os.system" in ast.get_docstring(tree)
     assert "os.system" not in "\n".join(line for s in ir.steps for line in s.code)
 

@@ -14,6 +14,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Bug,
   FolderKanban,
+  Images,
   Home,
   LayoutDashboard,
   LogOut,
@@ -31,6 +32,10 @@ import { ThemeToggle } from "@/components/theme-toggle";
 // In the order the work happens: pick a project, then everything else lives
 // inside it. The three below it are flat histories across every project.
 //
+// Sample files sit with them for a different reason: it is set up once and
+// then forgotten, so burying it inside one project's page would hide the
+// answer to "why is every uploaded photo a grey rectangle".
+//
 // Runs and Bugs are here because they were the two nouns with no home. Both
 // were reachable only by opening a project first, which asks you to know where
 // to look — and "what ran, what broke, what is still outstanding" is the
@@ -41,6 +46,7 @@ const NAV = [
   { href: "/recordings", label: "Recordings", icon: Video },
   { href: "/runs", label: "Runs", icon: Play },
   { href: "/bugs", label: "Bugs", icon: Bug },
+  { href: "/sample-files", label: "Sample files", icon: Images },
 ];
 
 export function AppShell({

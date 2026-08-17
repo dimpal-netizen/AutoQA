@@ -260,7 +260,7 @@
     return out.sort((a, b) => RANK[a.strategy] - RANK[b.strategy] || b.score - a.score);
   }
 
-  function describeElement(el) {
+  function describeElement(el, wasOnScreen) {
     const attributes = {};
     for (const attr of ["id", "name", "class", "type", "href", "data-testid", "placeholder"]) {
       const v = el.getAttribute?.(attr);
@@ -278,6 +278,8 @@
         ? { x: +box.x.toFixed(1), y: +box.y.toFixed(1),
             width: +box.width.toFixed(1), height: +box.height.toFixed(1) }
         : null,
+      // False means the previous step revealed this - see `wasOnScreen`.
+      was_on_screen: wasOnScreen !== false,
     };
   }
 
@@ -310,6 +312,10 @@
       // browser then fires `change` for the same edit — without this the field
       // would be recorded twice.
       recordedValues: new WeakMap(),
+      // What a person could act on when we last looked, and where. See
+      // `wasOnScreen`.
+      onScreen: null,
+      onScreenUrl: null,
       hoverTimer: null,
       lastHovered: null,
       scrollTimer: null,
@@ -369,11 +375,54 @@
       url: location.href,
       frame_path: [],
       selectors,
-      element: el ? describeElement(el) : null,
+      element: el ? describeElement(el, wasOnScreen(el)) : null,
       payload,
     });
     state.lastAction = `${actionType} → ${selectors[0]?.strategy ?? "page"}`;
+    rememberWhatIsOnScreen();
     notify();
+  }
+
+  /**
+   * Was this already on screen before the previous thing the person did?
+   *
+   * The one fact a recording cannot be made to give up afterwards, and the one
+   * that decides whether an invented test case can use the element at all.
+   * `home.close_video_button` and `properties.back_to_search` look no different
+   * from a nav link in a finished recording - same tag, same good accessible
+   * name, both clicked once. But one is on the page when it loads and the other
+   * only exists after a video is playing or a property has been opened, so a
+   * case that goes straight to it waits thirty seconds and reports a bug in a
+   * page that is fine.
+   *
+   * Nothing has to be inferred: the answer is knowable at the moment of the
+   * click, and only then. `false` means the step before this one revealed it.
+   */
+  function wasOnScreen(el) {
+    // A different page than the one we looked at. Everything on it is new, and
+    // none of that is evidence about anything, so say nothing. Without this,
+    // the first click after every navigation reads as "the last step revealed
+    // it" and the element is withheld from test cases for no reason.
+    if (!state.onScreen || state.onScreenUrl !== location.href) return true;
+    return state.onScreen.has(el);
+  }
+
+  /**
+   * Snapshot what a person could act on right now.
+   *
+   * Taken after every recorded action and on every load, so the next action can
+   * be compared against the page as it stood before it. A WeakSet holds no node
+   * alive, which matters on a single-page app that replaces its DOM constantly.
+   */
+  function rememberWhatIsOnScreen() {
+    if (!state) return;
+    const seen = new WeakSet();
+    for (const node of document.querySelectorAll(INTERACTIVE)) {
+      const box = node.getBoundingClientRect();
+      if (box.width > 0 && box.height > 0) seen.add(node);
+    }
+    state.onScreen = seen;
+    state.onScreenUrl = location.href;
   }
 
   // ==== event capture =====================================================
@@ -410,7 +459,59 @@
 
     const type = (el.getAttribute?.("type") || "").toLowerCase();
     if (el.tagName === "INPUT" && (type === "checkbox" || type === "radio")) return;
-    record("click", el);
+    record("click", targetOf(el));
+  }
+
+  //: Things a person can operate. A click inside one of these is a click on it.
+  const INTERACTIVE = "a, button, summary, label, select, textarea, input, " +
+    "[role=button], [role=link], [role=tab], [role=menuitem], [role=option], " +
+    "[role=checkbox], [role=radio], [role=switch]";
+
+  /**
+   * The element a person would say they clicked.
+   *
+   * `event.target` is the deepest node under the cursor, which is routinely not
+   * the thing anyone means. Clicking the site logo gives you the <svg> inside
+   * `<a aria-label="Homeske home">`; clicking a play button gives you the <img>
+   * inside the <button>. Neither inner node has a name, so the only way left to
+   * describe it is where it sits:
+   *
+   *     html body header.Navbar-module__Sl14ZG__navbar a...logo svg
+   *
+   * which is both unreadable and wrong the moment anything above it moves. The
+   * <a> and the <button> around them have accessible names, are what the person
+   * pressed, and keep working after a redesign.
+   *
+   * Two passes, in this order:
+   *
+   *   1. If the node is not something you can operate and has no name of its
+   *      own, use the nearest ancestor that is. Four levels: an icon sits one or
+   *      two inside its button, while a whole card wrapped in a link is a
+   *      different element and should not be swallowed.
+   *   2. If what we have still has no size — a marker overlay stretched to zero
+   *      height, an <area> in an image map — use the nearest ancestor with one.
+   *      Playwright refuses to act on an element nobody can see, and waits the
+   *      full thirty seconds before saying so.
+   *
+   * Neither pass is a guess. The click landed inside both ancestors, so a click
+   * on either lands in the same place.
+   */
+  function targetOf(el) {
+    let node = el;
+
+    if (!node.matches?.(INTERACTIVE) && !accessibleName(node)) {
+      for (let up = node, depth = 0; up?.nodeType === 1 && depth < 4; depth++) {
+        if (up.matches?.(INTERACTIVE)) { node = up; break; }
+        up = up.parentElement;
+      }
+    }
+
+    for (let up = node, depth = 0; up?.nodeType === 1 && depth < 4; depth++) {
+      const box = up.getBoundingClientRect?.();
+      if (box && box.width > 0 && box.height > 0) return up;
+      up = up.parentElement;
+    }
+    return node;
   }
 
   function onInput(event) {

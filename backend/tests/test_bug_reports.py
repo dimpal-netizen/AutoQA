@@ -165,7 +165,9 @@ def test_the_worst_bug_is_the_first_one_you_read():
         bug(title="Medium one", severity=Severity.MEDIUM),
     ])
 
-    titles = [sheet.cell(row=9 + i, column=2).value for i in range(3)]
+    titles = [
+        sheet.cell(row=9 + i, column=COLUMN["Bug Summary"]).value for i in range(3)
+    ]
     assert titles == ["Critical one", "Medium one", "Low one"]
 
 
@@ -177,28 +179,14 @@ def test_the_steps_are_numbered_one_per_line():
     assert steps.splitlines() == ["1. Open /login", "2. Type ' a@b.com '", "3. Click Login"]
 
 
-def test_the_counts_a_lead_wants_are_above_the_rows():
-    sheet = workbook([
-        bug(severity=Severity.CRITICAL, status=BugStatus.OPEN),
-        bug(severity=Severity.LOW, status=BugStatus.RESOLVED),
-        bug(severity=Severity.HIGH, status=BugStatus.DRAFT),
-    ])
+def test_the_description_line_says_how_many_there_are():
+    """Their template has one Description line rather than a block of counts,
+    so the number goes there instead of being dropped."""
+    sheet = workbook([bug(), bug(), bug()])
     header = {sheet.cell(row=r, column=1).value: sheet.cell(row=r, column=2).value
-              for r in range(2, 8)}
+              for r in range(2, 7)}
 
-    assert header["Total Bugs"] == "3"
-    assert header["Open"] == "2"       # draft counts as open; resolved does not
-    assert header["Critical & Open"] == "1"
-
-
-def test_the_browser_is_not_repeated_in_the_environment_column():
-    """It has a column of its own, and the width is needed for the rest."""
-    sheet = workbook([bug()])
-
-    assert sheet.cell(row=9, column=COLUMN["Browser"]).value == "chromium"
-    assert "chromium" not in (
-        sheet.cell(row=9, column=COLUMN["Environment"]).value or ""
-    )
+    assert "3 bug(s)" in header["Description"]
 
 
 def test_a_bug_whose_run_was_deleted_still_exports():
@@ -207,7 +195,7 @@ def test_a_bug_whose_run_was_deleted_still_exports():
 
     # openpyxl reads an empty cell back as None; either way the column is blank
     # rather than the export having failed.
-    assert not sheet.cell(row=9, column=COLUMN["Test Case"]).value
+    assert not sheet.cell(row=9, column=COLUMN["Test case ID"]).value
     assert sheet.cell(row=9, column=COLUMN["Steps to Reproduce"]).value
 
 
@@ -223,20 +211,17 @@ def test_the_sheet_filters_and_freezes_so_it_can_be_triaged():
     assert sheet.auto_filter.ref == f"A8:{last}13"
 
 
-def test_a_project_name_with_no_letters_still_produces_ids():
-    sheet = workbook([bug()], project_name="123 456")
+def service_with(failures, analyses=None, steps=None):
+    """A BugService with only the parts `_rows_from_failures` touches."""
+    from app.services.bug_service import BugService
 
-    assert sheet.cell(row=9, column=1).value == "QA-BUG-001"
+    service = BugService.__new__(BugService)
+    found = analyses or {}
+    service.analyses = type("A", (), {"latest_for_result": lambda _s, rid: found.get(rid)})()
+    service._steps_for = lambda _result: steps or []
+    return service
 
 
-# ---------------------------------------------------------------------------
-# A failure nobody has written up is still a bug
-#
-# The export used to hold only the reports somebody had clicked "Draft a bug
-# report" on, so a project with sixteen red tests and no clicks exported
-# nothing — the button answered "draft one first", which made the register a
-# reward for filing rather than a view of the project.
-# ---------------------------------------------------------------------------
 class FakeStep:
     def __init__(self, description: str) -> None:
         self.description = description
@@ -284,6 +269,11 @@ def service_with(failures, analyses=None, steps=None):
     return service
 
 
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000a49444154789c6360000002000100fdff03fa0000000049454e44ae426082"
+)
+
 def test_a_failure_nobody_drafted_becomes_a_row():
     service = service_with([])
     rows = service._rows_from_failures([FakeFailure(1, "chromium")])
@@ -325,48 +315,6 @@ def test_without_an_analysis_the_row_still_says_something_useful():
     assert row.severity is Severity.MEDIUM
 
 
-def test_an_undrafted_row_says_it_has_not_been_reviewed():
-    """"Nobody has looked at this" is not the same as "triaged and left open"."""
-    service = service_with([])
-    sheet = workbook(service._rows_from_failures([FakeFailure(1, "chromium")]))
-
-    assert sheet.cell(row=9, column=COLUMN["Reviewed"]).value == "Not yet"
-
-
-def test_a_drafted_row_says_it_has_been():
-    sheet = workbook([bug(drafted=True)])
-
-    assert sheet.cell(row=9, column=COLUMN["Reviewed"]).value == "Yes"
-
-
-def test_the_header_counts_what_is_still_unreviewed():
-    service = service_with([])
-    rows = [bug(drafted=True)] + service._rows_from_failures([FakeFailure(1, "chromium")])
-    sheet = workbook(rows)
-    header = {sheet.cell(row=r, column=1).value: sheet.cell(row=r, column=2).value
-              for r in range(2, 8)}
-
-    assert header["Total Bugs"] == "2"
-    assert header["Awaiting Review"] == "1"
-
-
-# ---------------------------------------------------------------------------
-# The same bugs as a Word document
-#
-# Not another format of the spreadsheet — a different question. The register
-# answers "what is outstanding, by severity". This answers "here is bug 3, with
-# a picture", which is what gets attached to a ticket. The screenshot is the
-# whole reason it exists: the error text says what the test expected, the image
-# says what was actually on screen, and that is the difference between an
-# application bug and a test one.
-# ---------------------------------------------------------------------------
-#: The smallest thing Word will accept as a picture: a 1x1 PNG.
-PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
-    "0000000a49444154789c6360000002000100fdff03fa0000000049454e44ae426082"
-)
-
-
 def document(bugs, project_name: str = "Homeske"):
     """Build and read back, so a test asserts on the file rather than the code."""
     import io
@@ -379,7 +327,18 @@ def document(bugs, project_name: str = "Homeske"):
 
 
 def text_of(doc) -> str:
-    return "\n".join(p.text for p in doc.paragraphs)
+    """Every word in the document, headings and table cells alike.
+
+    The tables matter as much as the paragraphs now: an issue is laid out the
+    way Mantis lays one out, a label column beside a value column, so reading
+    only `doc.paragraphs` finds the headings and none of the content.
+    """
+    parts = [p.text for p in doc.paragraphs]
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                parts.extend(p.text for p in cell.paragraphs)
+    return "\n".join(parts)
 
 
 def test_the_screenshot_is_in_the_document():
@@ -441,9 +400,15 @@ def test_an_empty_field_does_not_leave_a_dangling_label():
 
 
 def test_an_undrafted_bug_says_nobody_has_reviewed_it():
+    """Mantis has no field for it, so it is said in Additional Information.
+
+    Left out entirely, an unreviewed row would read as a triaged one - and a
+    register that presents AutoQA's guesses as somebody's findings is how a
+    team learns to distrust the register.
+    """
     doc = document([bug(drafted=False)])
 
-    assert "Not reviewed yet" in text_of(doc)
+    assert "not yet reviewed" in text_of(doc)
 
 
 def test_the_summary_counts_what_nobody_has_looked_at():
@@ -462,3 +427,145 @@ def test_both_exports_are_built_from_the_same_row():
     assert isinstance(one, BugRow)
     assert build_bug_document([one], project_name="P")
     assert workbook([one])
+
+# ---------------------------------------------------------------------------
+# Two files, two formats, on purpose
+#
+# The workbook is the team's own bug-report template — the sheet they already
+# circulate. The document is Mantis's Report Issue form, because that is what
+# it is for: filling in the tracker. A register that arrives in a shape nobody
+# recognises gets re-typed into one that is, so matching each audience beats
+# making both files match each other.
+# ---------------------------------------------------------------------------
+def test_the_sheet_is_the_teams_own_template():
+    """Their columns, their order, their spelling of "Serverity" — corrected,
+    it would stop matching the template somebody pastes into."""
+    assert COLUMNS == [
+        "Bug ID",
+        "Bug Summary",
+        "Serverity",
+        "Steps to Reproduce",
+        "Expected Result",
+        "Actual Results",
+        "Browser/OS used",
+        "Status",
+        "Test case ID",
+        "Comments/Screen shots",
+    ]
+
+
+def test_the_sheet_opens_with_the_five_lines_their_template_opens_with():
+    sheet = workbook([bug()], project_name="Homeske Web Application")
+    labels = [sheet.cell(row=r, column=1).value for r in range(2, 7)]
+
+    assert labels == [
+        "Project Name",
+        "Module Name",
+        "Description",
+        "Bug  Reported by",
+        "Reported Date",
+    ]
+    assert sheet.cell(row=2, column=2).value == "Homeske Web Application"
+
+
+def test_the_module_is_left_for_a_person_to_fill_in():
+    """A project has several and nothing in a run says which one a failure
+    belongs to. Blank is a box somebody fills; a guess is one they check."""
+    sheet = workbook([bug()])
+
+    assert not sheet.cell(row=3, column=2).value
+
+
+def test_severity_uses_the_words_on_their_sheet():
+    """High / Medium / Low / Blocker, which is what the template's own hint
+    cell lists. "critical" is not one of them."""
+    sheet = workbook([bug(severity=Severity.CRITICAL)])
+
+    assert sheet.cell(row=9, column=COLUMN["Serverity"]).value == "Blocker"
+
+
+def test_browser_and_os_share_one_cell_because_the_column_asks_for_both():
+    sheet = workbook([bug(environment={"os": "Windows 11"})])
+
+    assert sheet.cell(row=9, column=COLUMN["Browser/OS used"]).value == (
+        "chromium / Windows 11"
+    )
+
+
+def test_the_comments_column_says_where_the_screenshot_is():
+    """Their example is a URL. AutoQA has the picture rather than a link to
+    one, so this points at the file that holds it instead of sitting blank as
+    though there were nothing."""
+    sheet = workbook([bug(screenshot=b"x")])
+
+    assert "Word report" in sheet.cell(row=9, column=COLUMN["Comments/Screen shots"]).value
+
+
+def test_an_unreviewed_row_says_so_in_the_comments():
+    """Mantis has no field for it and neither does their template, so it goes
+    where a person would write it. Left out, an unreviewed row reads as a
+    triaged one."""
+    service = service_with([])
+    sheet = workbook(service._rows_from_failures([FakeFailure(1, "chromium")]))
+
+    assert "not yet reviewed" in (
+        sheet.cell(row=9, column=COLUMN["Comments/Screen shots"]).value or ""
+    )
+
+
+# --- the document is still Mantis ------------------------------------------
+def test_the_document_reads_the_way_mantis_shows_an_issue():
+    """Identity first, then the classification, then the boxes somebody types
+    into — the order the tracker itself puts them in."""
+    labels = [row.cells[0].text for row in document([bug()]).tables[0].rows]
+
+    assert labels[:6] == [
+        "ID", "Project", "Category", "View Status", "Date Submitted", "Last Update",
+    ]
+    assert labels[-1] == "Tags"
+
+
+def _box(doc, label: str) -> str:
+    row = next(r for r in doc.tables[0].rows if r.cells[0].text == label)
+    return "\n".join(p.text for p in row.cells[1].paragraphs)
+
+
+def test_the_document_translates_severity_into_mantis_words():
+    """AutoQA says critical; Mantis has no such severity. Handing over a word
+    the tracker does not know means somebody picks one by hand, per issue."""
+    doc = document([bug(severity=Severity.CRITICAL, priority=Severity.CRITICAL)])
+
+    assert _box(doc, "Severity").strip() == "block"
+    assert _box(doc, "Priority").strip() == "immediate"
+
+
+def test_a_drafted_bug_is_new_rather_than_acknowledged():
+    """Mantis's `acknowledged` and `confirmed` both claim a person has looked.
+    Nobody has: AutoQA wrote it."""
+    doc = document([bug(status=BugStatus.DRAFT)])
+
+    assert _box(doc, "Status").strip() == "new"
+    assert _box(doc, "Resolution").strip() == "open"
+
+
+def test_the_document_keeps_the_headings_mantis_puts_in_its_boxes():
+    """The form arrives holding Summary / Expected Result / Actual Result, and
+    Browser Used / Device used. A failure knows them all, so they arrive
+    completed — and the headings stay, so the box still looks like the one the
+    team fills in by hand."""
+    doc = document([bug()])
+
+    description = _box(doc, "Description")
+    assert "Summary:" in description
+    assert "Expected Result: The user is signed in." in description
+    assert "Actual Result: The page stays on /login." in description
+    assert "Browser Used: chromium" in _box(doc, "Additional Information")
+
+
+def test_the_boxes_only_a_person_can_fill_are_present_and_empty():
+    """A form with a row missing is harder to work through than one with a row
+    to skip."""
+    doc = document([bug()])
+
+    assert _box(doc, "Select Profile").strip() == ""
+    assert _box(doc, "Assigned To").strip() == ""

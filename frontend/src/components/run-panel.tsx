@@ -21,7 +21,6 @@ import { api, downloadReport } from "@/lib/api";
 import {
   BROWSER_LABEL,
   RUN_BADGE,
-  WATCH_SPEEDS,
   formatDuration,
   isRunActive,
   type Browser,
@@ -30,7 +29,6 @@ import {
   type TestRunDetail,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/input";
 import { Badge, LiveDot } from "@/components/ui/badge";
 import {
   Alert,
@@ -48,6 +46,7 @@ const POLL_MS = 2000;
 export function RunPanel({
   suiteId,
   caseCount,
+  recordedCaseIds = [],
   request,
   reloadToken = 0,
   onDeleted,
@@ -55,6 +54,12 @@ export function RunPanel({
 }: {
   suiteId: number;
   caseCount: number;
+  /** The cases that came from the recording: the walkthrough a tester
+   *  performed, with the checks they made while performing it.
+   *
+   *  Held as ids rather than a count because the two buttons below differ only
+   *  in what they send: the whole suite, or these. */
+  recordedCaseIds?: number[];
   /** A row below asked for one case to be run. The token changes per press. */
   request?: { caseIds: number[]; token: number } | null;
   /** Bumped when the suite's cases are replaced, so the panel drops the run it
@@ -67,8 +72,12 @@ export function RunPanel({
   onRunningChange?: (caseIds: number[] | null) => void;
 }) {
   const [browsers, setBrowsers] = useState<Browser[]>(["chromium"]);
-  const [headless, setHeadless] = useState(true);
-  const [slowMo, setSlowMo] = useState(WATCH_SPEEDS[1].ms);
+  // Every run is watched, stepping through one action at a time. Not a choice.
+  //
+  // How slowly is the server's decision, not this one. Sending a number from
+  // here meant two places held it, they drifted - 700 there, 2500 here - and
+  // every run took three and a half times as long as the setting claimed.
+  const headless = false;
   const [run, setRun] = useState<TestRunDetail | null>(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -149,7 +158,6 @@ export function RunPanel({
         const started = await api.runs.start(suiteId, {
           browsers,
           headless,
-          slow_mo_ms: slowMo,
           // Omitted entirely when running everything — the API reads an absent
           // case_ids as "the whole suite", and [] would mean "no tests".
           ...(caseIds && caseIds.length > 0 ? { case_ids: caseIds } : {}),
@@ -165,7 +173,7 @@ export function RunPanel({
         setStarting(false);
       }
     },
-    [suiteId, browsers, headless, slowMo, loadHistory],
+    [suiteId, browsers, headless, loadHistory],
   );
 
   // A row below pressed its play button.
@@ -287,36 +295,13 @@ export function RunPanel({
             );
           })}
 
-          <label
-            className="ml-1 flex cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm transition-colors hover:border-border-strong"
-            title="Opens a real browser and slows each action down so you can follow along"
+          <span
+            className="ml-1 flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground"
+            title="A real browser opens and steps through one action at a time"
           >
-            <input
-              type="checkbox"
-              checked={!headless}
-              disabled={active}
-              onChange={(e) => setHeadless(!e.target.checked)}
-              className="size-3.5 accent-primary"
-            />
-            <Eye className="size-4 text-muted-foreground" />
+            <Eye className="size-4" />
             Watch it run
-          </label>
-
-          {!headless && (
-            <Select
-              value={slowMo}
-              disabled={active}
-              onChange={(e) => setSlowMo(Number(e.target.value))}
-              className="h-8.5 w-auto text-[13px]"
-              aria-label="Playback speed"
-            >
-              {WATCH_SPEEDS.map((speed) => (
-                <option key={speed.ms} value={speed.ms}>
-                  {speed.label}
-                </option>
-              ))}
-            </Select>
-          )}
+          </span>
 
           <div className="ml-auto flex items-center gap-2">
             {run && !active && (
@@ -337,17 +322,49 @@ export function RunPanel({
                 {stopping ? "Stopping…" : "Stop"}
               </Button>
             ) : null}
+            {/* Two ways to run, and the difference is only what gets sent.
+                The first is the recording: the journey a tester walked through
+                and the checks they made along the way. Fewer tests, every one
+                of them a flow that really happens - which is the regression
+                run. The second is unchanged: no case ids at all, which the API
+                already reads as the whole suite. */}
+            {recordedCaseIds.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void start(recordedCaseIds)}
+                disabled={starting || active || browsers.length === 0}
+                title={
+                  `Runs the ${recordedCaseIds.length} recorded case` +
+                  `${recordedCaseIds.length === 1 ? "" : "s"}: the walkthrough a tester ` +
+                  "performed and the checks they made during it. Nothing written by " +
+                  "hand afterwards, nothing a model invented."
+                }
+              >
+                <Play className="size-4" />
+                Run Recorded Test Cases
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={() => void start()}
               disabled={starting || active || browsers.length === 0 || caseCount === 0}
+              title={
+                `Runs all ${caseCount} case${caseCount === 1 ? "" : "s"} — the ` +
+                "recording, anything written by hand, and every case the model " +
+                "generated around them."
+              }
             >
               {active ? (
                 <RefreshCw className="size-4 animate-spin" />
               ) : (
                 <Play className="size-4" />
               )}
-              {active ? "Running…" : starting ? "Starting…" : "Run tests"}
+              {active
+                ? "Running…"
+                : starting
+                  ? "Starting…"
+                  : "Run All AI Test Cases"}
             </Button>
           </div>
         </div>
@@ -355,10 +372,10 @@ export function RunPanel({
         {browsers.length === 0 && (
           <p className="text-xs text-muted-foreground">Pick at least one browser.</p>
         )}
-        {!headless && !active && (
+        {!active && (
           <p className="text-xs leading-relaxed text-muted-foreground">
-            A browser window opens and pauses {slowMo}ms between each action so
-            you can follow along. The run will take noticeably longer.
+            A browser window opens and pauses between each action, so
+            you can follow every step. Runs take noticeably longer this way.
           </p>
         )}
         {error && <Alert>{error}</Alert>}

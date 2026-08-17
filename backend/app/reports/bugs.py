@@ -36,6 +36,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from app.models.enums import BugStatus, Severity
+from app.reports import mantis
 
 
 @dataclass
@@ -69,25 +70,36 @@ class BugRow:
     #: bug rather than two that can drift apart.
     screenshot: bytes | None = None
 
+#: The team's own bug-report template, column for column. Not Mantis: this
+#: sheet is the one they already circulate, and a register that arrives in a
+#: different shape than the one on everybody's screen gets re-typed into it.
+#:
+#: The Word document is Mantis's Report Issue form, because that is what it is
+#: for - filling in the tracker. Two files, two audiences, and the difference is
+#: deliberate rather than drift.
+#:
+#: "Serverity" is their spelling. Corrected here it would stop matching the
+#: template somebody pastes into.
 COLUMNS = [
     "Bug ID",
-    "Title",
-    "Severity",
-    "Priority",
-    "Status",
-    "Reviewed",
-    "Test Case",
-    "Browser",
-    "Environment",
+    "Bug Summary",
+    "Serverity",
     "Steps to Reproduce",
     "Expected Result",
-    "Actual Result",
-    "Description",
-    "Reported On",
-    "Assigned To",
-    "Fixed In",
-    "Comments",
+    "Actual Results",
+    "Browser/OS used",
+    "Status",
+    "Test case ID",
+    "Comments/Screen shots",
 ]
+
+#: Their template's own words for how bad it is.
+_SEVERITY_WORD = {
+    Severity.CRITICAL: "Blocker",
+    Severity.HIGH: "High",
+    Severity.MEDIUM: "Medium",
+    Severity.LOW: "Low",
+}
 
 #: The same palette as the test-case sheet, so the two exports look related.
 _TITLE_BG = "1F3864"
@@ -105,8 +117,8 @@ _SEVERITY_BG = {
 
 _BORDER = Border(*(Side(style="thin", color="D0D7DE") for _ in range(4)))
 
-#: Steps, expected and actual carry the text, so they get the width.
-_WIDTHS = [12, 44, 12, 12, 14, 11, 30, 12, 30, 46, 34, 34, 40, 14, 16, 14, 24]
+#: Per column, in `COLUMNS` order. The prose columns carry the reading.
+_WIDTHS = [10, 46, 12, 44, 34, 34, 18, 12, 16, 30]
 
 _STATUS_TEXT = {
     BugStatus.DRAFT: "Draft",
@@ -129,17 +141,34 @@ def _date(value: datetime | None) -> str:
     return value.strftime("%d-%m-%Y") if value else ""
 
 
-def _bug_id(prefix: str, index: int) -> str:
-    return f"{prefix}-BUG-{index:03d}"
+def _device(bug: BugRow) -> str:
+    """What Mantis calls OS. The same value the document puts in `Device used`,
+    read the same way, so the two files cannot disagree about it."""
+    environment = bug.environment if isinstance(bug.environment, dict) else {}
+    return str(environment.get("os") or environment.get("platform") or "")
 
 
-def _prefix(project_name: str) -> str:
-    """`Homeske` -> `HOM`. Stable rather than raising on a name with no letters."""
-    return "".join(c for c in project_name.upper() if c.isalpha())[:3] or "QA"
+def _rows(bugs: list[BugRow], *, project_name: str) -> list[list[str]]:
+    """One row per bug, in `COLUMNS` order."""
+    return [
+        [
+            f"{index:03d}",
+            bug.title,
+            _SEVERITY_WORD.get(bug.severity, "Medium"),
+            _steps(bug),
+            bug.expected,
+            bug.actual,
+            _browser_os(bug),
+            _STATUS_TEXT.get(bug.status, str(bug.status)),
+            bug.case_name,
+            _comments(bug),
+        ]
+        for index, bug in enumerate(bugs, 1)
+    ]
 
 
 def _steps(bug: BugRow) -> str:
-    """Numbered, one per line — the column a developer actually works from.
+    """Numbered, one per line - the column a developer actually works from.
 
     A bug nobody can reproduce gets closed, so this is the part that decides
     whether the row was worth writing down.
@@ -149,73 +178,47 @@ def _steps(bug: BugRow) -> str:
     )
 
 
-def _environment(bug: BugRow) -> str:
-    """Whatever was captured, as `key: value` lines.
+def _browser_os(bug: BugRow) -> str:
+    """One cell, because the template asks for one: `chromium / Windows 11`."""
+    environment = bug.environment if isinstance(bug.environment, dict) else {}
+    system = environment.get("os") or environment.get("platform") or ""
+    return " / ".join(part for part in (bug.browsers, str(system)) if part)
 
-    Free-form: on a drafted bug it is the JSON copied off the run, so the keys
-    are not fixed and listing them by name would silently drop anything added
-    later.
+
+def _comments(bug: BugRow) -> str:
+    """What the template's last column is for, and what we honestly have.
+
+    Their example is a screenshot URL. AutoQA has the picture rather than a
+    link to one - it is embedded in the Word report - so this says where to
+    find it instead of leaving the column blank as though there were nothing.
     """
-    environment = bug.environment or {}
-    if not isinstance(environment, dict):
-        return str(environment)
-    return "\n".join(
+    notes = []
+    if not bug.drafted:
+        notes.append("Raised automatically from a failing test; not yet reviewed.")
+    if bug.screenshot:
+        notes.append("Screenshot in the Word report.")
+    environment = bug.environment if isinstance(bug.environment, dict) else {}
+    notes += [
         f"{key.replace('_', ' ')}: {value}"
         for key, value in environment.items()
-        # The browser has a column of its own; repeating it here wastes the
-        # width that the rest of the environment needs.
-        if value not in (None, "") and key != "browser"
-    )
-
-
-def _rows(bugs: list[BugRow], *, project_name: str) -> list[list[str]]:
-    """One row per bug, in `COLUMNS` order."""
-    prefix = _prefix(project_name)
-
-    rows: list[list[str]] = []
-    for index, bug in enumerate(bugs, 1):
-        rows.append(
-            [
-                _bug_id(prefix, index),
-                bug.title,
-                bug.severity.value.capitalize(),
-                bug.priority.value.capitalize(),
-                _STATUS_TEXT.get(bug.status, bug.status.value),
-                "Yes" if bug.drafted else "Not yet",
-                bug.case_name,
-                bug.browsers,
-                _environment(bug),
-                _steps(bug),
-                bug.expected,
-                bug.actual,
-                bug.description,
-                _date(bug.reported_on),
-                "",  # Assigned To — filled in during triage
-                "",  # Fixed In
-                "",  # Comments
-            ]
-        )
-    return rows
+        if value not in (None, "") and key not in ("browser", "os", "platform")
+    ]
+    return "\n".join(notes)
 
 
 def _header_block(bugs: list[BugRow], *, project_name: str) -> list[tuple[str, str]]:
-    """The counts a lead wants before reading a single row."""
-    open_bugs = sum(
-        1 for b in bugs if b.status in (BugStatus.DRAFT, BugStatus.OPEN)
-    )
-    critical = sum(
-        1
-        for b in bugs
-        if b.severity is Severity.CRITICAL
-        and b.status in (BugStatus.DRAFT, BugStatus.OPEN)
-    )
+    """The five lines their template opens with.
+
+    Module Name is left blank on purpose: a project can have several and
+    nothing in a run says which one a failure belongs to. Blank is a box
+    somebody fills in; a guess is one they have to check.
+    """
     return [
         ("Project Name", project_name),
-        ("Total Bugs", str(len(bugs))),
-        ("Open", str(open_bugs)),
-        ("Critical & Open", str(critical)),
-        ("Awaiting Review", str(sum(1 for b in bugs if not b.drafted))),
-        ("Generated On", _date(datetime.now())),
+        ("Module Name", ""),
+        ("Description", f"{len(bugs)} bug(s) found by automated tests."),
+        ("Bug  Reported by", "QA Team"),
+        ("Reported Date", _date(datetime.now())),
     ]
 
 
@@ -235,7 +238,7 @@ def build_bug_workbook(bugs: list[BugRow], *, project_name: str) -> bytes:
     # Title band.
     sheet.merge_cells(f"A1:{last_column}1")
     title = sheet["A1"]
-    title.value = f"{project_name} — Bug Report"
+    title.value = f"© {project_name} | eLuminous Technologies"
     title.font = Font(bold=True, size=12, color="FFFFFF")
     title.fill = PatternFill("solid", fgColor=_TITLE_BG)
     title.alignment = Alignment(horizontal="center", vertical="center")
@@ -248,7 +251,7 @@ def build_bug_workbook(bugs: list[BugRow], *, project_name: str) -> bytes:
         sheet.cell(row=row, column=1, value=label).font = Font(bold=True, color=_LABEL_FG)
         sheet.cell(row=row, column=2, value=value).alignment = Alignment(vertical="center")
 
-    header_row = 8
+    header_row = 8  # five header lines, then a blank
 
     for index, name in enumerate(COLUMNS, start=1):
         cell = sheet.cell(row=header_row, column=index, value=name)

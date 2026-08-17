@@ -21,7 +21,7 @@ from app.runner.executor import (
     _tail,
     run_suite,
 )
-from app.runner.parser import parse_junit, summarise
+from app.runner.parser import parse_junit, step_from_traceback, summarise
 
 JUNIT = """<?xml version="1.0" encoding="utf-8"?>
 <testsuites>
@@ -83,6 +83,74 @@ def test_the_failing_step_is_identified(report: Path):
     """'Failed at step 3' beats 'failed' — the trace echoes our step comments."""
     failed = next(r for r in parse_junit(report) if r.status is ResultStatus.FAILED)
     assert failed.failed_step == 3
+
+
+#: What pytest actually prints, which is the line that failed and not the
+#: comment above it — the reason reading the traceback alone found the step in
+#: none of thirty-nine real failures.
+_REAL_TRACE = """\
+tests\\test_can_fill_property_title.py:6: in test_can_fill_property_title
+    login.email_input.fill('lilian@yopmail.com')
+..\\..\\.venv\\Lib\\site-packages\\playwright\\sync_api\\_generated.py:18030: in fill
+    self._sync(self._impl_obj.fill(...))
+E   playwright._impl._errors.TimeoutError: Locator.fill: Timeout 30000ms exceeded
+"""
+
+_REAL_CODE = """\
+def test_can_fill_property_title(page):
+    # 1. Open https://example.test/login
+    page.goto('https://example.test/login')
+
+    # 2. Type into "Email"
+    login.email_input.fill('lilian@yopmail.com')
+
+    # 3. Click "Sign in"
+    login.sign_in_button.click()
+"""
+
+
+def test_the_step_is_found_from_the_line_number():
+    """The traceback names a line; the case holds the file. Together they answer.
+
+    pytest never echoes our `# 2.` comment, so the comment hunt above cannot
+    see it. Indexing to line 6 of the stored code and walking back can.
+    """
+    assert step_from_traceback(_REAL_TRACE, _REAL_CODE) == 2
+
+
+def test_playwright_frames_are_not_mistaken_for_ours():
+    """The deeper frames are in a library, and its line 18030 is not a step."""
+    only_library = "\n".join(_REAL_TRACE.splitlines()[2:])
+    assert step_from_traceback(only_library, _REAL_CODE) is None
+
+
+def test_a_conftest_frame_is_not_read_as_the_test():
+    """A fixture blowing up says nothing about which step the test reached.
+
+    Indexing its line number into the case's own file would name whichever
+    step happens to sit there — confidently wrong, where None is merely
+    unhelpful.
+    """
+    trace = "conftest.py:6: in browser_context\n    raise RuntimeError('no browser')"
+    assert step_from_traceback(trace, _REAL_CODE) is None
+
+
+def test_a_line_before_the_first_step_has_no_step():
+    trace = "tests\\test_x.py:1: in test_x\n    def test_x(page):"
+    assert step_from_traceback(trace, _REAL_CODE) is None
+
+
+def test_no_traceback_or_no_code_answers_nothing():
+    """Rather than guessing. A wrong step number is worse than no step number."""
+    assert step_from_traceback(None, _REAL_CODE) is None
+    assert step_from_traceback(_REAL_TRACE, None) is None
+    assert step_from_traceback("no frames here", _REAL_CODE) is None
+
+
+def test_a_line_number_past_the_end_does_not_crash():
+    """The case was edited after the run. Clamp rather than raise."""
+    trace = "tests\\test_x.py:9999: in test_x"
+    assert step_from_traceback(trace, _REAL_CODE) == 3
 
 
 def test_a_missing_report_is_not_an_error(tmp_path: Path):

@@ -34,6 +34,30 @@
 
     <div data-testid="confirmation" role="status">Signed in successfully.</div>
 
+    <!-- Shapes that used to be recorded as the wrong element. In both, the node
+         under the cursor is an icon with no name of its own, so the only way
+         left to describe it was where it sits in the markup - and the thing the
+         person actually pressed is the <a>/<button> around it. -->
+    <a href="#" aria-label="Homeske home">
+      <svg width="40" height="20" viewBox="0 0 40 20"><rect width="40" height="20" /></svg>
+    </a>
+
+    <button type="button" aria-label="Play video">
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+           alt="" width="24" height="24" />
+    </button>
+
+    <!-- Only on the page once the video is playing. Indistinguishable from an
+         ordinary button in a finished recording, which is why the recorder has
+         to answer "was it already on screen" while it still can. -->
+    <button type="button" id="close-video" hidden>Close video</button>
+    <script>
+      document.querySelector('[aria-label="Play video"]').addEventListener(
+        "click",
+        () => document.getElementById("close-video").removeAttribute("hidden")
+      );
+    </script>
+
     <script>
       // Keep the page on one document so the test is not racing a navigation.
       document.querySelector('[data-testid="login-submit"]').addEventListener(

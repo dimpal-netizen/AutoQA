@@ -165,29 +165,34 @@ function BugRow({ bug }: { bug: BugReport }) {
   // Links to the failure that produced it where that still exists. `result_id`
   // is nulled when a run is deleted — the bug outlives it, which is why its
   // steps were copied in when it was drafted.
+  // Fixed columns, for the same reason as the runs list: laid out with `gap`
+  // alone, every badge and date starts wherever the title before it happened to
+  // end, and reading down the list becomes reading every line.
   const body = (
     <>
-      <Badge tone={SEVERITY_TONE[bug.severity]}>{bug.severity}</Badge>
-      <Badge tone={BUG_STATUS_TONE[bug.status] ?? "neutral"}>
-        {BUG_STATUS_LABEL[bug.status] ?? bug.status}
-      </Badge>
+      <span className="w-20 shrink-0">
+        <Badge tone={SEVERITY_TONE[bug.severity]}>{bug.severity}</Badge>
+      </span>
+      <span className="w-20 shrink-0">
+        <Badge tone={BUG_STATUS_TONE[bug.status] ?? "neutral"}>
+          {BUG_STATUS_LABEL[bug.status] ?? bug.status}
+        </Badge>
+      </span>
 
       <span className="min-w-0 flex-1 truncate">{bug.title}</span>
 
-      {bug.case_name && (
-        <span className="hidden max-w-56 truncate text-muted-foreground sm:block">
-          {bug.case_name}
-        </span>
-      )}
+      <span className="hidden w-56 shrink-0 truncate text-muted-foreground sm:block">
+        {bug.case_name}
+      </span>
 
-      <span className="w-24 text-right text-muted-foreground">
+      <span className="w-20 shrink-0 text-right text-muted-foreground">
         {formatRelative(bug.created_at)}
       </span>
     </>
   );
 
   const shared =
-    "flex flex-wrap items-center gap-3 border-b border-border px-3.5 py-2.5 text-[13px] last:border-b-0";
+    "flex items-center gap-3 border-b border-border px-3.5 py-2.5 text-[13px] last:border-b-0";
 
   if (!bug.result_id) {
     return <div className={shared}>{body}</div>;

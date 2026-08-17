@@ -40,6 +40,18 @@ export interface ProjectCreate {
   default_browsers?: Browser[];
 }
 
+/** One file a test can upload, instead of a generated placeholder.
+ *
+ *  A browser never says where a chosen file lives, so a recording holds the
+ *  name of somebody's photograph and nothing else. A placeholder gets past the
+ *  form; a listing that shows its photographs back deserves photographs. */
+export interface SampleFile {
+  id: number;
+  filename: string;
+  content_type: string;
+  size: number;
+}
+
 // --- recordings -----------------------------------------------------------
 
 export type RecordingStatus = "recording" | "completed" | "discarded";
@@ -180,6 +192,29 @@ export interface CaseWrite {
   steps: CaseStepWrite[];
 }
 
+/** A row of an uploaded sheet that could not become an automated test. */
+export interface SkippedRow {
+  row: number;
+  scenario: string;
+  reason: string;
+}
+
+/** A team's own manual test-case sheet, read and drafted - saved by nobody yet.
+ *
+ *  `reading` is how the sheet was understood, naming the columns used. It comes
+ *  back because a sheet misread by one column produces confident nonsense, and
+ *  saying which column was taken for what is the only way to catch that before
+ *  anything is saved. */
+export interface ImportPreview {
+  reading: string;
+  rows: number;
+  cases: CaseWrite[];
+  skipped: SkippedRow[];
+  model: string;
+  tokens: number;
+  cost_usd: number;
+}
+
 export interface TestCase {
   id: number;
   category: CaseCategory;
@@ -282,6 +317,26 @@ export function hasRole(user: User | null, minimum: UserRole): boolean {
   return ROLE_LEVEL[user.role] >= ROLE_LEVEL[minimum];
 }
 
+/** Did this case come from the recording itself?
+ *
+ *  Not the category, and not `source`. Every case in a recorded suite carries
+ *  `source: "recording"`, invented ones included — it says where the suite came
+ *  from, not where the test came from. `generated_by` is the field that
+ *  answers this:
+ *
+ *    `deterministic_v1`  the recording. The tester's own walkthrough and every
+ *                        check they made in assert mode along the way,
+ *                        compiled by the converter rather than invented.
+ *    `manual`            one a tester wrote by hand in the editor afterwards.
+ *    anything else       the name of the model that wrote it.
+ *
+ *  Only the first counts. A hand-written case is somebody's own work too, but
+ *  it is not what was recorded, and the run mode is named after the recording.
+ */
+export function isRecorded(testCase: TestCase): boolean {
+  return (testCase.generated_by || "").startsWith("deterministic");
+}
+
 // ---------------------------------------------------------------------------
 // Test execution
 // ---------------------------------------------------------------------------
@@ -375,15 +430,6 @@ export interface TestRun {
   suite_name: string;
 }
 
-/** How slowly to drive the browser when watching, in milliseconds per action.
- *  Offered as a choice because the right speed depends on why you are
- *  watching: proving it works, or reading every field as it is filled. */
-export const WATCH_SPEEDS: { label: string; ms: number }[] = [
-  { label: "Normal", ms: 300 },
-  { label: "Slow", ms: 1000 },
-  { label: "Step by step", ms: 2500 },
-];
-
 export interface TestRunDetail extends TestRun {
   results: TestResult[];
 }
@@ -411,6 +457,27 @@ export const RESULT_BADGE: Record<ResultStatus, Tone> = {
   skipped: "neutral",
   flaky: "warning",
 };
+
+/** What each status means to the person reading it, rather than to pytest.
+ *
+ *  "Blocked" is the one that earns its place. A test whose click never reached
+ *  its element asked the application nothing, so it has no verdict to give —
+ *  about the application or about anything else. Shown as "Error" it reads as
+ *  a defect and sends someone to look at a page that works; shown as "Failed"
+ *  it is worse. Red has to keep meaning "your application is wrong", or the
+ *  next red one gets dismissed too. */
+export const RESULT_LABEL: Record<ResultStatus, string> = {
+  passed: "Passed",
+  failed: "Failed",
+  error: "Blocked",
+  skipped: "Skipped",
+  flaky: "Flaky",
+};
+
+export const BLOCKED_MEANS =
+  "AutoQA could not reach the element this step needed, so the test never got " +
+  "as far as checking anything. That is a problem with the test, not evidence " +
+  "of a bug in your application.";
 
 export const RUN_BADGE: Record<RunStatus, Tone> = {
   queued: "neutral",
@@ -612,18 +679,6 @@ export interface AskAnswer {
  *  A recording captures what somebody did, not what should have been true
  *  afterwards — so the test it produces passes as long as every click found
  *  something to click. */
-export interface SuggestedCheck {
-  after: number;
-  /** What the step it follows actually does, so the row reads "after clicking
-   *  Login" rather than "after step 7" — a number nobody can check. */
-  step: string;
-  target: string;
-  kind: "visible" | "text";
-  expected: string;
-  /** What breaking would look like without it. This is how somebody decides
-   *  whether to keep it. */
-  why: string;
-}
 
 export interface Untouched {
   page: string;

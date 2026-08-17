@@ -21,8 +21,15 @@ from uuid import uuid4
 {% endif %}
 from playwright.sync_api import Page, expect
 
-{% if ir.needs_unhealed %}
-from pages._healing import unhealed
+{% set helpers = [] %}
+{% if ir.needs_reveal %}{% set _ = helpers.append("reveal") %}{% endif %}
+{% if ir.needs_set_checked %}{% set _ = helpers.append("set_checked") %}{% endif %}
+{% if ir.needs_unhealed %}{% set _ = helpers.append("unhealed") %}{% endif %}
+{% if helpers %}
+from pages._healing import {{ helpers | sort | join(", ") }}
+{% endif %}
+{% if ir.needs_sample_file %}
+from pages._files import sample_file
 {% endif %}
 {% for variable, class_name in page_vars %}
 from pages.{{ modules[class_name] }} import {{ class_name }}

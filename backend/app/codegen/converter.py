@@ -23,12 +23,16 @@ from urllib.parse import urlparse
 from app.codegen.selectors import (
     Selector,
     best_selector,
+    conflicting,
+    distinguisher,
     element_name,
     frame_root,
+    identity,
     locator_expression,
     py_str,
     scoped_root,
     snake_case,
+    usable_selectors,
 )
 from app.models.enums import ActionType, SelectorStrategy
 
@@ -66,6 +70,32 @@ class LocatorSpec:
     # ends in `.first`. Worth saying out loud: the test will run, but it may be
     # driving the wrong element.
     ambiguous: bool = False
+    # The element occupied space on the page when it was recorded. False means
+    # Playwright will not act on it: the click waits thirty seconds and fails.
+    # Recorded steps keep it anyway - the recording is what it is - but nothing
+    # new should be built on it. See `_is_visible`.
+    visible: bool = True
+    # What made this element itself, beyond what it is called. Two locators may
+    # only be merged when these agree - see `PageSpec.add` and `identity`.
+    identity: tuple[str, ...] = ()
+    # The expression before any narrowing was added. Collisions are judged on
+    # this: once two locators have been told apart their expressions differ, so
+    # comparing the final ones would say there was never a clash.
+    base_expression: str = ""
+    # The step before this one put it on screen: a menu opened, a modal, a video
+    # overlay. Recorded steps reach it the same way the person did, but a test
+    # case that opens the page and goes straight for it cannot - see
+    # `_was_revealed`.
+    revealed: bool = False
+    # The tag the recording captured - "button", "a", "input". A spare that
+    # finds a different kind of element is not this element, whatever its
+    # selector says. See `heal`.
+    tag: str = ""
+    # Was it on screen when the page was opened cold? False means a case that
+    # goes straight there finds nothing - a Checkout button on an empty cart, a
+    # field on the second step of a wizard. True when nothing was measured, so a
+    # suite generated without a probe behaves exactly as it did. See probe.py.
+    reachable: bool = True
 
 
 @dataclass
@@ -76,9 +106,21 @@ class PageSpec:
     locators: list[LocatorSpec] = field(default_factory=list)
 
     def add(self, locator: LocatorSpec) -> str:
-        """Register a locator, reusing an identical one. Returns its final name."""
+        """Register a locator, reusing an identical one. Returns its final name.
+
+        Identical means the same expression *and* the same element. The second
+        half is not pedantry: two nav items sharing a role and a name are two
+        links, and merging them makes every step aimed at either drive whichever
+        comes first. See `identity`.
+        """
         for existing in self.locators:
-            if existing.expression == locator.expression:
+            if existing.expression == locator.expression and not conflicting(
+                existing.identity, locator.identity
+            ):
+                # Reached without opening anything even once, anywhere in the
+                # recording, and it is reachable. The question is only ever
+                # whether a test case can get to it at all.
+                existing.revealed = existing.revealed and locator.revealed
                 return existing.name
 
         # Same readable name, different element — disambiguate rather than
@@ -99,9 +141,23 @@ class PageSpec:
                 fallbacks=locator.fallbacks,
                 candidates=locator.candidates,
                 ambiguous=locator.ambiguous,
+                visible=locator.visible,
+                identity=locator.identity,
+                base_expression=locator.base_expression,
+                revealed=locator.revealed,
+                tag=locator.tag,
+                reachable=locator.reachable,
             )
         )
         return name
+
+    def collides(self, base: str, identity: tuple[str, ...]) -> bool:
+        """Would this expression find an element already registered as another?"""
+        return any(
+            existing.base_expression == base
+            and conflicting(existing.identity, identity)
+            for existing in self.locators
+        )
 
 
 @dataclass
@@ -124,6 +180,16 @@ class StepSpec:
     # back as whichever of them happened to be listed first. Empty for recorded
     # steps, which come from the recording rather than from a vocabulary.
     verb: str | None = None
+    # This step typed into a password field. The one unambiguous marker of
+    # where a recording signed in, and so of which pages after it need an
+    # account - see `sign_in_sequence` in synth.py.
+    is_password: bool = False
+    # Which of the tests the person performed this step belongs to. A recording
+    # is rarely one test - see `codegen/segments.py` - and the cut is worked out
+    # from the actions, before any of them became steps. Carried here so the
+    # split survives normalisation, which drops and merges actions and would
+    # otherwise leave nothing to line the two up by.
+    segment: int = 0
 
 
 @dataclass
@@ -146,6 +212,17 @@ class TestIR:
     # Set when a step observes an element, so the module imports `unhealed`.
     # Assertions are looked up without healing - see `uses_unhealed` below.
     needs_unhealed: bool = False
+    # Set when a step ticks a checkbox or radio, so the module imports
+    # `set_checked` instead of calling `.check()` on a control that is very
+    # probably invisible.
+    needs_set_checked: bool = False
+    # Set when a step hovers, so the module imports `reveal`. A hover only opens
+    # a menu for the step after it, and must never be able to fail the test.
+    needs_reveal: bool = False
+    # Set when a step uploads, so the module imports `sample_file`. The file the
+    # recording names is on somebody else's machine; this one is built at run
+    # time. See pages/_files.py.
+    needs_sample_file: bool = False
     # (variable, expression, the value that was recorded) for each input the
     # application would refuse a second time. Assigned once at the top of the
     # test so two fields that were given the same address still get the same
@@ -185,29 +262,56 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if kind is ActionType.SCROLL and not _scroll_distance(action):
             continue
 
-        # The mouse crossing the page on its way somewhere. Recorded ten times
-        # across four recordings here, and every one of them was a link the
-        # cursor passed over:
+        # The mouse crossing the page on its way somewhere, rather than opening
+        # anything:
         #
-        #     hover "Login" -> hover "Find Agent" -> scroll
-        #     hover "Email" -> click "Create Account"
-        #     hover "Creating Account..." -> click the OTP modal
+        #     hover "Find Agent" -> scroll
         #
-        # That last one failed a whole suite. It hovers a loading message, so
-        # whether it works depends on how fast the server answered: sometimes
-        # the text is gone before the hover lands, sometimes a modal opens over
-        # it and takes the pointer event. Thirty seconds later:
+        # Playwright hovers before every click anyway, so a hover is only worth a
+        # step when something else depends on it. Nothing depends on this one: it
+        # is followed by a scroll, a navigation, or the end of the recording.
         #
-        #     Locator.hover: Timeout 30000ms exceeded.
+        # A hover followed by an action on a *different* element is kept, because
+        # that is the shape of a menu being opened:
         #
-        # A step nobody would ever write by hand, failing for a reason that has
-        # nothing to do with the application.
+        #     hover "New Projects+"  ->  click "House"
         #
-        # A hover is worth keeping only when it *reveals* something, because
-        # Playwright hovers before every click anyway. The elements that reveal
-        # something say so: aria-haspopup, aria-expanded, or a menu role. Every
-        # hover recorded here was a plain <a href> or <button> with neither.
-        if kind is ActionType.HOVER and not _opens_a_menu(action):
+        # An earlier version kept a hover only when the element advertised
+        # itself with aria-haspopup, aria-expanded or a menu role. Almost no
+        # site does. This one opens its navigation submenus on CSS hover from a
+        # plain <a href>, so the hover was dropped, the submenu never opened,
+        # and clicking the item inside it waited thirty seconds on a link that
+        # was in the page all along:
+        #
+        #     Locator.click: Timeout 30000ms exceeded.
+        #       - locator resolved to <a href="...property-type=HOUSE">House</a>
+        #       - element is not visible
+        #
+        # The hazard that rule was guarding against is real, and it is handled
+        # where it belongs instead: see `reveal` in the healing template. A hover
+        # that only opens a menu is best-effort, so hovering something transient
+        # -- "Creating Account..." -- costs a moment and never a verdict.
+        if kind is ActionType.HOVER and not _reveals_something(live, action):
+            continue
+
+        # A gesture aimed at something with no size on the page. Nobody clicked
+        # it, because there was nothing there to click: it is an overlay the
+        # recorder caught instead of the thing underneath. One click on a map
+        # pin arrived as three actions -
+        #
+        #     click <div>   "Zenith Towers, Upper Hill"   1198.4 x   0.0
+        #     click <img>                                   26.0 x  37.0
+        #     click <area>  #gmimap4 area                     0.0 x   0.0
+        #
+        # of which only the middle one is a thing a person can press. Keeping
+        # the other two does not make the test more faithful to the recording;
+        # it adds two steps that wait thirty seconds each and then report the
+        # property listing as broken.
+        #
+        # Only gestures are dropped. A `fill` or a `select` on a control with no
+        # size is the custom-widget pattern, which `set_checked` handles, and
+        # dropping one would silently change what the test submits.
+        if kind in _GESTURES and not _is_visible(action.get("element")):
             continue
 
         previous = result[-1] if result else None
@@ -264,6 +368,28 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 result[-1] = action
                 continue
 
+            # One click on a custom checkbox arrives as two actions. The person
+            # clicks the styled box - a <span>, which is what they can see - and
+            # the browser forwards that to the hidden <input>, which fires
+            # `change`. So the recording holds:
+            #
+            #   click   <span>  'House'   box: 18.0 x 18.0
+            #   uncheck <input> 'House'   box:  0.0 x  0.0
+            #
+            # Two steps, one gesture. The click is the one to drop: the span has
+            # nothing to identify it but its position in the markup, so the test
+            # ends up clicking whichever span comes first and ticking the wrong
+            # filter. The toggle knows what it is - `get_by_role("checkbox",
+            # name="House")` - and `set_checked` clicks its label, which is the
+            # thing the person actually pressed.
+            if (
+                prev_kind in (ActionType.CLICK, ActionType.DOUBLE_CLICK)
+                and kind in (ActionType.CHECK, ActionType.UNCHECK)
+                and _is_proxy_for(previous, action)
+            ):
+                result[-1] = action
+                continue
+
             # A click that navigates records both; the navigation becomes a
             # wait attached to the click rather than a separate step.
             if kind is ActionType.NAVIGATE and prev_kind in (
@@ -311,13 +437,14 @@ _MENU_ROLES = {"menu", "menubar", "menuitem", "combobox", "listbox"}
 
 
 def _opens_a_menu(action: dict[str, Any]) -> bool:
-    """Does hovering this element reveal something the next step needs?
+    """Does this element say out loud that it opens something?
 
-    Kept deliberately narrow. A hover that reveals nothing is not a check, it
-    is a mouse position — and it can only ever add ways for the test to fail.
-    A hover-driven menu that declares none of these will be dropped too, and
-    the symptom is a click timing out on an item that never appeared; the fix
-    there is a real one, which is for the menu to say what it is.
+    aria-haspopup, aria-expanded and the menu roles are the accessible way of
+    announcing a menu, and an element carrying one is keeping its hover whatever
+    follows it.
+
+    Almost nothing carries one, which is why this cannot be the whole test — see
+    `_reveals_something`.
     """
     element = action.get("element") or {}
     attributes = {
@@ -328,6 +455,55 @@ def _opens_a_menu(action: dict[str, Any]) -> bool:
     return str(element.get("role") or "").strip().lower() in _MENU_ROLES
 
 
+#: What a hover has to be followed by to have revealed anything. A scroll or a
+#: navigation happens wherever the pointer is; neither is evidence of a menu.
+_DEPENDS_ON_A_HOVER = {
+    ActionType.CLICK,
+    ActionType.DOUBLE_CLICK,
+    ActionType.HOVER,
+    ActionType.INPUT,
+    ActionType.SELECT,
+    ActionType.CHECK,
+    ActionType.UNCHECK,
+}
+
+
+def _reveals_something(live: list[dict[str, Any]], action: dict[str, Any]) -> bool:
+    """Is this hover load-bearing, or the mouse on its way past?
+
+    The evidence is what comes next. A hover followed by an action on a
+    *different* element is the shape of a menu being opened and then used:
+
+        hover "New Projects+"  ->  click "House"
+
+    A hover followed by a scroll, a navigation, or nothing at all revealed
+    nothing that anything went on to need - scrolling away is close to proof
+    that the pointer was only passing through. And a hover followed by an action
+    on the same element is the pointer arriving where it was already going,
+    which the collapse rule below removes anyway.
+
+    Only the very next action counts. Anything further on has had a scroll or a
+    page load in between, and a menu does not survive either.
+
+    This is a guess, and it is allowed to be, because being wrong is cheap in
+    one direction and not the other: a hover kept needlessly is best-effort and
+    costs a moment (see `reveal`), while a hover dropped wrongly costs a
+    thirty-second timeout on a menu item that never appeared.
+    """
+    if _opens_a_menu(action):
+        return True
+
+    index = live.index(action)
+    following = live[index + 1] if index + 1 < len(live) else None
+    if following is None:
+        return False
+
+    return (
+        ActionType(following["action_type"]) in _DEPENDS_ON_A_HOVER
+        and not _same_element(action, following)
+    )
+
+
 #: Keys that submit a form. Only these can make a following click redundant —
 #: Tab or Escape change focus and leave the button exactly where it was.
 _SUBMIT_KEYS = {"enter", "numpadenter", "return"}
@@ -336,6 +512,82 @@ _SUBMIT_KEYS = {"enter", "numpadenter", "return"}
 def _is_submit_key(action: dict[str, Any]) -> bool:
     key = ((action.get("payload") or {}).get("key") or "").strip().lower()
     return key.replace(" ", "") in _SUBMIT_KEYS
+
+
+def _is_proxy_for(click: dict[str, Any], toggle: dict[str, Any]) -> bool:
+    """Was that click the visible stand-in for this checkbox?
+
+    Three things have to hold, and each one rules out a real pair of steps:
+
+    * the toggle's own control is invisible - a visible checkbox needs no
+      stand-in, and `check()` on one works fine;
+    * the click was not on a form control - otherwise it is a different field;
+    * both name the same thing, which is what a shared `<label>` gives them.
+
+    Same page, immediately adjacent, is already guaranteed by the caller.
+    """
+    if _is_visible(toggle.get("element")):
+        return False
+
+    clicked = click.get("element") or {}
+    if (clicked.get("tag") or "").lower() in _FORM_CONTROLS:
+        return False
+
+    return _accessible_name(clicked) == _accessible_name(toggle.get("element")) != ""
+
+
+_FORM_CONTROLS = {"input", "select", "textarea"}
+
+#: Actions that are a person aiming the pointer at something they can see. These
+#: are the ones a zero-size target disproves; typing into a hidden control is a
+#: real pattern, aiming at one is not.
+_GESTURES = {
+    ActionType.CLICK,
+    ActionType.DOUBLE_CLICK,
+    ActionType.HOVER,
+}
+
+
+def _accessible_name(element: dict[str, Any] | None) -> str:
+    if not element:
+        return ""
+    return str(element.get("accessible_name") or element.get("text") or "").strip()
+
+
+def _was_revealed(element: dict[str, Any] | None) -> bool:
+    """Did the step before this one put the element on screen?
+
+    The recorder answers this at the moment of the click, because it is the one
+    thing that cannot be worked out afterwards. In a finished recording
+    `home.close_video_button` and `home.house_link` look exactly like the site's
+    other links - same tag, same good accessible name, each clicked once - but
+    one is on the page when it loads and the other only exists while a video is
+    playing.
+
+    A recorded test reaches them the way the person did, so it keeps them. An
+    invented case opens the page and goes straight there, and there is nothing
+    to go to: thirty seconds of waiting, then a defect raised against a page
+    that is behaving perfectly. Those are the cases that must not be written -
+    see `describe_pages`.
+
+    Absent on recordings made before this was captured, and absent means no.
+    Withholding an element on a guess would shrink the suite for nothing.
+    """
+    return (element or {}).get("was_on_screen") is False
+
+
+def _is_visible(element: dict[str, Any] | None) -> bool:
+    """Did this element occupy any space on the page when it was recorded?
+
+    A control with no width or no height cannot be clicked by a person, so it is
+    never what they clicked - it is the machinery behind what they clicked.
+    Unknown counts as visible: an old recording with no box should keep behaving
+    exactly as it did.
+    """
+    box = (element or {}).get("bounding_box")
+    if not box:
+        return True
+    return bool(box.get("width")) and bool(box.get("height"))
 
 
 def _same_element(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -410,6 +662,47 @@ def _clean_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}" if parsed.scheme else url
 
 
+def _arrives_at(destination: str) -> str:
+    """A pattern matching that address, with or without whatever follows it.
+
+    `_clean_url` throws the query string away on purpose - a recorded
+    `?token=...` or `?id=cmryim584000q01p42` is one row on one server on one
+    day. But the browser still goes to the full address, so waiting for the
+    cleaned one as an exact string waits for something that never arrives:
+
+        waiting for navigation to ".../properties" until 'load'
+          navigated to ".../properties?listing-type=NEW_PROJECT&property-type=HOUSE"
+
+    Thirty seconds, then red, on a navigation that happened correctly and is
+    printed in the failure saying so.
+
+    Anchored at both ends, and only a query or a fragment may follow, so this
+    stays a real check: `/properties` does not match `/properties/cmryim584...`,
+    which is a different page.
+
+    A record id in the path becomes a wildcard, because it is a different record
+    every run. The recording added a property and landed on
+
+        /property-owner/my-listings/cmsoao69n001501pd
+
+    so the test waited for that exact listing - the one made during the
+    recording, which the test does not create and can never reach. Thirty
+    seconds, then red, on a property that had been added perfectly well. What
+    is being checked is that adding a listing lands on a listing page, and the
+    id is the one part of that which cannot be part of the claim.
+    """
+    scheme, _, rest = destination.partition("://")
+    host, _, path = rest.partition("/")
+    parts = [
+        r"[^/]+" if _is_identifier_segment(segment) else re.escape(segment)
+        for segment in path.rstrip("/").split("/")
+        if segment
+    ]
+    prefix = re.escape(f"{scheme}://{host}") if scheme else re.escape(destination)
+    body = "/" + "/".join(parts) if parts else ""
+    return rf"^{prefix}{body}/?(?:[?#].*)?$"
+
+
 # ---------------------------------------------------------------------------
 # Actions → code
 # ---------------------------------------------------------------------------
@@ -468,6 +761,11 @@ def build_ir(
 
     ir.fragile_count = sum(1 for step in ir.steps if step.fragile)
     ir.needs_unhealed = uses_unhealed(ir.steps)
+    ir.needs_set_checked = any(
+        step.action in (ActionType.CHECK, ActionType.UNCHECK) for step in ir.steps
+    )
+    ir.needs_reveal = any(step.action is ActionType.HOVER for step in ir.steps)
+    ir.needs_sample_file = any(step.action is ActionType.UPLOAD for step in ir.steps)
     return ir
 
 
@@ -485,15 +783,21 @@ def uses_unhealed(steps: list[StepSpec]) -> bool:
 
 def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpec | None:
     kind = ActionType(action["action_type"])
+    segment = int(action.get("segment") or 0)
     payload = action.get("payload") or {}
     element = action.get("element")
-    selector = best_selector(action.get("selectors") or [])
+    # Everything below reads `usable`, not the raw list. A candidate that would
+    # find a different element is no safer as a fallback than as the primary -
+    # healing would reach for it the moment the page shifted.
+    usable = usable_selectors(action.get("selectors") or [], element)
+    selector = best_selector(usable, element)
 
     # Page-level actions need no locator.
     if kind is ActionType.NAVIGATE:
         url = _clean_url(str(payload.get("url", "")))
         return StepSpec(
             sequence=sequence,
+            segment=segment,
             action=kind,
             code=[f"page.goto({py_str(url)})"],
             description=f"Go to {url}",
@@ -504,6 +808,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         y = int(payload.get("y", 0))
         return StepSpec(
             sequence=sequence,
+            segment=segment,
             action=kind,
             code=[f"page.mouse.wheel(0, {y})"],
             description=f"Scroll down {y}px",
@@ -513,6 +818,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         key = str(payload.get("key", "Enter"))
         return StepSpec(
             sequence=sequence,
+            segment=segment,
             action=kind,
             code=[f"page.keyboard.press({py_str(key)})"],
             description=f"Press {key}",
@@ -534,17 +840,42 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
     # definition and are left alone.
     scoped = False
     if selector.strategy in _NAME_BASED:
-        narrowed = scoped_root(action.get("selectors") or [], root)
+        narrowed = scoped_root(usable, root)
         scoped = narrowed != root
         root = narrowed
 
-    expression = locator_expression(selector, root, scoped=scoped)
+    # A name-based locator describes what an element is called, and a site can
+    # call two different things the same:
+    #
+    #   <a href="...listing-type=FOR_RENT&property-type=HOUSE">House</a>
+    #   <a href="...listing-type=NEW_PROJECT&property-type=HOUSE">House</a>
+    #
+    # `get_by_role("link", name="House")` is both of them, so `.first` decides
+    # which one the test drives - and `.first` is DOM order, not intent. The
+    # recorded journey opened the New Projects menu and clicked the item inside
+    # it. The test opened the same menu and clicked the Rent one, which was
+    # hidden, and waited thirty seconds. Nothing in the failure hinted that two
+    # elements had been folded into one.
+    #
+    # So when the recorder counted more than one match, or when this expression
+    # is already registered for a different element, narrow it by whatever tells
+    # them apart. `and_` keeps the readable half - still "the link called House"
+    # - and adds only the part that decides which.
+    who = identity(element)
+    apart = distinguisher(element)
+    base = locator_expression(selector, root, scoped=scoped)
+
+    narrow = None
+    if apart and (not selector.unique or page_spec.collides(base, who)):
+        narrow = f"[{apart[0]}={apart[1]!r}]"
+
+    expression = locator_expression(selector, root, scoped=scoped, narrow=narrow)
 
     # Rank the candidates ourselves rather than trusting input order, and drop
     # the one we actually used — listing the primary as its own fallback is
     # noise.
     ranked = sorted(
-        (Selector.from_dict(s) for s in (action.get("selectors") or [])),
+        (Selector.from_dict(s) for s in usable),
         key=lambda s: (s.rank, -s.score),
     )
     spares = [
@@ -568,11 +899,16 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             fallbacks=fallbacks,
             candidates=candidates,
             ambiguous=not selector.unique,
+            visible=_is_visible(element),
+            identity=who,
+            base_expression=base,
+            revealed=_was_revealed(element),
+            tag=str((element or {}).get("tag") or "").lower(),
         )
     )
 
     target = f"{page_var}.{name}"
-    label = _readable_target(selector, element, action.get("selectors") or [])
+    label = _readable_target(selector, element, usable)
     code: list[str] = []
     description = ""
     input_data: str | None = None
@@ -586,7 +922,10 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             code = [f"{target}.dblclick()"]
             description = f"Double-click {label}"
         case ActionType.HOVER:
-            code = [f"{target}.hover()"]
+            # Best-effort. A hover opens a menu for the step after it and
+            # asserts nothing itself, so it must not be able to fail the test -
+            # see `reveal` in pages/_healing.py.
+            code = [f"reveal({target})"]
             description = f"Hover over {label}"
         case ActionType.INPUT:
             value = str(payload.get("value", ""))
@@ -605,20 +944,29 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             description = f"Select {', '.join(map(str, values))} in {label}"
             input_data = ", ".join(map(str, values))
         case ActionType.CHECK:
-            code = [f"{target}.check()"]
+            # Not `.check()`. See `set_checked` in pages/_healing.py: the real
+            # input is usually 0x0 and hidden under a styled box, and Playwright
+            # waits thirty seconds before failing on it.
+            code = [f"set_checked({target}, True)"]
             description = f"Tick {label}"
             expected = f"{label} is checked"
         case ActionType.UNCHECK:
-            code = [f"{target}.uncheck()"]
+            code = [f"set_checked({target}, False)"]
             description = f"Untick {label}"
             expected = f"{label} is not checked"
         case ActionType.UPLOAD:
+            # A browser never tells a page where a chosen file really lives, so
+            # the recording holds a name and nothing else. Replayed as a path it
+            # looks beside the test, finds nothing, and takes every step after
+            # it down with a form that was working. `sample_file` builds one in
+            # memory instead - see pages/_files.py.
             files = [str(f) for f in (payload.get("files") or [])]
-            arg = py_str(files[0]) if len(files) == 1 else repr(files)
-            code = [
-                "# Place the file next to this test, or point at a fixture.",
-                f"{target}.set_input_files({arg})",
-            ]
+            arg = (
+                f"sample_file({py_str(files[0])})"
+                if len(files) == 1
+                else "[" + ", ".join(f"sample_file({py_str(f)})" for f in files) + "]"
+            )
+            code = [f"{target}.set_input_files({arg})"]
             description = f"Upload {', '.join(files)} to {label}"
             input_data = ", ".join(files)
         case ActionType.KEY_PRESS:
@@ -661,11 +1009,14 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
     # A click that caused a navigation waits for it, rather than asserting the
     # URL immediately — an instant assert is a classic source of flakiness.
     if action.get("_navigates_to"):
-        code.append(f"page.wait_for_url({py_str(_clean_url(action['_navigates_to']))})")
-        expected = f"Navigates to {_clean_url(action['_navigates_to'])}"
+        destination = _clean_url(action["_navigates_to"])
+        ir.needs_regex = True
+        code.append(f"page.wait_for_url(re.compile({py_str(_arrives_at(destination))}))")
+        expected = f"Navigates to {destination}"
 
     return StepSpec(
         sequence=sequence,
+        segment=segment,
         action=kind,
         code=code,
         description=description,
@@ -675,6 +1026,10 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
         expected_result=expected,
         strategy=selector.strategy.value,
         fragile=selector.is_fragile,
+        is_password=(
+            kind is ActionType.INPUT
+            and str((element or {}).get("input_type") or "").lower() == "password"
+        ),
     )
 
 

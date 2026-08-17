@@ -1,24 +1,26 @@
 """Code generation and generated test asset routes."""
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 
 from app.api.deps import CurrentUser, DbSession, require_role
-from app.models.enums import UserRole
+from app.models.enums import CaseCategory, CasePriority, UserRole
 from app.schemas.test_case import (
+    CaseStepWrite,
     CaseVocabulary,
     CaseWrite,
-    ChecksWrite,
     CoverageRead,
     FlakyRead,
     GenerateCasesRequest,
     GenerateCasesResult,
     GenerateRequest,
-    SuggestedCheckRead,
+    ImportPreview,
+    SkippedRowRead,
     TestCaseDetail,
     TestSuiteDetail,
     TestSuiteRead,
 )
 from app.services.codegen_service import CodegenService
+from app.services.import_service import ImportService
 
 router = APIRouter(tags=["test-cases"])
 
@@ -51,15 +53,21 @@ def generate_cases(
 ) -> GenerateCasesResult:
     """Invent positive, negative, edge and security cases around the recording.
 
-    Unlike code generation this genuinely needs an AI provider — inventing
-    "what if the email is 320 characters" from a successful login is judgement,
-    not a lookup. With no key configured it returns 422 saying so.
+    An AI provider is what makes this good — inventing "what if the email is 320
+    characters" from a successful login is judgement, not a lookup. It is no
+    longer what makes it work. When no model can be reached, the cases are built
+    from the recording itself: the pages that were opened, the fields that were
+    filled in and the button that sent them. Narrower, and `model` on the
+    response says which of the two wrote them.
 
-    The model returns steps, never code: each step names an action from a fixed
-    vocabulary and an element that already exists, and the same deterministic
-    converter writes the Python.
+    Neither half returns code. A step names an action from a fixed vocabulary
+    and an element that already exists, and the same deterministic converter
+    writes the Python — which is what lets a model's suggestion and a
+    recording's arithmetic travel the identical path.
     """
-    suite, outcome = CodegenService(db).generate_cases(suite_id, user, count=data.count)
+    suite, outcome = CodegenService(db).generate_cases(
+        suite_id, user, count=data.count, guidance=data.guidance
+    )
 
     return GenerateCasesResult(
         suite=TestSuiteDetail.model_validate(suite),
@@ -241,52 +249,74 @@ def suite_flaky(suite_id: int, db: DbSession, user: CurrentUser) -> list[FlakyRe
 
 
 # ---------------------------------------------------------------------------
-# Checks for the recorded test
+# Importing a team's own manual test cases
 #
-# A recording captures what somebody did, not what should have been true
-# afterwards — so the test it produces replays the clicks faithfully and asserts
-# nothing. It passes as long as every click found something to click.
-#
-# That test is the baseline every other case in the suite is written around,
-# which makes it the worst one to have no opinion.
+# Every QA team keeps a spreadsheet of cases somebody walks through by hand, and
+# no two of those sheets look alike. Getting them into AutoQA meant retyping
+# each one through the step editor, and nobody was ever going to retype forty.
 # ---------------------------------------------------------------------------
 @router.post(
-    "/suites/{suite_id}/suggest-checks",
-    response_model=list[SuggestedCheckRead],
+    "/suites/{suite_id}/import-cases",
+    response_model=ImportPreview,
     dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
 )
-def suggest_checks(
-    suite_id: int, db: DbSession, user: CurrentUser
-) -> list[SuggestedCheckRead]:
-    """Propose the assertions the recorded test is missing.
+async def import_cases(
+    suite_id: int, db: DbSession, user: CurrentUser, file: UploadFile = File(...)
+) -> ImportPreview:
+    """Read a team's manual test-case sheet and draft what can be automated.
 
-    Saves nothing. A check nobody agreed to is how a suite acquires assertions
-    it does not believe, so these come back for review.
+    Works out which column is which, says so in `reading` so a misread sheet can
+    be caught, and converts the rows whose elements exist in this suite's
+    recording.
+
+    **Saves nothing.** The drafts come back in the shape the editor sends, and
+    each is saved - if the reader wants it - through the same `create_case` a
+    typed one goes through. A row that cannot be automated comes back with the
+    reason rather than being dropped, because "needs a recording of the checkout
+    flow" is the sentence that says what to do next.
     """
-    return [
-        SuggestedCheckRead(**check)
-        for check in CodegenService(db).suggest_checks(suite_id, user)
-    ]
-
-
-@router.put(
-    "/suites/{suite_id}/checks",
-    response_model=TestSuiteDetail,
-    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
-)
-def save_checks(
-    suite_id: int, data: ChecksWrite, db: DbSession, user: CurrentUser
-) -> TestSuiteDetail:
-    """Store the accepted checks and rewrite the recorded test with them.
-
-    A whole replacement rather than an append: the checks are a list somebody
-    curates, and expressing "drop the third one" as a partial update is more
-    ways to be wrong than sending the list you want.
-
-    Stored on the suite rather than written into the case, because the case is
-    rebuilt from the recording every time the suite is regenerated.
-    """
-    suite = CodegenService(db).save_checks(
-        suite_id, user, [c.model_dump() for c in data.checks]
+    outcome = ImportService(db).preview(
+        suite_id, await file.read(), file.filename or "", user
     )
-    return TestSuiteDetail.model_validate(suite)
+
+    return ImportPreview(
+        reading=outcome.reading,
+        rows=outcome.rows,
+        cases=[
+            CaseWrite(
+                name=case.name,
+                description=case.description or None,
+                category=_category(case.category),
+                priority=_priority(case.priority),
+                steps=[
+                    CaseStepWrite(action=step.action, target=step.target, value=step.value)
+                    for step in case.steps
+                ],
+            )
+            for case in outcome.cases
+        ],
+        skipped=[SkippedRowRead(**vars(row)) for row in outcome.skipped],
+        model=outcome.model,
+        tokens=outcome.tokens,
+        cost_usd=outcome.cost_usd,
+    )
+
+
+def _category(value: str) -> CaseCategory:
+    """A category the model wrote, or the safe default.
+
+    POSITIVE rather than raising: a row that arrived with a misspelt category is
+    still a converted test case, and refusing it over a label would throw away
+    the conversion that actually mattered.
+    """
+    try:
+        return CaseCategory(str(value).strip().lower())
+    except ValueError:
+        return CaseCategory.POSITIVE
+
+
+def _priority(value: str) -> CasePriority:
+    try:
+        return CasePriority(str(value).strip().lower())
+    except ValueError:
+        return CasePriority.MEDIUM

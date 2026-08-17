@@ -57,7 +57,17 @@ class CaseStep(BaseModel):
     value: str | None = Field(
         default=None, description="Text to type, option to select, key to press, or URL"
     )
-    description: str = Field(description="What this step does, in plain English")
+    # No `description`. It used to be here, and asking for it was the single
+    # most expensive field in the schema: a line of English per step, four to
+    # eight steps a case, twelve cases a call - most of a 28,000-token answer
+    # that then ran out of room mid-JSON and lost the whole request. On a key
+    # allowed twenty requests a day, a request that returns nothing is a large
+    # fraction of the day.
+    #
+    # Nothing was lost by dropping it. "Click the sign in button" is derivable
+    # from the action and the element, `converter.py` has always derived it that
+    # way for recorded steps, and deriving it here means a recorded step and an
+    # invented one finally read alike. See `describe_step` in synth.py.
 
 
 class GeneratedCase(BaseModel):
@@ -72,47 +82,41 @@ class GeneratedCases(BaseModel):
     cases: list[GeneratedCase] = Field(default_factory=list)
 
 
-class SuggestedCheck(BaseModel):
-    """One check to add to a recorded test that asserts nothing."""
+class SkippedRow(BaseModel):
+    """A row of somebody's sheet that could not become an automated test."""
 
-    after: int = Field(
+    row: int = Field(description="The row number in the uploaded file")
+    scenario: str = Field(description="What that row was about, as written")
+    reason: str = Field(
         description=(
-            "The number of the recorded step this check belongs after. The "
-            "check is about the state the application is in once that step has "
-            "happened."
-        )
-    )
-    target: str = Field(
-        description='The element to check, as "page_variable.locator_name"'
-    )
-    kind: str = Field(
-        description=(
-            "One of: visible (the element is on the page), text (it contains "
-            "particular words)"
-        )
-    )
-    expected: str = Field(
-        default="",
-        description="For kind=text, the words it should contain. Empty otherwise.",
-    )
-    why: str = Field(
-        description=(
-            "What breaking would look like if this check were missing, in one "
-            'sentence — "the item would be added to a cart that stays empty"'
+            "Why it cannot be automated yet, in one sentence a person can act "
+            "on - usually that it needs a flow nobody has recorded"
         )
     )
 
 
-class SuggestedChecks(BaseModel):
-    """Checks for a recorded test, which by default has none.
+class ImportedCases(BaseModel):
+    """Somebody else's test-case sheet, read and converted.
 
-    A recording captures what somebody did, not what should have been true
-    afterwards — so the test it produces passes as long as every click found
-    something to click. These are the assertions that turn it from a walkthrough
-    into a test.
+    `reading` comes back so the person who uploaded the file can see how it was
+    understood before anything is saved. A sheet misread by one column produces
+    confident nonsense, and the only way to catch that is to say out loud which
+    column was taken for what.
     """
 
-    checks: list[SuggestedCheck] = Field(default_factory=list)
+    reading: str = Field(
+        description=(
+            "How the sheet was understood, in one sentence naming the columns "
+            "used"
+        )
+    )
+    cases: list[GeneratedCase] = Field(
+        default_factory=list, description="The rows that could be automated"
+    )
+    skipped: list[SkippedRow] = Field(
+        default_factory=list,
+        description="Rows that could not be, and why. Never drop one silently.",
+    )
 
 
 class DraftedBug(BaseModel):
@@ -160,6 +164,13 @@ class TriagedFailure(BaseModel):
     """
 
     number: int = Field(description="The number this failure was listed under")
+    test: str = Field(
+        default="",
+        description=(
+            "The name of the test this is about, copied exactly from the list. "
+            "Used only to check the numbering did not drift."
+        ),
+    )
     expected: str = Field(description="What the test was waiting to see, in one sentence")
     actual: str = Field(description="What happened instead, in one sentence")
     root_cause: str = Field(description="Why, in one or two sentences")

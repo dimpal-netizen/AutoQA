@@ -303,6 +303,7 @@ def test_the_prompt_does_not_ask_for_cases_longer_than_it_accepts():
     prompt = load_prompt(
         "generate_cases", suite_name="S", start_url="u", pages="p",
         steps="\n".join(f"{i}. step" for i in range(28)), target_count=12,
+        guidance="",
     )
 
     assert "Do not replay it" in prompt
