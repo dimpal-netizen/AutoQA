@@ -50,26 +50,36 @@ def test_an_element_that_was_not_there_is_withheld() -> None:
     assert not found.offers(CART, "proceed_to_checkout_link")
 
 
-def test_a_page_we_never_reached_changes_nothing() -> None:
-    """Asked for the cart and handed a login form, "none of these exist" is a
-    fact about being signed out. Acting on it would withhold every element on
-    the page - a probe that failed turning into a suite with nothing left to
-    write about.
+def test_a_page_we_could_not_reach_has_its_elements_withheld() -> None:
+    """Asked for the cart and handed a login form.
+
+    This used to offer them anyway: "none of these exist" reads as a fact about
+    being signed out rather than about the cart, and withholding on no evidence
+    would leave a suite with nothing to write about.
+
+    It misses what the probe already did — it replays the recording's own
+    sign-in before it starts. Being bounced anyway is evidence, because a
+    generated case gets that identical sign-in put in front of it and is bounced
+    identically. Offering them is how one real project got a batch where every
+    case opened a wizard and reached two steps into it.
+
+    Not knowing at all stays different: `probe` returns None, and generation
+    proceeds untouched.
     """
     found = Reachability(visible=set(), unusable={"ViewCartPage"})
 
-    assert found.offers(CART, "proceed_to_checkout_link")
-    assert found.offers(CART, "empty_message")
+    assert not found.offers(CART, "proceed_to_checkout_link")
+    assert not found.offers(CART, "empty_message")
 
 
-def test_arriving_and_finding_it_bare_is_not_the_same_as_not_arriving() -> None:
-    """The distinction the whole feature rests on. Both look like "nothing was
-    visible"; only one of them is evidence."""
-    reached = Reachability(visible=set())
-    redirected = Reachability(visible=set(), unusable={"ViewCartPage"})
+def test_a_failed_sign_in_is_reported_rather_than_guessed_at() -> None:
+    """The single most useful thing the probe can say.
 
-    assert not reached.offers(CART, "proceed_to_checkout_link")
-    assert redirected.offers(CART, "proceed_to_checkout_link")
+    Every protected page unreachable, every case built on one doomed, and the
+    cause is one expired password — which nothing on screen used to mention.
+    """
+    assert Reachability().signed_in is None  # the recording never signed in
+    assert Reachability(signed_in=False).signed_in is False
 
 
 # ---------------------------------------------------------------------------

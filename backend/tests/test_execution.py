@@ -677,3 +677,54 @@ def test_the_stored_case_is_not_renamed_by_a_run():
 
     assert [c.function_name for c in cases] == [shared, shared]
     assert [c.file_path for c in cases] == [f"tests/{shared}.py"] * 2
+
+
+# ---------------------------------------------------------------------------
+# Network noise that is not evidence
+# ---------------------------------------------------------------------------
+def test_a_cancelled_prefetch_is_not_reported_as_a_failure():
+    """Four of these turned up under a failed text assertion:
+
+        AssertionError: Locator expected to contain text '...'
+        4 network requests failed during this test:
+          GET .../agent/my-listings?_rsc=d5bcf -> net::ERR_ABORTED
+
+    Next.js fetches the page behind every link that comes into view and cancels
+    it the moment you navigate. Nothing was wrong with any of them, and they
+    were the loudest thing in the message — so the reader, and the model that
+    writes the explanation, both start at the network while the real failure is
+    a page showing different text.
+    """
+    from app.runner.network import _is_cancelled_prefetch
+
+    assert _is_cancelled_prefetch(
+        "https://x.test/agent/my-listings?_rsc=d5bcf", {}, "net::ERR_ABORTED"
+    )
+    assert _is_cancelled_prefetch(
+        "https://x.test/next",
+        {"headers": [{"name": "Sec-Purpose", "value": "prefetch"}]},
+        "net::ERR_ABORTED",
+    )
+
+
+def test_an_aborted_request_that_was_not_a_prefetch_is_still_reported():
+    """A case that navigates while its own sign-in is in flight cancels it
+    exactly this way, and that one line is the whole diagnosis:
+
+        Locator.fill: Timeout 30000ms exceeded
+        1 network request failed: POST /users/auth/login -> net::ERR_ABORTED
+    """
+    from app.runner.network import _is_cancelled_prefetch
+
+    assert not _is_cancelled_prefetch(
+        "https://x.test/api/v1/users/auth/login", {}, "net::ERR_ABORTED"
+    )
+
+
+def test_a_prefetch_that_could_not_connect_is_still_reported():
+    """That is the site being unreachable, not a guess being dropped."""
+    from app.runner.network import _is_cancelled_prefetch
+
+    assert not _is_cancelled_prefetch(
+        "https://x.test/page?_rsc=abc", {}, "net::ERR_CONNECTION_REFUSED"
+    )

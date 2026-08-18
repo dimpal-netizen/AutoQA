@@ -50,6 +50,50 @@ class FailedRequest:
         return f"{self.method} {self.url} -> {self.reason}"
 
 
+#: A request the browser started on speculation. Next.js fetches the page behind
+#: every link that comes into view, marking it `?_rsc=`; the standard headers
+#: say the same thing for anything else that prefetches.
+_PREFETCH_MARKERS = ("_rsc=", "__nextdatareq=")
+_PREFETCH_HEADERS = {"purpose", "sec-purpose", "x-nextjs-data", "x-middleware-prefetch"}
+
+
+def _is_cancelled_prefetch(url: str, request: dict, reason: str) -> bool:
+    """Was this a guess the browser gave up on, rather than something it needed?
+
+    A prefetch is cancelled every time you navigate before it lands, which on a
+    Next.js site is constantly. Four of them turned up under a failed text
+    assertion:
+
+        AssertionError: Locator expected to contain text '...'
+        4 network requests failed during this test:
+          GET .../agent/my-listings?_rsc=d5bcf -> net::ERR_ABORTED
+
+    Nothing was wrong with any of them, and they were the loudest thing in the
+    message - so the reader, and the model that writes the explanation, both
+    start at the network while the actual failure is a page showing different
+    text.
+
+    Only aborts, and only prefetches. An abort on a real request stays: a case
+    that navigates while its own sign-in is still in flight cancels it exactly
+    this way, and that one line is the whole diagnosis. A prefetch that failed
+    to *connect* stays too - that is the site being unreachable, not a guess
+    being dropped.
+    """
+    if "abort" not in reason.lower():
+        return False
+
+    lowered = url.lower()
+    if any(marker in lowered for marker in _PREFETCH_MARKERS):
+        return True
+
+    headers = request.get("headers") or []
+    if isinstance(headers, dict):
+        names = {str(name).lower() for name in headers}
+    else:
+        names = {str(h.get("name", "")).lower() for h in headers if isinstance(h, dict)}
+    return bool(names & _PREFETCH_HEADERS)
+
+
 def failed_requests(trace: Path) -> list[FailedRequest]:
     """Every request in the trace that never got an answer, in time order.
 
@@ -86,6 +130,9 @@ def failed_requests(trace: Path) -> list[FailedRequest]:
         url = request.get("url")
         reason = response.get("_failureText")
         if not url or not reason or response.get("status") not in (None, -1):
+            continue
+
+        if _is_cancelled_prefetch(url, request, str(reason)):
             continue
 
         method = str(request.get("method") or "GET")

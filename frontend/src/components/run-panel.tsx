@@ -39,6 +39,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ResultMatrix } from "@/components/result-matrix";
+import { useConfirm } from "@/components/ui/confirm";
 
 const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
 const POLL_MS = 2000;
@@ -83,6 +84,7 @@ export function RunPanel({
   const [stopping, setStopping] = useState(false);
   const [building, setBuilding] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const { confirm, dialog } = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TestRun[]>([]);
 
@@ -195,16 +197,14 @@ export function RunPanel({
   async function removeRun() {
     if (!runId) return;
 
-    const confirmed = window.confirm(
-      `Delete run #${runId}?
-
-` +
+    const confirmed = await confirm({
+      title: `Delete run #${runId}?`,
+      body:
         `Its results and any screenshots, video and traces it produced are ` +
-        `removed from disk. This cannot be undone.
-
-` +
+        `removed from disk. This cannot be undone.\n\n` +
         `The tests themselves are not touched.`,
-    );
+      confirmLabel: "Delete run",
+    });
     if (!confirmed) return;
 
     setRemoving(true);
@@ -259,6 +259,7 @@ export function RunPanel({
 
   return (
     <Card>
+      {dialog}
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Play className="size-4" />

@@ -992,7 +992,33 @@ def sign_in_sequence(recorded: list[StepSpec]) -> tuple[list[StepSpec], set[str]
         for step in recorded[submitted + 1 :]
         if step.page_var and step.page_var != page
     }
-    return recorded[start : submitted + 1], behind, page
+
+    # Everything on that page is in the run, and not all of it signed anybody
+    # in. One real recording held:
+    #
+    #     click Email · fill Email · click Login · click Login · click Login
+    #     · fill Password · click Login
+    #
+    # somebody pressing Login three times before noticing the password box.
+    # Replayed, those three submit an empty form before the real attempt, and
+    # what they cost is out of all proportion to what they are: `probe.py`
+    # replays this sequence to get onto the pages behind the login, was refused,
+    # and marked all three protected pages "unusable" - which means *every*
+    # element on them is offered to the model as reachable cold. The model then
+    # wrote cases that jump straight into the middle of a multi-step wizard, and
+    # every one of them timed out on a field that was two clicks away.
+    #
+    # A click before the password was typed cannot have signed anybody in. Fills
+    # are all kept - an address typed early is still the address - and
+    # everything from the password onward is untouched.
+    run = recorded[start : submitted + 1]
+    signing_in = [
+        step
+        for index, step in enumerate(run)
+        if index >= (at - start)
+        or step.action not in (ActionType.CLICK, ActionType.KEY_PRESS)
+    ]
+    return signing_in, behind, page
 
 
 def _restore_sign_in(

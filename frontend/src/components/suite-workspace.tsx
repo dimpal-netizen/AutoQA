@@ -47,6 +47,7 @@ import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
+import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
 
 export function SuiteWorkspace({
@@ -108,6 +109,7 @@ export function SuiteWorkspace({
   }
 
   const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   // Why the last generation failed, when it did. Held here rather than inside
   // the button, because anything that button renders beneath itself grows the
@@ -139,11 +141,13 @@ export function SuiteWorkspace({
   }
 
   async function removeCase(testCase: TestCase) {
-    const confirmed = window.confirm(
-      `Delete "${testCase.name}"?\n\n` +
+    const confirmed = await confirm({
+      title: `Delete "${testCase.name}"?`,
+      body:
         `Its ${testCase.steps.length} step(s) and its script go with it. ` +
         `This cannot be undone.`,
-    );
+      confirmLabel: "Delete test case",
+    });
     if (!confirmed) return;
 
     setError(null);
@@ -167,12 +171,15 @@ export function SuiteWorkspace({
     // Deleting a suite takes its test cases and run history with it, and there
     // is no undo — so the prompt names the suite and its age, which is the only
     // thing distinguishing two recordings of the same site.
-    const confirmed = window.confirm(
-      `Delete "${suite.name}" (created ${formatRelative(suite.created_at)})?\n\n` +
-        `Its ${suite.cases.length} test case(s) and run history go with it. ` +
+    const confirmed = await confirm({
+      title: `Delete "${suite.name}"?`,
+      body:
+        `Created ${formatRelative(suite.created_at)}. Its ` +
+        `${suite.cases.length} test case(s) and run history go with it. ` +
         `This cannot be undone.\n\n` +
         `The recording itself is kept — you can generate from it again.`,
-    );
+      confirmLabel: "Delete suite",
+    });
     if (!confirmed) return;
 
     setDeleting(true);
@@ -205,6 +212,7 @@ export function SuiteWorkspace({
 
   return (
     <section className="flex min-w-0 flex-col gap-5">
+      {dialog}
       {/* Only worth showing when there is a choice to make. */}
       {suites.length > 1 && (
         <div className="flex flex-wrap items-center gap-1.5">

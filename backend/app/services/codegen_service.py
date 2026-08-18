@@ -17,7 +17,7 @@ from app.ai.case_generator import (
 from app.ai.enhancer import enhance
 from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
-from app.codegen.probe import probe
+from app.codegen.probe import Reachability, probe
 from app.codegen.recorded_cases import (
     FROM_RECORDING,
     cases_from_recording,
@@ -95,6 +95,39 @@ def _why_nothing_was_usable(outcome) -> str:
 
     detail = "; ".join(f"{reason} ({n})" for reason, n in ranked[:3])
     return f"None of the {total} suggested cases could be used. {detail}"
+
+
+def _with_the_probe(reason: str, found) -> str:
+    """Add what the probe saw to a generation that produced nothing.
+
+    Without this the message names the symptom and hides the cause. A recording
+    whose sign-in has stopped working has every protected page refused, every
+    element on them withheld, and nothing left to write cases about - and what
+    reached the screen was "every element in this recording can only be found by
+    its position in the page", which is about selectors and sends somebody off
+    adding test ids that were never the problem.
+    """
+    if found is None:
+        return reason
+
+    if getattr(found, "signed_in", None) is False:
+        return (
+            f"{reason}\n\nThe recorded sign-in no longer works: every page "
+            "behind it answered with the login form, so nothing on those pages "
+            "could be offered. Check the account the recording used still "
+            "exists and its password is current, then record again."
+        )
+
+    unusable = sorted(getattr(found, "unusable", ()) or ())
+    if unusable:
+        return (
+            f"{reason}\n\n{len(unusable)} page(s) could not be opened on their "
+            f"own ({', '.join(unusable[:3])}), so their elements were withheld. "
+            "A page that needs something done first cannot be reached by a test "
+            "that starts there."
+        )
+
+    return reason
 
 
 def _pages_by_variable(ir: TestIR):
@@ -422,7 +455,7 @@ class CodegenService:
                 "This suite has no recording to generate test cases from."
             )
 
-        self._mark_reachable(recorded_ir)
+        reachability = self._mark_reachable(recorded_ir)
 
         outcome = generate_cases(recorded_ir, count=count, guidance=guidance)
 
@@ -444,9 +477,11 @@ class CodegenService:
             )
 
         if outcome.skipped:
-            raise ValidationError(outcome.skipped)
+            raise ValidationError(_with_the_probe(outcome.skipped, reachability))
         if not outcome.cases:
-            raise ValidationError(_why_nothing_was_usable(outcome))
+            raise ValidationError(
+                _with_the_probe(_why_nothing_was_usable(outcome), reachability)
+            )
 
         # Out with the previous generation, in with this one.
         for case in list(suite.cases):
@@ -532,7 +567,7 @@ class CodegenService:
         )
         return outcome
 
-    def _mark_reachable(self, recorded_ir) -> None:
+    def _mark_reachable(self, recorded_ir) -> Reachability | None:
         """Look at each page cold, so cases are not written against what is not
         there.
 
@@ -557,13 +592,15 @@ class CodegenService:
             sequence, _, _ = sign_in_sequence(recorded_ir.steps)
             found = probe(recorded_ir, sign_in=sequence)
             if found is None:
-                return
+                return None
 
             for page in recorded_ir.pages:
                 for locator in page.locators:
                     locator.reachable = found.offers(page, locator.name)
+            return found
         except Exception:  # noqa: BLE001 - generation proceeds without it
             logger.warning("Could not work out what is on each page", exc_info=True)
+            return None
 
     def _discard_runs(self, suite: TestSuite) -> None:
         """Throw away runs that tested code that has since been replaced.
