@@ -19,20 +19,15 @@ import { useEffect, useRef, useState } from "react";
 import {
   FileSpreadsheet,
   FlaskConical,
-  MoreHorizontal,
   Play,
   Plus,
-  RefreshCw,
   Trash2,
-  Video,
 } from "lucide-react";
-import Link from "next/link";
 import { api, downloadTestCaseSheet } from "@/lib/api";
 import {
   formatRelative,
   hasRole,
   isRecorded,
-  type ImportPreview,
   type TestCase,
   type TestResult,
   type TestSuite,
@@ -42,7 +37,6 @@ import { useAuthStore } from "@/stores/auth-store";
 import { CaseEditor } from "@/components/case-editor";
 import { GenerateCases } from "@/components/generate-cases";
 import { RunPanel } from "@/components/run-panel";
-import { ImportCasesButton, ImportReview } from "@/components/import-cases";
 import { TestCaseList } from "@/components/test-case-list";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/card";
@@ -66,7 +60,6 @@ export function SuiteWorkspace({
   onDeleted: () => void;
 }) {
   const [tab, setTab] = useState("cases");
-  const [regenerating, setRegenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // A row asked to run one case. The token makes each request distinct, so
   // pressing the same row twice starts two runs rather than looking unchanged
@@ -115,8 +108,6 @@ export function SuiteWorkspace({
   // the button, because anything that button renders beneath itself grows the
   // toolbar row it sits in and knocks the buttons beside it out of line.
   const [generateOutcome, setGenerateOutcome] = useState<string | null>(null);
-  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
 
   // The case editor, or null when it is closed. `testCase: null` inside it
   // means "write a new one" — the same panel does both, because creating and
@@ -191,20 +182,6 @@ export function SuiteWorkspace({
       setError(err instanceof Error ? err.message : "Could not delete this suite");
     } finally {
       setDeleting(false);
-    }
-  }
-
-  async function regenerate() {
-    if (!suite.recording_id) return;
-    setRegenerating(true);
-    setError(null);
-    try {
-      onChange(await api.suites.regenerate(suite.recording_id));
-      setStatusToken((n) => n + 1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not regenerate");
-    } finally {
-      setRegenerating(false);
     }
   }
 
@@ -329,52 +306,42 @@ export function SuiteWorkspace({
                   </Button>
                 )}
 
-                {canEdit && suite.recording_id && (
-                  <ImportCasesButton
-                    suiteId={suite.id}
-                    onPreview={setImportPreview}
-                    onError={setImportError}
-                  />
-                )}
-
                 <ExportSheet suite={suite} />
               </>
             )}
 
-            <SuiteMenu>
-              {suite.recording_id && (
-                <>
-                  <MenuItem icon={<Video />} href={`/recordings/${suite.recording_id}`}>
-                    View the recording
-                  </MenuItem>
-                  {/* Not "Regenerate". A second button used to say that too,
-                      and the two do very different things: that one swaps the
-                      invented cases, this one throws the whole suite away and
-                      builds it again. One label for a reversible action and a
-                      destructive one is a trap. */}
-                  <MenuItem
-                    icon={<RefreshCw className={regenerating ? "animate-spin" : ""} />}
-                    onClick={regenerate}
-                    disabled={regenerating}
-                    title="Throws away every test in this suite, including any you wrote by hand, and builds it again from the recording."
-                  >
-                    {regenerating ? "Rebuilding…" : "Rebuild from recording"}
-                  </MenuItem>
-                </>
-              )}
+            {/* Delete, directly. This was behind a `⋯` menu, which earns its
+                place when it holds three or four things and is a click for
+                nothing when it holds one. Icon-only because the row above is
+                already three labelled buttons wide, and a fourth spelling out
+                "Delete suite" would push them onto two lines — the confirm
+                dialog names the suite before anything happens, so the label is
+                not what is keeping this safe.
 
-              {canEdit && (
-                <MenuItem
-                  icon={<Trash2 />}
-                  onClick={remove}
-                  disabled={deleting}
-                  danger
-                  title={`Delete "${suite.name}", its test cases and its run history`}
-                >
-                  {deleting ? "Deleting…" : "Delete suite"}
-                </MenuItem>
-              )}
-            </SuiteMenu>
+                Red standing still — the tint as well as the icon, and not only
+                on hover. It is the one control here that destroys something,
+                and a button that looks ordinary until the pointer is already
+                on it announces itself too late to be a warning.
+
+                Both hover colours are restated because the ghost variant sets
+                `hover:bg-accent hover:text-foreground`, which would turn it
+                grey at exactly the moment somebody is about to press it.
+                Squared off with `w-8.5 px-0` so it reads as an icon rather
+                than a button missing its label, while keeping the `h-8.5` of
+                the labelled buttons beside it. */}
+            {canEdit && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={remove}
+                disabled={deleting}
+                aria-label={`Delete ${suite.name}`}
+                title={`Delete "${suite.name}", its test cases and its run history`}
+                className="w-8.5 bg-destructive-subtle px-0 text-destructive hover:bg-destructive-subtle hover:text-destructive hover:brightness-95"
+              >
+                <Trash2 />
+              </Button>
+            )}
           </div>
         </div>
 
@@ -403,26 +370,6 @@ export function SuiteWorkspace({
                   is three sentences of blue prose above a table that has just
                   answered the question you pressed the button to ask. */}
               {generateOutcome && <Alert>{generateOutcome}</Alert>}
-
-              {/* One row, below the toolbar rather than in it. Both of these
-                  open a panel of their own underneath, and anything that grows
-                  under a toolbar button knocks the buttons beside it out of
-                  line - the same reason the generate button reports upward.
-                  Stacked one per row they read as two unrelated features and
-                  left a ragged column of buttons down the left. */}
-              {importError && <Alert>{importError}</Alert>}
-
-              {importPreview && (
-                <ImportReview
-                  suiteId={suite.id}
-                  preview={importPreview}
-                  onError={setImportError}
-                  onDone={(saved) => {
-                    setImportPreview(null);
-                    if (saved) void reload();
-                  }}
-                />
-              )}
 
               {/* The pass/fail summary was here. Every row already carries its
                   own verdict in the Status column, and the Runs tab carries
@@ -491,106 +438,6 @@ export function SuiteWorkspace({
         />
       )}
     </section>
-  );
-}
-
-/** The suite's own actions, folded away.
- *
- *  Recording is a link you follow now and then; Rebuild and Delete both destroy
- *  work and are pressed rarely. Three labelled buttons for those, permanently
- *  on screen beside three you press constantly, is what made this area read as
- *  two toolbars stacked. Behind a menu they cost one click and no width.
- */
-function SuiteMenu({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function away(event: PointerEvent) {
-      if (!box.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function escape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    // pointerdown, not click: a menu that waits for mouseup stays open under
-    // the cursor while you are already dragging a selection somewhere else.
-    document.addEventListener("pointerdown", away);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", away);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-
-  return (
-    <div ref={box} className="relative">
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Suite actions"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <MoreHorizontal />
-      </Button>
-
-      {open && (
-        <div
-          role="menu"
-          onClick={() => setOpen(false)}
-          className="absolute right-0 z-20 mt-1 w-60 overflow-hidden rounded-xl border border-border bg-card p-1 shadow-lg"
-        >
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** One line in that menu. A button or a link, styled the same either way. */
-function MenuItem({
-  icon,
-  onClick,
-  href,
-  danger,
-  disabled,
-  title,
-  children,
-}: {
-  icon: React.ReactNode;
-  onClick?: () => void;
-  href?: string;
-  danger?: boolean;
-  disabled?: boolean;
-  title?: string;
-  children: React.ReactNode;
-}) {
-  const style = cn(
-    "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors",
-    "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
-    disabled
-      ? "pointer-events-none opacity-45"
-      : danger
-        ? "text-destructive hover:bg-destructive-subtle [&_svg]:text-destructive"
-        : "text-foreground hover:bg-accent",
-  );
-
-  if (href) {
-    return (
-      <Link href={href} className={style} role="menuitem" title={title}>
-        {icon}
-        {children}
-      </Link>
-    );
-  }
-
-  return (
-    <button type="button" role="menuitem" onClick={onClick} disabled={disabled} title={title} className={style}>
-      {icon}
-      {children}
-    </button>
   );
 }
 

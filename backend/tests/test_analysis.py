@@ -401,3 +401,45 @@ def test_a_provider_that_omits_it_costs_nothing() -> None:
     every explanation in the run."""
     assert _same_test("", "Login works")
     assert _same_test("   ", "Login works")
+
+
+def test_a_failure_with_no_evidence_is_refused_rather_than_guessed_at():
+    """A result can arrive with nothing on it when the run never finished.
+
+    The rows written while pytest streams carry a status and nothing else; the
+    JUnit report at the end fills in the duration, the traceback and the
+    screenshot. Kill the run — a timeout, a Stop, a restart — and those rows
+    stay as they were.
+
+    Asked to explain one anyway, the model did the only thing it could and
+    described the absence:
+
+        "The test failed with no recorded error message or traceback
+         information, and no screenshot was provided to show the page state at
+         the moment of failure."
+
+    — laid out as Expected versus Actual, filed under "Environment", at 30%
+    confidence. It reads like a diagnosis and contains none, and it cost a
+    request to produce.
+    """
+    from app.services.analysis_service import AnalysisService
+    from app.services.exceptions import ValidationError
+
+    class Result:
+        id = 1
+        run_id = 1
+        status = ResultStatus.FAILED
+        error_message = None
+        stack_trace = None
+        test_case_id = None
+        failed_step = None
+
+    service = AnalysisService.__new__(AnalysisService)
+    service.results = type("R", (), {"get_full": staticmethod(lambda _id: Result())})()
+    service.execution = type(
+        "E", (), {"get": staticmethod(lambda _rid, _u: type("Run", (), {"project": None})())}
+    )()
+    service._screenshot_for = lambda _r: None
+
+    with pytest.raises(ValidationError, match="nothing to explain this failure with"):
+        service.analyse_result(1, user=None)

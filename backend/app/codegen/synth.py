@@ -166,6 +166,19 @@ _ASSERTIONS = {
 #: Verbs whose value is a URL fragment that gets wrapped in `re.compile`.
 _URL_ASSERTIONS = {"expect_url", "expect_not_url"}
 
+#: Assertions that say an element *is* there. A case making one about a page
+#: behind a login has to be signed in for it - see `_restore_sign_in`.
+#:
+#: `expect_hidden` is deliberately absent, and that absence is the whole point:
+#: "the add-property form is not there when I am signed out" is a real test, and
+#: signing it in first would destroy it.
+_EXPECTS_PRESENCE = {
+    "expect_visible",
+    "expect_text",
+    "expect_masked",
+    "expect_not_masked",
+}
+
 #: Values that must differ on every run, and the expression each becomes.
 #:
 #: A registration test written with a fixed address passes the first time and
@@ -1082,9 +1095,26 @@ def _restore_sign_in(
     ):
         return steps
 
+    # Driving a protected page needs an account. So does *claiming something is
+    # on one*, and leaving that out produced this, which could only ever be red:
+    #
+    #     Next step button is present on add property page
+    #       0. goto            /agent/add-property
+    #       1. expect_visible  next_step_button
+    #
+    # Two steps, no sign-in, against a page that redirects anyone anonymous
+    # straight to the login form. The rule was "a case that only looks at a
+    # protected page is left signed out", and it is right about exactly one
+    # shape: "opening add-property signed out sends me to the login form" is a
+    # real test and has to stay signed out to be one. That case asserts an
+    # absence. This one asserts a presence, and a presence on a page you were
+    # never let into is not a claim that can hold.
+    #
+    # So the split is on what the assertion says rather than on whether the case
+    # does anything: expecting something to be there needs to be there.
     needs_it = any(
         step.page_var in behind
-        and step.action is not ActionType.ASSERT
+        and (step.action is not ActionType.ASSERT or step.verb in _EXPECTS_PRESENCE)
         for step in steps
     )
     if not needs_it:

@@ -807,6 +807,28 @@ def test_only_looking_at_a_protected_page_stays_signed_out():
     assert "login.password_input" not in source
 
 
+def test_claiming_something_is_on_a_protected_page_signs_in_first():
+    """The other half of the rule above, and it took a red suite to find.
+
+        Next step button is present on add property page
+          0. goto            /agent/add-property
+          1. expect_visible  next_step_button
+
+    Two steps, no sign-in, against a page that redirects anyone anonymous
+    straight to the login form. "A case that only looks is left signed out" is
+    right about a case asserting an *absence* — and this one asserts a presence,
+    which on a page you were never let into cannot hold.
+    """
+    source = compile_account([
+        CaseStep(action="goto", value="https://shop.test/dashboard", description="Open"),
+        CaseStep(action="expect_visible", target="DashboardPage.title_input",
+                 description="Should be there"),
+    ])
+
+    assert "login.password_input" in source
+    assert source.index("login.password_input") < source.index("/dashboard")
+
+
 def test_a_recording_that_never_signed_in_changes_nothing(pages):
     """Most recordings. Nothing to restore and nothing to look for."""
     source = compile_case(

@@ -346,14 +346,18 @@ export function RunPanel({
                 Run Recorded Test Cases
               </Button>
             )}
+            {/* "AI" is gone from this label because it was never true of the
+                whole set: it runs the recording, anything written by hand, and
+                whatever was generated around them — by a model or, with no key
+                configured, from the recording itself. */}
             <Button
               size="sm"
               onClick={() => void start()}
               disabled={starting || active || browsers.length === 0 || caseCount === 0}
               title={
                 `Runs all ${caseCount} case${caseCount === 1 ? "" : "s"} — the ` +
-                "recording, anything written by hand, and every case the model " +
-                "generated around them."
+                "recording, anything written by hand, and every case generated " +
+                "around them."
               }
             >
               {active ? (
@@ -365,7 +369,7 @@ export function RunPanel({
                 ? "Running…"
                 : starting
                   ? "Starting…"
-                  : "Run All AI Test Cases"}
+                  : "Run all Test cases"}
             </Button>
           </div>
         </div>
