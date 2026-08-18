@@ -257,6 +257,7 @@ def synthesise(
     module_name: str,
     function_name: str,
     recorded_steps: list[StepSpec] | None = None,
+    unique_values: list[tuple[str, str, str]] | None = None,
 ) -> TestIR:
     """Turn one described case into a TestIR reusing `pages`.
 
@@ -267,6 +268,20 @@ def synthesise(
     `recorded_steps` is the happy path: the one sequence known to work against
     this application. It is used to put back setup the case dropped — see
     `_restore_setup`.
+
+    `unique_values` is what the converter already decided cannot be replayed as
+    recorded — see `_fresh_value`. A described case is shown the recorded steps
+    and copies the literals out of them, so a value the recording was careful to
+    freshen comes straight back:
+
+        national_id_number_passport_number_input.fill('KRA/980/61')
+
+    Eleven generated cases and the recorded one all submitted that, in one run,
+    against a form that checks it for duplicates. Whichever ran first registered
+    it and the rest were refused — so a case passed or failed on its position in
+    the alphabet, and the verdicts moved every run. Doing this here rather than
+    asking the model for a placeholder is the difference between a rule and a
+    request.
     """
     steps_in = list(getattr(case, "steps", []) or [])
     if not steps_in:
@@ -288,6 +303,7 @@ def synthesise(
     used_pages: set[str] = set()
     needs_regex = False
     needs_uuid = False
+    freshened = _freshened(unique_values)
 
     for index, raw in enumerate(steps_in):
         action = str(getattr(raw, "action", "")).strip().lower()
@@ -351,6 +367,26 @@ def synthesise(
         # A unique value renders as the expression that produces one, so it is
         # evaluated per run rather than baked in as a literal.
         unique = unique_expression(value) if value is not None else None
+
+        # ...and so does a literal the converter already freshened for the
+        # recorded test. The model copied it out of the steps it was shown; it
+        # is the same value, in the same field, on the same form, and it stops
+        # working for the same reason.
+        if unique is None and value is not None:
+            unique = freshened.get(str(value))
+            if unique is not None:
+                # And the comment above the line has to stop naming the value
+                # too. `readable` is what the step description and the
+                # test-case sheet print, so leaving it alone produced
+                #
+                #     # Type into national id number: 'KRA/980/61'
+                #     ...fill('KRA/' + f'{uuid4().int % 1000:03d}' + ...)
+                #
+                # a comment describing something the code deliberately does
+                # not do. Placeholders have always been described by what they
+                # produce rather than by their token; this is the same rule.
+                readable = "a fresh value, different every run"
+
         if unique is not None:
             needs_uuid = True
 
@@ -445,6 +481,24 @@ def synthesise(
     )
     ir.fragile_count = sum(1 for step in steps if step.fragile)
     return ir
+
+
+def _freshened(
+    unique_values: list[tuple[str, str, str]] | None,
+) -> dict[str, str]:
+    """Recorded literal -> the expression that produces a fresh one per run.
+
+    Keyed on the value rather than on the field, because that is what a
+    described case carries. The model is shown "typed: 'KRA/980/61'" and writes
+    that string back; which element it puts it in is its own business, and a
+    value that must be unique on one field is not suddenly replayable on
+    another.
+    """
+    return {
+        recorded: expression
+        for _name, expression, recorded in (unique_values or [])
+        if recorded
+    }
 
 
 def page_variables_for(pages: list[PageSpec]) -> list[tuple[str, str]]:

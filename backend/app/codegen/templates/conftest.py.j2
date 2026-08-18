@@ -36,7 +36,41 @@ DEFAULT_BASE_URL = {{ base_url | pystr }}
 EXPECT_TIMEOUT_MS = int(os.environ.get("AUTOQA_EXPECT_TIMEOUT_MS", 10_000))
 expect.set_options(timeout=EXPECT_TIMEOUT_MS)
 
+# How long one action waits for its element, and how long a navigation started
+# by one is given to arrive. Playwright's own default is thirty seconds, and a
+# recorded journey against a real application outgrows it:
+#
+#     TimeoutError: Timeout 30000ms exceeded.
+#     waiting for navigation to ".../property-owner/add-property"
+#
+# The click had worked. The site loads a map widget and a pile of advertising
+# and analytics, the suite runs three browsers at once on one machine, and the
+# page a person waited a moment for during recording takes longer than that when
+# something else is competing for the CPU.
+#
+# Recording is unhurried in a way that replay is not - somebody stops to read
+# the form, and the application has finished settling long before they click
+# again. A replay clicks the instant the previous step returns.
+#
+# Waiting longer costs nothing when the step succeeds: every wait here returns
+# the moment its condition holds. The extra time is only ever spent on a step
+# that was going to fail, which is exactly when being sure it really failed is
+# worth the wait.
+ACTION_TIMEOUT_MS = int(os.environ.get("AUTOQA_ACTION_TIMEOUT_MS", 60_000))
+
 ARTIFACTS = Path(__file__).parent / "artifacts"
+
+
+@pytest.fixture(autouse=True)
+def _patient_actions(page: Page) -> None:
+    """Give every action and navigation on this page the timeout above.
+
+    Set per page rather than globally because that is the only place Playwright
+    offers: the defaults live on the page object, and pytest-playwright makes a
+    fresh one for every test.
+    """
+    page.set_default_timeout(ACTION_TIMEOUT_MS)
+    page.set_default_navigation_timeout(ACTION_TIMEOUT_MS)
 
 
 @pytest.fixture(scope="session")

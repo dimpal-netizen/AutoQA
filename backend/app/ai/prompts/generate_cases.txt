@@ -230,3 +230,4 @@ Rules, all of which matter:
   an address that is already taken must be rejected". There, reuse the recorded
   address deliberately, and say so in the description.
 - Prefer few strong steps over many weak ones. Four to eight steps is normal.
+{guidance_reminder}

@@ -21,7 +21,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.codegen.selectors import (
+    _DECORATION,
     Selector,
+    actionable_ancestor,
     best_selector,
     conflicting,
     distinguisher,
@@ -237,12 +239,17 @@ class TestIR:
 # ---------------------------------------------------------------------------
 # Normalisation
 # ---------------------------------------------------------------------------
-def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalise(
+    actions: list[dict[str, Any]], *, host: str | None = None
+) -> list[dict[str, Any]]:
     """Drop noise and collapse repeats before any code is generated.
 
     A raw recording contains things nobody wants in a test: a scroll for every
     gesture, the same field typed into twice, a navigation the click already
     implies. Cleaning here means every downstream stage sees tidy input.
+
+    `host` is the application under test. Without it nothing is dropped for
+    being somewhere else, which is what every existing caller and test expects.
     """
     live = [a for a in actions if not a.get("is_ignored")]
     result: list[dict[str, Any]] = []
@@ -255,6 +262,22 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # navigates away from the application it just opened and every step
         # after it fails on an empty document.
         if kind is ActionType.NAVIGATE and _is_blank(action):
+            continue
+
+        # An advertising pixel, an analytics beacon, a payment iframe: the
+        # browser navigates to these on its own and the recorder writes them
+        # down like any other navigation. Replayed, the test leaves the
+        # application entirely, and one recorded journey died on
+        #
+        #     Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE
+        #       at https://googleads.g.doubleclick.net/xbbe/pixel
+        #
+        # which is a recorded test failing on an ad network. `synth.py` has
+        # refused these on the generated-case path since a made-up subdomain
+        # errored a test the same way; the recorded path never had the rule.
+        if kind is ActionType.NAVIGATE and not _same_site(
+            host, urlparse(str((action.get("payload") or {}).get("url") or "")).hostname
+        ):
             continue
 
         # A wheel event with no distance. Harmless but meaningless, and it is
@@ -411,6 +434,65 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 #: Pages a browser shows when it has nothing to show. None of them are the
 #: application under test, so none of them belong in a generated test.
 _BLANK_URLS = ("about:blank", "about://blank", "chrome://newtab", "edge://newtab")
+
+
+def _aim_at_the_control(
+    selector: Selector | None, element: dict[str, Any] | None
+) -> Selector | None:
+    """Point a click at the button rather than at the icon drawn on it.
+
+    Only when the element has nothing else going for it. A `<path>` inside an
+    `<svg>` inside a `<button>` has no role, no name, no label and no test id,
+    so the best way of finding it is a path through the DOM - and that is
+    precisely the case where what somebody meant is the control it sits in. An
+    element with a name of its own is left alone, because then the recording
+    knows what was clicked.
+
+    See `actionable_ancestor` for the failure this comes from.
+    """
+    if selector is None or selector.strategy is not SelectorStrategy.XPATH:
+        return selector
+
+    tag = str((element or {}).get("tag") or "").lower()
+    if tag not in _DECORATION:
+        return selector
+
+    ancestor = actionable_ancestor(selector.value)
+    if ancestor is None:
+        return selector
+
+    return Selector(
+        strategy=SelectorStrategy.XPATH,
+        value=ancestor,
+        # A control is a bigger, better-defined target than the glyph inside it,
+        # but nothing here has counted how many match - keep what was measured.
+        unique=selector.unique,
+        score=selector.score,
+    )
+
+
+def _same_site(host: str | None, target: str | None) -> bool:
+    """Is `target` the same site as the application under test?
+
+    Compared on the last two labels rather than the whole hostname, so an
+    application that spans subdomains keeps working: `app.example.com` to
+    `account.example.com` is one journey, and dropping the navigation between
+    them would strand the test on the page before it. `doubleclick.net` against
+    `betaeserver.com` is not.
+
+    Unknown counts as the same. This decides what to *throw away*, so every
+    uncertain case - no host configured, a relative URL, a hostname this cannot
+    parse - has to keep the step. A navigation wrongly dropped breaks a
+    recording that worked; one wrongly kept is the behaviour we already had.
+    """
+    if not host or not target:
+        return True
+
+    def site(name: str) -> str:
+        labels = name.lower().strip(".").split(".")
+        return ".".join(labels[-2:]) if len(labels) > 1 else name.lower()
+
+    return site(host) == site(target)
 
 
 def _is_blank(action: dict[str, Any]) -> bool:
@@ -739,7 +821,7 @@ def build_ir(
     # are already on.
     current_url = ir.start_url
 
-    for action in normalise(actions):
+    for action in normalise(actions, host=urlparse(start_url).hostname):
         if ActionType(action["action_type"]) is ActionType.NAVIGATE:
             if _clean_url(str(action["payload"].get("url", ""))) == current_url:
                 continue
@@ -791,6 +873,7 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
     # healing would reach for it the moment the page shifted.
     usable = usable_selectors(action.get("selectors") or [], element)
     selector = best_selector(usable, element)
+    selector = _aim_at_the_control(selector, element)
 
     # Page-level actions need no locator.
     if kind is ActionType.NAVIGATE:
@@ -1008,10 +1091,27 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
 
     # A click that caused a navigation waits for it, rather than asserting the
     # URL immediately — an instant assert is a classic source of flakiness.
+    #
+    # `domcontentloaded` rather than the default `load`, and that one word is
+    # the difference between a recorded journey passing and failing. From a real
+    # run, thirty seconds then red on a navigation that had already happened:
+    #
+    #     TimeoutError: Timeout 30000ms exceeded.
+    #     waiting for navigation to ".../property-owner/add-property" until 'load'
+    #
+    # `load` waits for every subresource on the new page - images, fonts, and
+    # the advertising and analytics scripts that a real site is full of. The
+    # same suite had a doubleclick pixel in it. None of that has anything to do
+    # with the claim being made, which is that the click went to the right
+    # address; the DOM being parsed is the point at which that is knowable, and
+    # every action after this waits for its own element anyway.
     if action.get("_navigates_to"):
         destination = _clean_url(action["_navigates_to"])
         ir.needs_regex = True
-        code.append(f"page.wait_for_url(re.compile({py_str(_arrives_at(destination))}))")
+        code.append(
+            f"page.wait_for_url(re.compile({py_str(_arrives_at(destination))}), "
+            "wait_until='domcontentloaded')"
+        )
         expected = f"Navigates to {destination}"
 
     return StepSpec(
@@ -1093,13 +1193,77 @@ def _field_words(element: dict[str, Any] | None) -> str:
     return " ".join(str(part) for part in parts if part).lower()
 
 
-def _fresh_expression(value: str, element: dict[str, Any] | None) -> str | None:
-    """A per-run replacement for one recorded value, or None to keep it.
+#: Fields holding a document or account number that identifies one person: a
+#: national id, a passport, a tax pin, a licence. A sign-up form checks these
+#: for duplicates exactly as it checks an email address, and the recorded one is
+#: in the database from the first run onwards.
+#:
+#: Every token is long enough to mean something on its own. "id" is not here and
+#: cannot be: `_field_words` includes the element's own `id` attribute, so a bare
+#: substring test matches almost every field on the page.
+_DOCUMENT = (
+    "national",
+    "passport",
+    "nid",
+    "identity",
+    "id number",
+    "id_number",
+    "idnumber",
+    "licence",
+    "license",
+    "kra",
+    "aadhaar",
+    "aadhar",
+)
+
+#: Runs of digits inside a document number, replaced one at a time so the shape
+#: the application accepted survives.
+_DIGIT_RUN = re.compile(r"\d+")
+
+
+def _fresh_document(value: str) -> str | None:
+    """`KRA/980/61` -> the same shape with different digits, or None.
+
+    Every run of digits is replaced with a fresh run of the same length and
+    everything else is kept, because the punctuation and the letters are the
+    format the application validates against. Inventing a number from nothing
+    is how a fix for one form breaks the next one along.
+
+    None when there is nothing to vary. A document number with no digits in it
+    at all is not something this can make unique, and returning the recorded
+    value unchanged is better than returning something the form will reject.
+    """
+    if not _DIGIT_RUN.search(value):
+        return None
+
+    parts: list[str] = []
+    position = 0
+    for match in _DIGIT_RUN.finditer(value):
+        if match.start() > position:
+            parts.append(py_str(value[position : match.start()]))
+        width = len(match.group())
+        parts.append(f"f'{{uuid4().int % {10 ** width}:0{width}d}}'")
+        position = match.end()
+
+    if position < len(value):
+        parts.append(py_str(value[position:]))
+
+    return parts[0] if len(parts) == 1 else " + ".join(parts)
+
+
+def _fresh_expression(
+    value: str, element: dict[str, Any] | None
+) -> tuple[str, str] | None:
+    """A per-run replacement for one recorded value as (kind, expression).
 
     Only the fields that have to be unique for a record to exist at all. A
     password is typed into a sign-up form too and must stay exactly as recorded:
     it is not an identity, and changing it would lock the test out of the
     account it just made.
+
+    `kind` names the variable the value is hoisted into. It is returned rather
+    than guessed from the expression, which is how the document number below
+    came out called `fresh_mobile` - both use `uuid4().int`.
     """
     words = _field_words(element)
 
@@ -1112,7 +1276,7 @@ def _fresh_expression(value: str, element: dict[str, Any] | None) -> str | None:
             # example.test is reserved and cannot receive mail, so it is only
             # right when the recording gives us nothing better to copy.
             domain = "example.test"
-        return _EMAIL % domain
+        return "email", _EMAIL % domain
 
     digits = value.strip()
     if digits.isdigit() and (
@@ -1124,10 +1288,24 @@ def _fresh_expression(value: str, element: dict[str, Any] | None) -> str | None:
         rest = len(digits) - 1
         if rest < 1:
             return None
-        return _PHONE % (digits[0], 10**rest, rest)
+        return "mobile", _PHONE % (digits[0], 10**rest, rest)
 
     if "username" in words or "user_name" in words:
-        return _TEXT
+        return "username", _TEXT
+
+    # A national id, a passport, a tax pin. From a real recorded registration
+    # that passed once and was red on every run after it:
+    #
+    #     national_id_number_passport_number_input.fill('KRA/980/61')
+    #
+    # The email and the mobile beside it were already being replaced per run,
+    # so the account got as far as being refused on the one field nobody had
+    # thought of. The form was right and the test was red, which is the most
+    # expensive way for a test to be wrong.
+    if any(word in words for word in _DOCUMENT):
+        document = _fresh_document(value.strip())
+        if document is not None:
+            return "id", document
 
     return None
 
@@ -1145,15 +1323,15 @@ def _fresh_value(
     if not value.strip() or not _SIGNUP_PATH.search(urlparse(url).path or ""):
         return None
 
-    expression = _fresh_expression(value, element)
-    if expression is None:
+    fresh = _fresh_expression(value, element)
+    if fresh is None:
         return None
+    kind, expression = fresh
 
-    for name, existing, recorded in ir.unique_values:
+    for name, _existing, recorded in ir.unique_values:
         if recorded == value:
             return name
 
-    kind = "email" if "@" in expression else "mobile" if "uuid4().int" in expression else "id"
     name = f"fresh_{kind}"
     taken = {existing_name for existing_name, _, _ in ir.unique_values}
     suffix = 2

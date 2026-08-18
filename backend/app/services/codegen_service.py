@@ -23,8 +23,6 @@ from app.codegen.recorded_cases import (
     cases_from_recording,
     why_nothing,
 )
-from app.codegen.segments import as_tests
-from app.codegen.segments import split as split_recording
 from app.codegen.synth import (
     SynthesisError,
     module_for,
@@ -225,24 +223,24 @@ class CodegenService:
             for a in actions
         ]
 
-        # A recording is rarely one test. Somebody tries logging in, gets an
-        # error, tries again, then goes off to register - see `segments.py`.
-        # Cut here, before `build_ir`, because normalisation drops and merges
-        # actions and afterwards there is nothing to line the two up by. Each
-        # action carries the number of the test it belongs to, and the steps
-        # built from it inherit that.
-        segments = split_recording(raw)
-        starts: list[str] = []
-        for number, segment in enumerate(segments):
-            starts.append(str(segment[0].get("url") or session.start_url))
-            for action in segment:
-                action["segment"] = number
-
-        # One IR for the whole recording, not one per segment. The page objects
-        # and the locator names on them come from here, so every case in the
-        # suite refers to `login.email_input` and means the same element. Built
-        # per segment they would be numbered independently, and a case would
-        # import a property the page object does not have.
+        # One recording, one test case.
+        #
+        # This used to be cut into a case per attempt - somebody tries logging
+        # in, gets an error, tries again - on the reasoning that four things
+        # were tested and should be reported on separately. The reasoning was
+        # right about the recording and wrong about the code: a slice begins
+        # part-way through a journey, and all it gets to make up for that is a
+        # `goto`. Everything the earlier steps had built up is gone. Segment two
+        # of a registration opens the form and types into field six, on a page
+        # where the first five are empty and the account it needed was never
+        # created. It cannot pass, and it fails for a reason that has nothing to
+        # do with the application.
+        #
+        # The whole recording, in order, is the one thing that is known to work:
+        # somebody sat and did it. That is what a regression test is for, and
+        # anything narrower can be written against it afterwards - by hand, by
+        # the model, or from the recording. See `segments.py`, which still
+        # answers "where did they start over" for anything that wants to know.
         ir = build_ir(raw, suite_name=suite_name, start_url=session.start_url)
 
         # AI pass: better names and descriptions on code that already works.
@@ -286,69 +284,51 @@ class CodegenService:
                 suite, name=suite_name, description=description, generator=generator
             )
 
-        # One case per test the person performed, not one per recording. The
-        # slices share this suite's pages, so every case says
-        # `login.email_input` and means the same element - see `segments.py`.
-        slices = list(as_tests(ir, starts))
-        for number, slice_ir in slices:
-            try:
-                slice_files = render(slice_ir, browser_info=session.browser_info)
-            except GeneratedCodeError as exc:
-                # One unrenderable slice must not lose the others. Nothing about
-                # a recording says its third attempt is more important than its
-                # first, so dropping the batch over one of them is the wrong
-                # trade every time.
-                logger.exception(
-                    "Recording %s: could not render test %d", recording_id, number + 1
+        # The recording, whole, as one case. Its module is the one `render`
+        # already produced from this same IR, so nothing is compiled twice and
+        # the file the suite writes to disk is the file the case holds.
+        test_file = next(f for f in rendered if f.path == ir.file_path)
+        case = self.cases.create(
+            suite_id=suite.id,
+            project_id=session.project_id,
+            name=suite_name,
+            description=(
+                (polish.description + " " if polish.description else "")
+                + f"{len(ir.steps)} steps across {len(ir.pages)} page(s)."
+                + (
+                    f" {ir.fragile_count} step(s) use a fragile selector."
+                    if ir.fragile_count
+                    else ""
                 )
-                raise ValidationError(
-                    f"Generated code was not valid Python: {exc}"
-                ) from exc
+            ),
+            function_name=ir.function_name,
+            file_path=ir.file_path,
+            code=test_file.content,
+            source=CaseSource.RECORDING,
+            status=CaseStatus.DRAFT,
+            category=CaseCategory.RECORDED,
+            priority=CasePriority.HIGH,
+            generated_by=GENERATOR,
+            tags=["recorded"],
+            is_enabled=True,
+            version=1,
+        )
 
-            test_file = next(f for f in slice_files if f.path == slice_ir.file_path)
-            case = self.cases.create(
-                suite_id=suite.id,
-                project_id=session.project_id,
-                # Numbered only when there is more than one. A recording of a
-                # single journey keeps the name it has always had.
-                name=suite_name if len(slices) == 1 else f"{suite_name} {number + 1}",
-                description=(
-                    (polish.description + " " if polish.description and len(slices) == 1 else "")
-                    + f"{len(slice_ir.steps)} steps across {len(ir.pages)} page(s)."
-                    + (
-                        f" {slice_ir.fragile_count} step(s) use a fragile selector."
-                        if slice_ir.fragile_count
-                        else ""
-                    )
+        for step in ir.steps:
+            self.cases.add_step(
+                test_case_id=case.id,
+                sequence=step.sequence,
+                action=step.action,
+                description=step.description,
+                locator=(
+                    f"{step.page_var}.{step.locator_name}"
+                    if step.page_var and step.locator_name
+                    else None
                 ),
-                function_name=slice_ir.function_name,
-                file_path=slice_ir.file_path,
-                code=test_file.content,
-                source=CaseSource.RECORDING,
-                status=CaseStatus.DRAFT,
-                category=CaseCategory.RECORDED,
-                priority=CasePriority.HIGH,
-                generated_by=GENERATOR,
-                tags=["recorded"],
-                is_enabled=True,
-                version=1,
+                input_data=step.input_data,
+                expected_result=step.expected_result,
+                selector_strategy=step.strategy,
             )
-
-            for step in slice_ir.steps:
-                self.cases.add_step(
-                    test_case_id=case.id,
-                    sequence=step.sequence,
-                    action=step.action,
-                    description=step.description,
-                    locator=(
-                        f"{step.page_var}.{step.locator_name}"
-                        if step.page_var and step.locator_name
-                        else None
-                    ),
-                    input_data=step.input_data,
-                    expected_result=step.expected_result,
-                    selector_strategy=step.strategy,
-                )
 
         for spec in rendered:
             if spec.path == ir.file_path:

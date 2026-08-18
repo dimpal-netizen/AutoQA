@@ -595,3 +595,85 @@ def test_a_result_with_no_siblings_is_valid():
 
     assert detail.siblings == []
     assert detail.artifacts == []
+
+
+# ---------------------------------------------------------------------------
+# Two cases, one identifier
+#
+# Case names are clipped before they become identifiers, so "Agent Registration
+# with Form Field Corrections 1" and "... 2" both came out as
+# `test_agent_registration_with_form_field` — the suffix that told them apart
+# was the part that got cut. Keyed on that, the second silently replaced the
+# first: one file, one test collected, one result, and nothing on screen saying
+# a test had gone missing.
+# ---------------------------------------------------------------------------
+class _Case:
+    def __init__(self, case_id, name, function_name, code):
+        self.id = case_id
+        self.name = name
+        self.function_name = function_name
+        self.file_path = f"tests/{function_name}.py"
+        self.code = code
+        self.is_enabled = True
+
+
+def _module(function_name: str) -> str:
+    return f"def {function_name}(page: Page) -> None:\n    pass\n"
+
+
+def test_two_cases_sharing_a_function_name_are_both_collected():
+    from app.services.execution_service import ExecutionService
+
+    shared = "test_agent_registration_with_form_field"
+    cases = [
+        _Case(1, "Agent Registration ... 1", shared, _module(shared)),
+        _Case(2, "Agent Registration ... 2", shared, _module(shared)),
+    ]
+
+    class Suite:
+        files = []
+
+    Suite.cases = cases
+
+    class Run:
+        id = 1
+        suite = Suite()
+        case_ids = [1, 2]
+
+    bundle, collected = ExecutionService.__new__(ExecutionService)._prepare(Run())
+
+    assert len(collected) == 2, "a case was silently dropped from the run"
+    assert {c.id for c in collected.values()} == {1, 2}
+    # Two files, and each defines the name it is collected under.
+    modules = {p: c for p, c in bundle.items() if p.startswith("tests/")}
+    assert len(modules) == 2
+    for function_name in collected:
+        assert any(f"def {function_name}(" in code for code in modules.values())
+
+
+def test_the_stored_case_is_not_renamed_by_a_run():
+    """The rename belongs to one workspace. What a person opens in the editor,
+    and what regeneration replaces, must not gain a suffix because of how some
+    run happened to be assembled."""
+    from app.services.execution_service import ExecutionService
+
+    shared = "test_thing"
+    cases = [
+        _Case(1, "Thing 1", shared, _module(shared)),
+        _Case(2, "Thing 2", shared, _module(shared)),
+    ]
+
+    class Suite:
+        files = []
+
+    Suite.cases = cases
+
+    class Run:
+        id = 1
+        suite = Suite()
+        case_ids = [1, 2]
+
+    ExecutionService.__new__(ExecutionService)._prepare(Run())
+
+    assert [c.function_name for c in cases] == [shared, shared]
+    assert [c.file_path for c in cases] == [f"tests/{shared}.py"] * 2

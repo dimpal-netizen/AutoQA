@@ -82,6 +82,43 @@ def test_stopping_generates_a_suite(client: TestClient, project, sample: dict) -
     assert any(f["path"].startswith("pages/") for f in suite["files"])
 
 
+def test_a_recording_is_one_test_case_however_many_attempts_it_holds(
+    client: TestClient, project, sample: dict
+) -> None:
+    """One recording, one recorded case — even when the person started over.
+
+    It used to be cut into a case per attempt, which was right about the
+    recording and wrong about the code. A slice begins part-way through a
+    journey and all it gets to make up for that is a `goto`: segment two of a
+    registration opens the form and types into field six, on a page where the
+    first five are empty and the account it needed was never created. It cannot
+    pass, and it fails for a reason that has nothing to do with the application.
+
+    The sample fills the same field twice, which is `segments.split`'s own
+    signal for "started over" — so this recording is exactly the shape that used
+    to come back as two.
+    """
+    headers, project_id = project
+    actions = list(sample["actions"])
+    first_input = next(a for a in actions if a["action_type"] == "input")
+    again = dict(first_input)
+    again["sequence"] = max(a["sequence"] for a in actions) + 1
+    again["timestamp_ms"] = max(a["timestamp_ms"] for a in actions) + 500
+
+    session_id = start_and_fill(
+        client, headers, project_id, {**sample, "actions": [*actions, again]}
+    )
+    suite_id = client.post(
+        f"{API}/recordings/{session_id}/stop", headers=headers, json={}
+    ).json()["suite_id"]
+
+    cases = client.get(f"{API}/suites/{suite_id}", headers=headers).json()["cases"]
+
+    assert len(cases) == 1, [c["name"] for c in cases]
+    # And it is not named as though it were one of several.
+    assert not cases[0]["name"].rstrip().endswith(("1", "2"))
+
+
 def test_generated_case_has_readable_steps(client: TestClient, project, sample: dict) -> None:
     headers, project_id = project
     session_id = start_and_fill(client, headers, project_id, sample)

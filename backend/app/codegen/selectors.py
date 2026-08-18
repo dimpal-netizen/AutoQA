@@ -55,6 +55,64 @@ _POSITIONAL = {
 #: Tags `get_by_label` is allowed to describe. See `usable_selectors`.
 _FORM_CONTROLS = {"input", "select", "textarea"}
 
+#: Tags that draw a control but are not one. An icon is a `<span>` holding an
+#: `<svg>` holding a `<g>` holding a `<path>`, and a person aiming at the button
+#: hits whichever of those is on top.
+_DECORATION = {
+    "span", "svg", "g", "path", "use", "circle", "rect", "polygon", "polyline",
+    "line", "text", "tspan", "i", "b", "em", "strong", "small", "img", "p",
+}
+
+#: Tags that do something when clicked. The one to drive.
+_CONTROLS = ("button", "a", "label", "summary")
+
+#: One step of an XPath: a tag and an optional index.
+_SEGMENT = re.compile(r"^(?P<tag>[a-zA-Z][\w-]*)(?:\[\d+\])?$")
+
+
+def actionable_ancestor(xpath: str) -> str | None:
+    """The control an icon sits inside, given the path to the icon.
+
+    From a real recorded registration, thirty seconds then red on a button that
+    works perfectly by hand:
+
+        //body/main[1]/div[1]/div[1]/button[3]/span[1]/svg[1]/g[1]/path[1]
+
+    Somebody clicked the button. The recorder captured the `<path>` - the glyph
+    drawn on top of it - because that is the element under the pointer. Replayed,
+    Playwright dutifully clicks the glyph, and sites routinely set
+    `pointer-events: none` on the inside of an icon, so the button never fires.
+    Nothing navigates, and the step after it waits for a page that is not coming.
+
+    Truncating at the control gives `.../button[3]`, which is the thing that was
+    pressed.
+
+    Only when *everything* below the control is decoration. A `<button>` with a
+    real `<input>` inside it is not this shape, and neither is a link wrapping a
+    card full of text somebody meant to click a specific part of - so those are
+    left exactly as they were.
+    """
+    parts = [p for p in xpath.split("/") if p]
+    if not parts:
+        return None
+
+    for index in range(len(parts) - 2, -1, -1):
+        match = _SEGMENT.match(parts[index])
+        if match is None:
+            return None  # a predicate or a function; not a path we can trim
+        if match.group("tag").lower() not in _CONTROLS:
+            continue
+
+        below = [_SEGMENT.match(p) for p in parts[index + 1 :]]
+        if any(m is None for m in below):
+            return None
+        if all(m.group("tag").lower() in _DECORATION for m in below):
+            prefix = "//" if xpath.startswith("//") else "/"
+            return prefix + "/".join(parts[: index + 1])
+        return None
+
+    return None
+
 
 def usable_selectors(
     raw_selectors: list[dict[str, Any]], element: dict[str, Any] | None = None

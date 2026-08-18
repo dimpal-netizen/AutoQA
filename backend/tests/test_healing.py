@@ -267,6 +267,55 @@ def test_it_falls_through_to_a_working_way_and_says_so(tmp_path: Path):
 
 
 @pytest.mark.integration
+def test_a_locator_that_now_matches_twice_drives_the_first(tmp_path: Path):
+    """From a real replay of a recorded journey, red on a working page:
+
+        Locator.click: Error: strict mode violation:
+        get_by_role("link", name="Home", exact=True) resolved to 2 elements
+
+    The recorder saw one match and said so, so the generator did not add
+    `.first`. Pages gain elements — a footer nav, a breadcrumb — and a selector
+    that was unique on the day is not any more. Playwright then refuses to guess
+    and the whole recorded test errors out.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    # The page has grown a second "Home" link since it was recorded.
+    page_file = tmp_path / "page.html"
+    page_file.write_text(
+        "<!doctype html><html><body>"
+        '<nav><a href="/">Home</a></nav>'
+        '<footer><a href="/">Home</a></footer>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        candidates = [
+            ("role_name", lambda: page.get_by_role("link", name="Home", exact=True)),
+        ]
+
+        with pytest.warns(healing.Healed, match="more than one element"):
+            located = healing.heal("home_link", candidates)
+
+        # Usable rather than an error — which is the whole point.
+        located.click()
+        browser.close()
+
+
+@pytest.mark.integration
 def test_no_warning_when_the_first_way_still_works(tmp_path: Path):
     """Healing must be silent when nothing has changed, or the noise makes the
     warning that matters unreadable."""
