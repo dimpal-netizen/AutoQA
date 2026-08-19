@@ -117,7 +117,7 @@ def run_suite(
         outcome.exit_code, output, timed_out = _stream(
             _command(browser, headless=headless, slow_mo_ms=slow_mo_ms),
             cwd=workspace,
-            env=_environment(base_url),
+            env=_environment(base_url, slow_mo_ms=slow_mo_ms),
             timeout_s=timeout_s,
             run_id=run_id,
             on_progress=on_progress,
@@ -388,8 +388,12 @@ def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[s
     return command
 
 
-def _environment(base_url: str | None) -> dict[str, str]:
+def _environment(base_url: str | None, *, slow_mo_ms: int = 0) -> dict[str, str]:
     env = os.environ.copy()
+    if slow_mo_ms > 0:
+        # Somebody is watching this one. The generated helpers read it to glide
+        # the page instead of jumping it - see `_glide` in healing.py.
+        env["AUTOQA_WATCH"] = "1"
     if base_url:
         # The generated conftest reads this, so the same suite can be pointed
         # at staging without regenerating anything.

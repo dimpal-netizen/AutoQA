@@ -637,3 +637,95 @@ def test_a_spare_of_the_right_kind_is_still_used(tmp_path) -> None:
 
         assert located.first.evaluate("e => e.id") == "submit"
         browser.close()
+
+
+# ---------------------------------------------------------------------------
+# Scrolling, for a run somebody is watching
+# ---------------------------------------------------------------------------
+TALL_PAGE = """<!doctype html><body style="margin:0">
+<div style="height:4000px"></div>
+<!-- type=button: a submit navigates, and the new document would arrive with an
+     empty `samples` - the scroll being measured erased by the click after it. -->
+<form class="login"><button id="submit" type="button">Login</button></form>
+<script>
+window.samples = [];
+addEventListener('scroll', () => samples.push(Math.round(scrollY)), {passive: true});
+</script></body>"""
+
+
+def _healing_module(tmp_path: Path, *, watching: bool, monkeypatch):
+    """The generated helper, imported with AUTOQA_WATCH set or not.
+
+    `_WATCHING` is read at import, so the variable has to be set before the
+    module body runs - which is the whole point: a run decides once whether
+    anyone is watching it, not per action.
+    """
+    import importlib.util
+
+    monkeypatch.delenv("AUTOQA_WATCH", raising=False)
+    if watching:
+        monkeypatch.setenv("AUTOQA_WATCH", "1")
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(f"_healing_{watching}", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+    assert healing._WATCHING is watching
+    return healing
+
+
+def _scroll_path(healing, tmp_path: Path) -> list[int]:
+    from playwright.sync_api import sync_playwright
+
+    page_file = tmp_path / "tall.html"
+    page_file.write_text(TALL_PAGE, encoding="utf-8")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        located = healing.heal(
+            "login_button", [("css_id", lambda: page.locator("#submit"))], tag="button"
+        )
+        located.click()
+        page.wait_for_timeout(600)  # a scroll event lands a frame after the scroll
+        samples = page.evaluate("window.samples")
+        browser.close()
+
+    return samples
+
+
+@pytest.mark.integration
+def test_a_watched_run_scrolls_instead_of_teleporting(tmp_path: Path, monkeypatch):
+    """Playwright's own scroll-into-view is a jump, and neither `slow_mo` nor
+    CSS `scroll-behavior: smooth` changes that - both were measured. Watching a
+    long form fill in, the page simply teleports and there is no telling how far
+    it went or which field is now under the cursor."""
+    healing = _healing_module(tmp_path, watching=True, monkeypatch=monkeypatch)
+
+    path = _scroll_path(healing, tmp_path)
+
+    # Many intermediate offsets rather than one jump, rising to the target.
+    assert len(path) > 10, f"scrolled in {len(path)} step(s) - that is a jump"
+    assert path == sorted(path)
+
+
+@pytest.mark.integration
+def test_a_headless_run_is_left_alone(tmp_path: Path, monkeypatch):
+    """Nobody is watching, so gliding would buy nothing and cost a wait on
+    every single action."""
+    healing = _healing_module(tmp_path, watching=False, monkeypatch=monkeypatch)
+
+    assert len(_scroll_path(healing, tmp_path)) <= 2
+
+
+@pytest.mark.integration
+def test_the_element_ends_up_in_the_same_place_either_way(tmp_path: Path, monkeypatch):
+    """Gliding moves the page, never the choice of element. If these disagreed,
+    a watched run and a headless run would be different tests."""
+    watched = _scroll_path(_healing_module(tmp_path, watching=True, monkeypatch=monkeypatch), tmp_path)
+    plain = _scroll_path(_healing_module(tmp_path, watching=False, monkeypatch=monkeypatch), tmp_path)
+
+    assert watched[-1] == plain[-1]

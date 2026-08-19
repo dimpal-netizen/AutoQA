@@ -179,8 +179,66 @@ def _same_kind(locator: Locator, tag: str) -> bool:
     return str(found).lower() == tag.lower()
 
 
+#: Only while somebody is watching. Set by the runner for a headed run.
+_WATCHING = os.environ.get("AUTOQA_WATCH") == "1"
+
+#: A glide of 4000px takes about a second in Chromium. Past this the scroll is
+#: costing more than the watcher gets back, so it is left to jump.
+GLIDE_TIMEOUT_MS = 1_500
+
+
+def _glide(locator: Locator) -> Locator:
+    """Bring the element into view gradually, for a run someone is watching.
+
+    Playwright scrolls an element into view before acting on it, and that scroll
+    is a jump: the page is simply somewhere else on the next frame. Watching a
+    long form fill in, the page teleports twice a second and there is no way to
+    tell whether it moved a little or a lot, or which of two similar fields is
+    now under the cursor.
+
+    Neither `slow_mo` nor CSS `scroll-behavior: smooth` fixes it. `slow_mo`
+    pauses *between* Playwright calls and does not touch what happens inside
+    one; the CSS is simply not consulted, because the scroll is driven through
+    the debugger protocol rather than by the page. Measured both ways: one
+    scroll event, straight to the target. The only thing that glides is asking
+    the page to scroll itself before Playwright decides it needs to.
+
+    So that is what this does, and then waits for the scroll to stop moving.
+    Playwright's own scroll then finds the element already in view and does
+    nothing, which is what keeps the two from fighting.
+
+    Every part of it is best-effort. A detached element, a cross-origin frame, a
+    scroll still drifting when the timeout runs out - none of that is a reason
+    to fail a test, because nothing here is what the test is about. On any
+    trouble the element is left exactly as it was and Playwright scrolls it the
+    old way. Headless runs skip it entirely: there is nobody to watch, and this
+    would only make them slower.
+    """
+    if not _WATCHING:
+        return locator
+
+    try:
+        locator.first.evaluate(
+            "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})",
+            timeout=GLIDE_TIMEOUT_MS,
+        )
+        # Settled = two polls at the same offset. Waiting on a fixed duration
+        # instead would either cut a long scroll short or idle after a short one.
+        locator.page.wait_for_function(
+            "() => { const y = Math.round(window.scrollY);"
+            "  if (window.__autoqa_y === y) return true;"
+            "  window.__autoqa_y = y; return false; }",
+            polling=120,
+            timeout=GLIDE_TIMEOUT_MS,
+        )
+    except Exception:
+        pass  # Not being able to scroll nicely is never a test result.
+
+    return locator
+
+
 def heal(name: str, candidates: list, *, tag: str = "") -> Locator:
-    """The first candidate that finds the element.
+    """The first candidate that finds the element, brought into view.
 
     `candidates` is [(strategy, () -> Locator), ...], best first. The callables
     are not evaluated until they are needed, so the common case - the first one
@@ -206,7 +264,16 @@ def heal(name: str, candidates: list, *, tag: str = "") -> Locator:
     The primary is exempt: it is what the recording chose, and if it matches
     something unexpected there is nothing better to fall back on. Only the
     guesses are held to this.
+
+    Whichever candidate wins is then glided into view, so a watched run scrolls
+    rather than teleports. Finding the element and showing it are separate jobs
+    and `_glide` cannot change which element was found - it only moves the page.
     """
+    return _glide(_find(name, candidates, tag=tag))
+
+
+def _find(name: str, candidates: list, *, tag: str = "") -> Locator:
+    """Which element `heal` settled on. See its docstring."""
     if not _substitutes_allowed:
         # Reached through `unhealed`. No spares, and no wait either: the
         # `expect` around this does its own waiting and retrying, and waiting
