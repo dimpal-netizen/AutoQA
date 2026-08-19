@@ -101,9 +101,22 @@ class Settings(BaseSettings):
     # three and a half times as long as this file claimed, and turning it down
     # meant knowing to look in the other one.
     #
-    # 600 is still one action at a time and still readable; 2500 made a
-    # thirty-step test take a minute and a half of watching.
-    WATCH_SLOWMO_MS: int = 600
+    # 1500 is set by the hardest step to follow rather than the average one.
+    # Playwright scrolls an element into view before it acts on it, and that
+    # scroll is a jump, not a glide - the page is simply somewhere else on the
+    # next frame, however low this is set. Nothing here can slow the movement
+    # itself; what the pause buys is time to find your place again afterwards,
+    # which is why the number that reads well for a click is still too quick
+    # for a step that moved the page under you.
+    #
+    # At 600 steps ran together and 900 was still brisk through a scroll. 2500
+    # was the other way wrong - a thirty-step test became a minute and a half
+    # of watching.
+    #
+    # Headed runs only. Nobody is watching a headless one, so it stays at full
+    # speed and this changes neither how long a normal run takes nor what it
+    # reports: pacing the browser changes when things happen, never the verdict.
+    WATCH_SLOWMO_MS: int = 1500
     # Open each page once before inventing test cases, to see what is actually
     # on it when you arrive cold. A recording shows one state - the cart had
     # something in it, the wizard was on step one - and without looking, cases

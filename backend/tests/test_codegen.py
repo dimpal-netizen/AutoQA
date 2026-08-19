@@ -8,14 +8,19 @@ three phases away.
 import ast
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from app.codegen.converter import build_ir, normalise, page_identity
 from app.codegen.generator import GeneratedCodeError, GeneratedFileSpec, render, validate
-from app.codegen.selectors import Selector, best_selector, element_name, locator_expression, snake_case
+from app.codegen.selectors import (
+    Selector,
+    best_selector,
+    element_name,
+    locator_expression,
+    snake_case,
+)
 from app.models.enums import ActionType, FileType, SelectorStrategy
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_recording.json"
@@ -593,10 +598,16 @@ def test_the_bundle_is_collectable_by_pytest(generated, tmp_path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(spec.content, encoding="utf-8")
 
+    # The executor's own command and environment, not a hand-rolled pair. A
+    # bundle that collects under different flags than the ones it will actually
+    # be run with is not the bar this test claims to hold.
+    from app.models.enums import Browser
+    from app.runner.executor import _command, _environment
+
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header",
-         "-p", "no:cacheprovider"],
+        [*_command(Browser.CHROMIUM, headless=True), "--collect-only", "--no-header"],
         cwd=tmp_path,
+        env=_environment(None),
         capture_output=True,
         text=True,
         timeout=120,

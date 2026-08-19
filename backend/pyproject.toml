@@ -111,7 +111,12 @@ python_files = ["test_*.py"]
 # TestStep, so pytest's default class discovery keeps trying to collect them.
 # We only write function-style tests, so turn class collection off entirely.
 python_classes = []
-addopts = "-v --strict-markers"
+# `langsmith` arrives as a transitive dependency of `langchain-core`, and its
+# pytest plugin imports `xxhash`, whose native DLL some Windows machines block
+# outright - taking this whole suite down before collection. Nothing here uses
+# it. (The plugins this suite *does* need are loaded normally; the generated
+# suites go further and allowlist theirs - see runner/executor.py.)
+addopts = "-v --strict-markers -p no:langsmith_plugin"
 asyncio_mode = "auto"
 markers = [
     "integration: needs a live Postgres/Redis (deselect with '-m \"not integration\"')",

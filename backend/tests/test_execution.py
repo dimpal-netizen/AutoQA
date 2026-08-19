@@ -423,6 +423,27 @@ def test_watching_slows_the_browser_down():
     )
 
 
+def test_only_the_plugins_the_suite_needs_are_loaded():
+    """A generated run must not inherit AutoQA's own pytest plugins.
+
+    The tests run in the API's interpreter, so without this they load every
+    `pytest11` entry point in AutoQA's dependency tree. One of those raising on
+    import kills the run before collection - no report, every test blocked, and
+    a traceback into a library that has nothing to do with the application
+    under test. `langchain-core` -> `langsmith` -> `xxhash` did exactly that.
+    """
+    from app.runner.executor import _command, _environment
+
+    assert _environment(None)["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+
+    command = _command(Browser.CHROMIUM, headless=True)
+    loaded = {arg for before, arg in zip(command, command[1:], strict=False) if before == "-p"}
+
+    # Playwright drives the browser; base_url defines a fixture it asks for.
+    assert "pytest_playwright.pytest_playwright" in loaded
+    assert "pytest_base_url.plugin" in loaded
+
+
 def test_the_workspace_is_deleted_afterwards(monkeypatch, tmp_path: Path):
     """Generated code must not accumulate on the user's disk."""
     from app.core.config import settings
