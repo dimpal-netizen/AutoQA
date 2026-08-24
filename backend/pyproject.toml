@@ -50,6 +50,7 @@ openai = ">=1.57"
 langchain = ">=0.3"
 langchain-anthropic = ">=0.3"
 langchain-openai = ">=0.2"
+langchain-google-genai = ">=2.1"   # the third provider, on the same code path
 
 # --- Autonomous agent (Phase 7) ---
 beautifulsoup4 = ">=4.12"

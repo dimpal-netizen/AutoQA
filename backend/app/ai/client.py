@@ -126,28 +126,14 @@ def load_prompt(name: str, **values: Any) -> str:
 
 
 def get_llm_client() -> LLMClient:
-    """Build the configured provider. Raises if it isn't usable."""
-    provider = settings.LLM_PROVIDER.strip().lower()
+    """Build the configured provider. Raises if it isn't usable.
 
-    if provider == "claude":
-        from app.ai.claude import ClaudeClient
+    Built through LangChain, so which model runs is a line in .env rather than
+    a code path: see app/ai/langchain_client.py.
+    """
+    from app.ai.langchain_client import LangChainClient
 
-        return ClaudeClient()
-
-    if provider == "openai":
-        from app.ai.openai_client import OpenAIClient
-
-        return OpenAIClient()
-
-    if provider == "gemini":
-        from app.ai.gemini import GeminiClient
-
-        return GeminiClient()
-
-    raise LLMError(
-        f"Unknown LLM_PROVIDER {settings.LLM_PROVIDER!r}. "
-        f"Use one of: {', '.join(sorted(_KEY_FOR))}."
-    )
+    return LangChainClient(settings.LLM_PROVIDER)
 
 
 # Which setting holds the key for each provider. One mapping so adding a
