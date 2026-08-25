@@ -265,6 +265,11 @@ def heal(name: str, candidates: list, *, tag: str = "") -> Locator:
     something unexpected there is nothing better to fall back on. Only the
     guesses are held to this.
 
+    A candidate that is on the page but cannot be seen is kept only as a
+    fallback: where a site ships a desktop and a mobile copy of the same link,
+    the recorded way often matches the hidden one, and another recorded way
+    matches the one on screen.
+
     Whichever candidate wins is then glided into view, so a watched run scrolls
     rather than teleports. Finding the element and showing it are separate jobs
     and `_glide` cannot change which element was found - it only moves the page.
@@ -281,6 +286,9 @@ def _find(name: str, candidates: list, *, tag: str = "") -> Locator:
         # PRIMARY_TIMEOUT_MS on every run to learn what it already knew.
         return candidates[0][1]()
 
+    on_page: Locator | None = None
+    on_page_was = (0, "", False)
+
     for index, (strategy, find) in enumerate(candidates):
         locator = find()
         try:
@@ -294,42 +302,96 @@ def _find(name: str, candidates: list, *, tag: str = "") -> Locator:
         if index and tag and not _same_kind(locator, tag):
             continue
 
-        if index:
-            warnings.warn(
-                f"{name}: could not be found by {candidates[0][0]} - used "
-                f"{strategy} instead. The page has changed.",
-                Healed,
-                stacklevel=2,
-            )
+        found, ambiguous = _narrow(locator)
 
-        # Narrow to one element, or the very next call raises. From a real
-        # replay of a recorded journey:
+        # Being in the page is not the same as being on it. Sites carry a
+        # desktop and a mobile navigation at once and hide one of them, so a
+        # recorded way of finding a link matches the copy nobody can click.
+        # Sixty seconds spent on a site that was working perfectly:
         #
-        #     Locator.click: Error: strict mode violation:
-        #     get_by_role("link", name="Home", exact=True) resolved to 2 elements
+        #     waiting for get_by_text("Online Courses", exact=True).first
+        #       - locator resolved to <a href="/online-cle">
+        #       - element is not visible          (117 times, then red)
         #
-        # The recorder saw one match and said so, and the generator only adds
-        # `.first` to locators it was told were ambiguous. Pages gain elements:
-        # a footer nav, a second "Home" in a breadcrumb, and a selector that was
-        # unique on the day is not any more. Playwright then refuses to guess and
-        # the whole test errors out on a page that is working.
-        #
-        # `.first` is DOM order rather than intent, so this is a guess - but it
-        # is the same guess the generator makes for a locator that was ambiguous
-        # when recorded, and the alternative is not running at all. It is said
-        # out loud so a report can show which element the run actually drove.
-        if locator.count() > 1:
-            warnings.warn(
-                f"{name}: matches more than one element now - drove the first. "
-                "Give it an id or a data-testid to be sure of which.",
-                Healed,
-                stacklevel=2,
-            )
-            return locator.first
+        # The other recorded ways pointed at the copy on screen the whole time.
+        # So the first candidate that is on the page is kept as a fallback, and
+        # the search goes on for one that can actually be seen.
+        if on_page is None:
+            on_page, on_page_was = found, (index, strategy, ambiguous)
 
-        return locator
+        if not _can_be_seen(found):
+            continue
 
-    # Nothing matched. Return the primary rather than raising here, so the
-    # failure comes from the action the test was actually performing and names
-    # the selector you would expect to see.
+        _announce(name, candidates, index, strategy, ambiguous, hidden=found is not on_page)
+        return found
+
+    # Nothing visible. The element that is there is still the best answer: it
+    # may be mid-animation, or genuinely invisible by design - a styled
+    # checkbox is 0x0 and every recorded way of finding it says so.
+    if on_page is not None:
+        _announce(name, candidates, *on_page_was, hidden=False)
+        return on_page
+
+    # Nothing matched at all. Return the primary rather than raising here, so
+    # the failure comes from the action the test was actually performing and
+    # names the selector you would expect to see.
     return candidates[0][1]()
+
+
+def _narrow(locator: Locator) -> tuple[Locator, bool]:
+    """One element, and whether choosing between several was necessary.
+
+    Narrowing is not optional - the very next call raises without it:
+
+        Locator.click: Error: strict mode violation:
+        get_by_role("link", name="Home", exact=True) resolved to 2 elements
+
+    The recorder saw one match and said so, and the generator only adds
+    `.first` to locators it was told were ambiguous. Pages gain elements - a
+    footer nav, a second "Home" in a breadcrumb - and a selector that was
+    unique on the day is not any more.
+    """
+    if locator.count() > 1:
+        return locator.first, True
+    return locator, False
+
+
+def _can_be_seen(locator: Locator) -> bool:
+    """Could a person act on this right now? Asked immediately, never waited on.
+
+    An element on its way in is left to the action that follows, which waits
+    for visibility itself. This only decides whether some *other* recorded way
+    of finding it is worth preferring.
+    """
+    try:
+        return locator.first.is_visible()
+    except Exception:  # noqa: BLE001 - gone between the wait and the question
+        return False
+
+
+def _announce(
+    name: str,
+    candidates: list,
+    index: int,
+    strategy: str,
+    ambiguous: bool,
+    *,
+    hidden: bool,
+) -> None:
+    """Say what was driven, whenever it was not simply the recorded way."""
+    if index:
+        because = "was on the page but not visible" if hidden else "stopped matching"
+        warnings.warn(
+            f"{name}: {candidates[0][0]} {because} - used {strategy} instead. "
+            "The page has changed.",
+            Healed,
+            stacklevel=3,
+        )
+
+    if ambiguous:
+        warnings.warn(
+            f"{name}: matches more than one element now - drove the first. "
+            "Give it an id or a data-testid to be sure of which.",
+            Healed,
+            stacklevel=3,
+        )

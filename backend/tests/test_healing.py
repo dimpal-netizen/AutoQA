@@ -316,6 +316,95 @@ def test_a_locator_that_now_matches_twice_drives_the_first(tmp_path: Path):
 
 
 @pytest.mark.integration
+def test_a_hidden_copy_is_passed_over_for_the_one_on_screen(tmp_path: Path):
+    """From run 196, sixty seconds spent on a site that was working:
+
+        waiting for get_by_text("Online Courses", exact=True).first
+          - locator resolved to <a href="/online-cle">
+          - element is not visible          (117 times, then red)
+
+    The site ships a mobile menu and a desktop menu and hides one of them. The
+    recorded way of finding the link matched the hidden copy; the recorded css
+    path matched the copy on screen the whole time.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    page_file = tmp_path / "page.html"
+    page_file.write_text(
+        "<!doctype html><html><body>"
+        '<nav class="mobile" style="display:none"><a href="/m">Online Courses</a></nav>'
+        '<nav class="desktop"><a id="wanted" href="/d">Online Courses</a></nav>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        candidates = [
+            ("text", lambda: page.get_by_text("Online Courses", exact=True).first),
+            ("css", lambda: page.locator("nav.desktop a")),
+        ]
+
+        with pytest.warns(healing.Healed, match="not visible"):
+            located = healing.heal("online_courses_link", candidates, tag="a")
+
+        assert located.first.evaluate("e => e.id") == "wanted"
+        located.click(timeout=2_000)  # usable, not merely found
+        browser.close()
+
+
+@pytest.mark.integration
+def test_an_element_hidden_by_design_is_still_the_answer(tmp_path: Path):
+    """A styled checkbox is 0x0 and every recorded way of finding it says so.
+
+    Preferring what can be seen must not mean healing away from an element
+    that is invisible on purpose — `set_checked` exists to click its label.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    page_file = tmp_path / "page.html"
+    page_file.write_text(
+        "<!doctype html><html><body>"
+        '<label><input id="terms" type="checkbox" style="appearance:none;width:0;height:0">'
+        "I agree</label>"
+        "</body></html>",
+        encoding="utf-8",
+    )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        candidates = [("css", lambda: page.locator("#terms"))]
+        located = healing.heal("terms_checkbox", candidates, tag="input")
+
+        assert located.first.evaluate("e => e.id") == "terms"
+        healing.set_checked(located, True)
+        assert located.is_checked()
+        browser.close()
+
+
+@pytest.mark.integration
 def test_no_warning_when_the_first_way_still_works(tmp_path: Path):
     """Healing must be silent when nothing has changed, or the noise makes the
     warning that matters unreadable."""

@@ -398,19 +398,17 @@ def test_nothing_samples():
 
 def test_every_provider_that_can_be_pinned_is_pinned():
     """A provider left sampling reintroduces the whole problem silently."""
-    from pathlib import Path
+    from app.ai.client import SEED, TEMPERATURE
+    from app.ai.langchain_client import _provider
 
-    ai = Path(__file__).resolve().parent.parent / "app" / "ai"
-    for provider in ("gemini.py", "openai_client.py"):
-        source = (ai / provider).read_text(encoding="utf-8")
-        assert "temperature=TEMPERATURE" in source, provider
-        assert "seed=SEED" in source, provider
+    for name in ("gemini", "openai"):
+        kwargs = _provider(name).kwargs
+        assert kwargs["temperature"] == TEMPERATURE, name
+        assert kwargs["seed"] == SEED, name
 
     # Claude Opus 5 removed temperature outright — sending it is a 400 — so it
     # is steered by the prompt instead. Asserted so nobody "fixes" the gap.
-    claude = (ai / "claude.py").read_text(encoding="utf-8")
-    assert "temperature=" not in claude
-    assert "were REMOVED on Claude Opus 5" in claude
+    assert "temperature" not in _provider("claude").kwargs
 
 
 def test_an_existing_module_name_is_never_reused(recorded):
