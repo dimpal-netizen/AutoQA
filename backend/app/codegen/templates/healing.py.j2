@@ -44,6 +44,10 @@ SPARE_TIMEOUT_MS = 2_000
 #: parallelises across processes.
 _substitutes_allowed = True
 
+#: Cleared while `every` reads a property, for the same reasons and in the same
+#: way. See `every`.
+_narrowing_allowed = True
+
 
 class Healed(UserWarning):
     """The page changed and a recorded alternative was used instead."""
@@ -80,6 +84,28 @@ def unhealed(page_object: object, name: str) -> Locator:
         return getattr(page_object, name)
     finally:
         _substitutes_allowed = True
+
+
+def every(page_object: object, name: str) -> Locator:
+    """All the elements the locator matches, with the choosing switched off.
+
+    Reading a page-object property normally yields one element - `_narrow` takes
+    the first of them - because that is what every step wants: something to
+    click, fill or assert on.
+
+    `pages/_state.py` is the exception, and the only one. A step that was
+    refused needs the list itself, to try the member beside the one the
+    application would not accept. Healing still runs, so a renamed class still
+    falls through to a recorded alternative; it is only the last step, going
+    from "the elements this finds" to "the element to drive", that is left for
+    the caller to do.
+    """
+    global _narrowing_allowed
+    _narrowing_allowed = False
+    try:
+        return getattr(page_object, name)
+    finally:
+        _narrowing_allowed = True
 
 
 #: A hover that opens a menu opens it at once or not at all. Waiting the full
@@ -284,7 +310,11 @@ def _find(name: str, candidates: list, *, tag: str = "") -> Locator:
         # `expect` around this does its own waiting and retrying, and waiting
         # here for an element the test expects to be *gone* would spend
         # PRIMARY_TIMEOUT_MS on every run to learn what it already knew.
-        return candidates[0][1]()
+        # `.first` because a locator left matching a whole set - see
+        # `pages/_state.py` - would make `expect` raise on the count rather than
+        # answer the question, which was about the element and not about which
+        # of them.
+        return candidates[0][1]().first
 
     on_page: Locator | None = None
     on_page_was = (0, "", False)
@@ -302,7 +332,12 @@ def _find(name: str, candidates: list, *, tag: str = "") -> Locator:
         if index and tag and not _same_kind(locator, tag):
             continue
 
-        found, ambiguous = _narrow(locator)
+        if not _narrowing_allowed:
+            # Reached through `every`. The caller wants the list, not a member
+            # of it, and will choose for itself.
+            found, ambiguous = locator, False
+        else:
+            found, ambiguous = _narrow(locator)
 
         # Being in the page is not the same as being on it. Sites carry a
         # desktop and a mobile navigation at once and hide one of them, so a
@@ -322,7 +357,14 @@ def _find(name: str, candidates: list, *, tag: str = "") -> Locator:
         if not _can_be_seen(found):
             continue
 
-        _announce(name, candidates, index, strategy, ambiguous, hidden=found is not on_page)
+        _announce(
+            name,
+            candidates,
+            index,
+            strategy,
+            ambiguous,
+            hidden=found is not on_page,
+        )
         return found
 
     # Nothing visible. The element that is there is still the best answer: it

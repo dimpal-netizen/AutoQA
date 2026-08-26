@@ -29,6 +29,53 @@
   const SCROLL_QUIET_MS = 400;
   const PANEL_ID = "__autoqa_recorder_panel__";
 
+  /* How long to wait before asking what the application said back.
+   *
+   * A recording of what somebody did is only half of what happened. The other
+   * half is the application's answer - it navigated, or it put a message on the
+   * screen - and without it every recorded value looks equally permanent. The
+   * generator cannot tell an address that must be new each run from one that
+   * must already exist, because from a list of clicks and keystrokes the two are
+   * identical. The answer is the thing that tells them apart, and it is only
+   * knowable here, at the moment it arrives.
+   *
+   * Long enough for a round trip to have rendered, short enough to be attached
+   * before the batch goes up. Best-effort throughout: a click that navigates
+   * unloads the page before this fires and the field is simply absent, which is
+   * exactly how a recorder written before this behaves, and what every consumer
+   * of it must go on handling. */
+  const RESPONSE_MS = 900;
+
+  /* Actions younger than this are held back by `flush`, so the answer above has
+   * somewhere to be attached to. One extra tick of latency on the most recent
+   * action, and nothing else changes. */
+  const SETTLE_MS = 1200;
+
+  /* Where applications put the sentence they want you to read. Deliberately
+   * about the *shape* of a message and never about what it says: an alert role,
+   * a live region, a class with error or message in it. Reading which of them
+   * is a refusal happens later and elsewhere - here we only collect. */
+  const MESSAGE_SELECTOR = [
+    "[role=alert]", "[role=status]", "[aria-live]", "[aria-invalid=true]",
+    "[class*=error]", "[class*=Error]", "[class*=alert]", "[class*=Alert]",
+    "[class*=message]", "[class*=Message]", "[class*=toast]", "[class*=Toast]",
+    "[class*=notification]", "[class*=warning]", "[class*=invalid]",
+    "[id*=error]", "[id*=message]",
+  ].join(",");
+
+  const MAX_MESSAGES = 12;
+  const MAX_MESSAGE_CHARS = 300;
+
+  /* Elements that are a dialog by declaration rather than by looking like one.
+   * The ARIA roles and the HTML element, nothing else - a class called "modal"
+   * is on half the pages on the internet whether anything is open or not. */
+  const DIALOG_SELECTOR = "dialog[open],[role=dialog],[role=alertdialog]";
+
+  /* A DOM that has stopped changing. Two polls at the same mutation count is
+   * enough: the point is not to measure the page, only to notice that it has
+   * finished doing whatever the click set off. */
+  const QUIET_MS = 250;
+
   // ==== selector engine ===================================================
   // Ranking must match backend/app/models/enums.py SELECTOR_RANK.
 
@@ -260,11 +307,114 @@
     return out.sort((a, b) => RANK[a.strategy] - RANK[b.strategy] || b.score - a.score);
   }
 
+  /* What the page is saying right now, as a list of sentences.
+   *
+   * Collected before an action and again after it, so that only what *appeared*
+   * is reported. A form that already shows "Required" on three fields would
+   * otherwise report them as the answer to every keystroke after it. */
+  function messagesOnScreen() {
+    const seen = new Set();
+    try {
+      for (const el of document.querySelectorAll(MESSAGE_SELECTOR)) {
+        const text = (el.innerText || "").trim().replace(/\s+/g, " ");
+        if (!text || text.length > MAX_MESSAGE_CHARS) continue;
+        seen.add(text);
+        if (seen.size >= MAX_MESSAGES) break;
+      }
+    } catch {
+      /* A selector the browser dislikes is not worth failing a recording for. */
+    }
+    return seen;
+  }
+
+  /* How much the page has changed since the recorder started watching.
+   *
+   * One observer for the whole document, started once, counting. Comparing a
+   * count before an action with the count after it says whether the click did
+   * anything at all - which is the difference between an outcome worth waiting
+   * for and one there is nothing to wait for. */
+  let mutations = 0;
+  let watcher = null;
+
+  function watchMutations() {
+    if (watcher || typeof MutationObserver !== "function") return;
+    try {
+      watcher = new MutationObserver((records) => { mutations += records.length; });
+      watcher.observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, characterData: true,
+      });
+    } catch {
+      watcher = null;   /* An observer we cannot start is one outcome we cannot see. */
+    }
+  }
+
+  function dialogsOpen() {
+    try {
+      return Array.from(document.querySelectorAll(DIALOG_SELECTOR))
+        .filter((el) => {
+          const box = el.getBoundingClientRect?.();
+          return box && box.width > 0 && box.height > 0;
+        }).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  /* Everything about the page an action could change, as one small object.
+   * Taken before the action and again after it; the difference is the outcome. */
+  function snapshot() {
+    return {
+      url: location.href,
+      title: document.title || "",
+      mutations,
+      dialogs: dialogsOpen(),
+      messages: messagesOnScreen(),
+    };
+  }
+
+  /* What actually happened, in the vocabulary the generator waits on.
+   *
+   * Ordered by how specific the answer is, because a click that navigates also
+   * mutates the DOM and a modal that opens also changes the message count -
+   * so the most decisive observation wins and the rest are recorded as detail.
+   * `quiet` is a real answer and not a failure to find one: plenty of actions
+   * genuinely change nothing a browser can see, and a test that insists on
+   * waiting for something is a test that waits for ever. */
+  function outcomeOf(before, after, startedAt) {
+    const appeared = [...after.messages].filter((text) => !before.messages.has(text));
+    const detail = {
+      url: after.url,
+      navigated: after.url !== before.url,
+      title_changed: after.title !== before.title,
+      dialog_opened: after.dialogs > before.dialogs,
+      dialog_closed: after.dialogs < before.dialogs,
+      mutations: Math.max(0, after.mutations - before.mutations),
+      messages: appeared,
+      settled_ms: Date.now() - startedAt,
+    };
+
+    if (detail.navigated) detail.kind = "navigated";
+    else if (detail.dialog_opened) detail.kind = "dialog_opened";
+    else if (detail.dialog_closed) detail.kind = "dialog_closed";
+    else if (appeared.length) detail.kind = "messages";
+    else if (detail.mutations > 0 || detail.title_changed) detail.kind = "dom_changed";
+    else detail.kind = "quiet";
+
+    return detail;
+  }
+
   function describeElement(el, wasOnScreen) {
     const attributes = {};
-    for (const attr of ["id", "name", "class", "type", "href", "data-testid", "placeholder"]) {
+    // The last five say what the *field* requires, which is the deterministic
+    // half of deciding whether a recorded value can be replayed as it stands.
+    // See `dataroles.py`: a field carrying autocomplete="email" is describing
+    // itself, and describing itself in a way that is the same on every site.
+    for (const attr of [
+      "id", "name", "class", "type", "href", "data-testid", "placeholder",
+      "autocomplete", "pattern", "required", "maxlength", "minlength",
+    ]) {
       const v = el.getAttribute?.(attr);
-      if (v) attributes[attr] = v.slice(0, 200);
+      if (v) attributes[attr] = String(v).slice(0, 200);
     }
     const box = el.getBoundingClientRect?.();
     return {
@@ -368,7 +518,9 @@
     const pageLevel = ["navigate", "scroll"].includes(actionType);
     if (!pageLevel && actionType !== "key_press" && selectors.length === 0) return;
 
-    state.pending.push({
+    const before = snapshot();
+    const startedAt = Date.now();
+    const action = {
       sequence: state.sequence++,
       action_type: actionType,
       timestamp_ms: Date.now() - state.startedAt - state.pausedMs,
@@ -377,7 +529,26 @@
       selectors,
       element: el ? describeElement(el, wasOnScreen(el)) : null,
       payload,
-    });
+      // Stripped by `flush`. Only here so the batch knows not to leave without
+      // the answer below.
+      _recordedAt: Date.now(),
+    };
+    state.pending.push(action);
+
+    // What the application did in reply, attached to the action that provoked
+    // it. Never awaited and never allowed to fail: on a click that navigates
+    // this does not run at all, and `onPageHide` records the navigation
+    // instead. An action with no answer is what every recording made before
+    // this looks like, and everything downstream still has to handle it.
+    setTimeout(() => {
+      try {
+        if (action.response) return;   // `onPageHide` already answered
+        action.response = outcomeOf(before, snapshot(), startedAt);
+      } catch {
+        /* Nothing here is worth interrupting a recording for. */
+      }
+    }, RESPONSE_MS);
+
     state.lastAction = `${actionType} → ${selectors[0]?.strategy ?? "page"}`;
     rememberWhatIsOnScreen();
     notify();
@@ -627,6 +798,36 @@
     record("navigate", null, { url: location.href });
   }
 
+  /* The page is going away, and everything still in `pending` goes with it.
+   *
+   * There was no handler here at all, and the cost was invisible: actions are
+   * uploaded on a two-second tick, so a click that navigated took itself and
+   * anything else waiting with it out of the recording. The action most likely
+   * to be lost was the one that mattered most, and the recording simply came
+   * out shorter than the journey - which reads as the tester having done less,
+   * not as the recorder having dropped something.
+   *
+   * It also answers the outcome question for free. An action still waiting to
+   * hear back when the page is torn away *navigated* - that is what a
+   * navigation looks like from inside the page it leaves. The timer above never
+   * gets to run, so this is the only chance to say so.
+   *
+   * `pagehide` rather than `beforeunload`: it fires for a back/forward cache
+   * eviction too, and it does not ask the browser to show a leave-this-page
+   * prompt. */
+  function onPageHide() {
+    if (!state?.pending?.length) return;
+    for (const action of state.pending) {
+      if (!action.response) {
+        action.response = { url: location.href, navigated: true, kind: "navigated", messages: [] };
+      }
+    }
+    // The dispatch is what matters, not the reply: the binding call is on its
+    // way to the backend before this frame is torn down, and a reply nobody is
+    // left to receive costs nothing.
+    try { flush(); } catch { /* going away regardless */ }
+  }
+
   // `true` = capture phase, so we see events even if the page stops propagation.
   const LISTENERS = [
     ["click", onClick, true],
@@ -638,12 +839,24 @@
     ["drop", onDrop, true],
     ["scroll", onScroll, true],
     ["popstate", onPopState, true],
+    ["pagehide", onPageHide, true],
+    // Some browsers skip `pagehide` when a tab is discarded, and fire this
+    // instead. Flushing twice is free: uploads are idempotent by sequence.
+    ["visibilitychange", () => { if (document.visibilityState === "hidden") onPageHide(); }, true],
   ];
 
-  const attach = () =>
+  const attach = () => {
+    watchMutations();
     LISTENERS.forEach(([t, fn, c]) => document.addEventListener(t, fn, c));
-  const detach = () =>
+    // `pagehide` and `visibilitychange` are delivered to the window and the
+    // document respectively; listening on both costs nothing and misses
+    // neither.
+    window.addEventListener("pagehide", onPageHide, true);
+  };
+  const detach = () => {
     LISTENERS.forEach(([t, fn, c]) => document.removeEventListener(t, fn, c));
+    window.removeEventListener("pagehide", onPageHide, true);
+  };
 
   // ==== upload ============================================================
   async function api(path, body, method = "POST") {
@@ -668,9 +881,28 @@
     return text ? JSON.parse(text) : {};
   }
 
+  /* Everything ready to go up, leaving behind anything still waiting to hear
+   * back. Held actions go on the next tick two seconds later, so the cost is a
+   * little latency on the newest action and nothing at all on the rest.
+   *
+   * `stopping` overrides it: the recording is over, nothing more is coming, and
+   * a held action would be lost rather than delayed. */
+  function readyToSend() {
+    if (state.status === STOPPING) return state.pending.length;
+    const now = Date.now();
+    let count = 0;
+    for (const action of state.pending) {
+      if (action.response === undefined && now - (action._recordedAt ?? 0) < SETTLE_MS) break;
+      count++;
+    }
+    return count;
+  }
+
   async function flush() {
     if (!state?.sessionId || !state.pending.length) return;
-    const batch = state.pending.splice(0, state.pending.length);
+    const ready = readyToSend();
+    if (!ready) return;
+    const batch = state.pending.splice(0, ready).map(({ _recordedAt, ...action }) => action);
     try {
       const result = bridge
         ? await bridge({ type: "actions", actions: batch })

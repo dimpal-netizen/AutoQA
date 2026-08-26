@@ -1,0 +1,40 @@
+A recorded browser session is being turned into a regression test that has to
+pass every time it runs, not just the first time.
+
+The problem: if the recording created a record, replaying the recorded value
+asks the application to create the same record twice, and a correct application
+refuses. The test then goes red against software that is working.
+
+Deterministic rules have already classified every value they could. Below are
+only the ones the rules were unsure about. For each, say whether the value has
+to be different on every run.
+
+You are given what the recording knows and nothing else. There is no page HTML
+here and you should not ask for any: if the fields below do not answer the
+question, say so by choosing UNKNOWN.
+
+    UNIQUE    the application will refuse a second record with this value.
+              Identifiers of a record being created: an email address on a
+              sign-up, a username, a reference or account number, a licence
+              plate, an order reference.
+
+    EXISTING  the value has to already be in the application. A credential
+              being presented, a record being searched for or selected. Making
+              a new one would break the step that follows.
+
+    STATIC    ordinary data. A name, a quantity, an address, a search term, a
+              country. The application does not keep it unique, and changing it
+              would change what the test is testing.
+
+    UNKNOWN   the fields below genuinely do not say. This is a normal answer
+              and a safe one: the recorded value is then replayed as it stands,
+              and replaced only if the application actually objects.
+
+Prefer UNKNOWN over a guess. A value wrongly marked UNIQUE is replaced before
+the test runs, so a test that was signing in with a real account starts signing
+in with an invented one and fails every time.
+
+Application: {start_url}
+
+Fields:
+{fields}

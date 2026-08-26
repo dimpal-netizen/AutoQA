@@ -303,13 +303,29 @@ def built(actions):
     return build_ir(normalise(actions), suite_name="Nav", start_url=URL)
 
 
+def elements(ir):
+    """The locators for elements the recording actually touched.
+
+    A state-dependent element also registers a second locator matching
+    everything of its shape, for the test to reach for if the application
+    refuses the recorded one. No step targets it and it is not an element
+    anybody clicked, so it is not what these tests are counting.
+    """
+    return [
+        loc
+        for page in ir.pages
+        for loc in page.locators
+        if loc.alternatives_for is None
+    ]
+
+
 def test_two_links_with_the_same_name_stay_two_locators() -> None:
     """Both render as get_by_role("link", name="House"). Merged, every step
     aimed at either drives whichever comes first - so the test opened the New
     Projects menu and clicked the Rent item, which was hidden."""
     ir = built([action("click", nav_link(RENT), LINK_WAYS),
                 action("click", nav_link(NEW_PROJECT), LINK_WAYS)])
-    locators = [loc for page in ir.pages for loc in page.locators]
+    locators = elements(ir)
 
     assert len(locators) == 2
     assert RENT in locators[0].expression
@@ -339,7 +355,7 @@ def test_the_same_element_twice_stays_one_locator() -> None:
     ways = [{"strategy": "test_id", "value": "email-input", "unique": True, "score": 99}]
     ir = built([action("click", field, ways), action("input", partial, ways)])
 
-    assert len([loc for page in ir.pages for loc in page.locators]) == 1
+    assert len(elements(ir)) == 1
 
 
 def test_an_element_with_nothing_to_identify_it_never_splits() -> None:
@@ -348,7 +364,7 @@ def test_an_element_with_nothing_to_identify_it_never_splits() -> None:
             "text": "House", "attributes": {}, "bounding_box": VISIBLE}
     ir = built([action("click", bare, LINK_WAYS), action("click", bare, LINK_WAYS)])
 
-    assert len([loc for page in ir.pages for loc in page.locators]) == 1
+    assert len(elements(ir)) == 1
 
 
 # ---------------------------------------------------------------------------

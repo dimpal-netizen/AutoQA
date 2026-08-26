@@ -14,6 +14,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.codegen.converter import TestIR, page_variables
+from app.codegen.dataroles import CONFLICT
 from app.codegen.selectors import py_str
 from app.models.enums import FileType
 
@@ -86,11 +87,39 @@ def render(ir: TestIR, *, browser_info: dict[str, Any] | None = None) -> list[Ge
     # actually heal, so a suite of unique test ids does not carry code it never
     # calls — or when a test asserts on an element, because `unhealed` lives in
     # the same file and a suite of single-candidate locators still imports it.
-    if any(healable(page) for page in ir.pages) or ir.needs_unhealed:
+    # `_state.py` imports `every` from here, so a state-aware suite needs it
+    # whether or not any of its locators can heal.
+    if any(healable(page) for page in ir.pages) or ir.needs_unhealed or ir.needs_state:
         files.append(
             GeneratedFileSpec(
                 path="pages/_healing.py",
                 content=env.get_template("healing.py.j2").render(),
+                file_type=FileType.HELPER,
+            )
+        )
+
+    # Only when a step depends on data or state that may have moved on since it
+    # was recorded. The conflict vocabulary is handed to the template from
+    # `dataroles`, so the half that decides which steps may recover and the half
+    # that decides whether a refusal happened can never drift apart.
+    if ir.needs_state:
+        files.append(
+            GeneratedFileSpec(
+                path="pages/_state.py",
+                content=env.get_template("state.py.j2").render(
+                    conflict_pattern=CONFLICT.pattern
+                ),
+                file_type=FileType.HELPER,
+            )
+        )
+
+    # Only when a step waits for what its action was observed to do. A suite
+    # whose every action navigates never imports it.
+    if ir.needs_sync:
+        files.append(
+            GeneratedFileSpec(
+                path="pages/_sync.py",
+                content=env.get_template("sync.py.j2").render(),
                 file_type=FileType.HELPER,
             )
         )
@@ -111,7 +140,10 @@ def render(ir: TestIR, *, browser_info: dict[str, Any] | None = None) -> list[Ge
         GeneratedFileSpec(
             path="conftest.py",
             content=env.get_template("conftest.py.j2").render(
-                base_url=ir.start_url, viewport_width=width, viewport_height=height
+                base_url=ir.start_url,
+                viewport_width=width,
+                viewport_height=height,
+                needs_state=ir.needs_state,
             ),
             file_type=FileType.CONFTEST,
         )
@@ -160,6 +192,7 @@ def _viewport(browser_info: dict[str, Any] | None) -> tuple[int, int]:
 #: perfectly good Python, it just refers to something that is not there.
 _MUST_BE_IMPORTED = (
     "re", "uuid4", "expect", "sample_file", "set_checked", "reveal", "unhealed",
+    "one_of", "submit", "after",
 )
 
 

@@ -91,6 +91,7 @@ Omit `duration_ms` and the backend uses the last action's `timestamp_ms`.
 | `selectors` | see below | Ranked candidates |
 | `element` | | Snapshot of the element for readable descriptions |
 | `payload` | see below | Action-specific data |
+| `response` | | What the application said back. See below. Optional everywhere |
 
 ### Action types and payloads
 
@@ -146,10 +147,85 @@ Notes:
 - **The backend re-sorts by strategy on ingest**, so the order you send doesn't matter
   and a buggy extension build can't promote a bad selector by inflating `score`.
 - `score` (0–100) only breaks ties between candidates of the same strategy.
-- `unique: false` means the selector matched more than one element when recorded — a
-  strong hint the generated test will be flaky.
+- `unique: false` means the selector matched more than one element when recorded. It
+  is a hint that the generated test may be flaky — and, when the selector is built out
+  of class names rather than positions, it is also how the backend knows the element is
+  one of a *set*: a row, a card, a slot. That is what lets a test whose recorded item is
+  no longer available try a comparable one. See `backend/app/codegen/dataroles.py`.
 - **Reject generated ids.** `#\:r1\:`, `#ember1234`, and long hashes change on every
   build. Emit them as `nth_child` at best, never as `css_id`.
+
+### What the application said back
+
+```json
+"response": {
+  "kind": "dialog_opened",
+  "url": "https://shop.example.com/signup",
+  "navigated": false,
+  "title_changed": false,
+  "dialog_opened": true,
+  "dialog_closed": false,
+  "mutations": 37,
+  "settled_ms": 412,
+  "messages": []
+}
+```
+
+Optional, and optional in every part. Absent on recordings made before it was
+captured, and absent on any action whose page navigated before the reply
+arrived — so nothing downstream may require it.
+
+Why it exists: a recording of what somebody *did* is only half of what happened.
+Without the other half, an address that must be new on every run looks exactly
+like one that must already exist, because from a list of clicks and keystrokes
+the two are identical. That is what makes a recorded test pass once and fail for
+ever after — it replays data the application is right to refuse.
+
+| Field | Notes |
+|---|---|
+| `kind` | What happened, in one word. See below |
+| `url` | Where the page was ~1s after the action |
+| `navigated` | Whether that differs from the action's own `url` |
+| `title_changed` | Whether `document.title` changed |
+| `dialog_opened` / `dialog_closed` | Change in visible `dialog[open]`, `[role=dialog]`, `[role=alertdialog]` |
+| `mutations` | DOM mutations the action set off. `0` means nothing moved |
+| `settled_ms` | How long after the action the observation was taken |
+| `messages` | Text that *appeared* because of this action, up to 32 entries |
+
+`kind` is the decisive observation, and the generator turns it directly into
+what the test waits for:
+
+| `kind` | The test waits for |
+|---|---|
+| `navigated` | the recorded address, or any address but the one it was on |
+| `dialog_opened` | a dialog to become visible |
+| `dialog_closed` | the dialog to go |
+| `messages` | the sentence the application put on screen |
+| `dom_changed` | the DOM to stop changing |
+| `quiet` | **nothing** — the action changed nothing a browser could see |
+
+The order matters: a click that navigates also mutates the DOM, so the most
+decisive answer wins and the rest are kept as detail. `quiet` is a real answer
+rather than a failure to find one — a test that insists on waiting for something
+after an action that did nothing waits for ever.
+
+**A click that navigates never gets to run the observation timer.** The page is
+torn down first. The recorder handles this on `pagehide`: any action still
+waiting to hear back when the page goes away *navigated*, which is what a
+navigation looks like from inside the page it leaves. That same handler flushes
+the upload queue — without it, actions recorded in the two seconds before a
+navigation were lost with the page, and the action most likely to be lost was
+the click that caused it.
+
+`messages` is collected by shape, never by meaning: elements with an alert role,
+a live region, or a class containing `error`/`message`/`alert`. Only text that
+was not on screen before the action is included — a form already showing
+"Required" on three fields must not report them as the answer to every keystroke
+after it. Reading which of them is a *refusal* happens in the backend.
+
+Emitting `response` for an action means the extension must hold that action back
+briefly rather than uploading it immediately. One batch tick of latency on the
+most recent action; nothing else changes.
 
 ### Element snapshot
 
@@ -167,6 +243,16 @@ Notes:
 
 All fields optional. Used for human-readable step descriptions in the UI, and in
 Phase 7 to re-find an element whose selector has drifted.
+
+`attributes` should carry, where the element has them: `id`, `name`, `class`,
+`type`, `href`, `data-testid`, `placeholder`, `autocomplete`, `pattern`,
+`required`, `maxlength`, `minlength`.
+
+The last five are the field describing *itself*, in a vocabulary the HTML spec
+fixed and every site shares — which is what lets the backend tell a value that
+has to be new on every run from one that has to already exist, without knowing
+anything about the application. Omitting them is safe; it only means the backend
+has less to go on and falls back to replaying the recorded value.
 
 ---
 

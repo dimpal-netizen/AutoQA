@@ -126,6 +126,12 @@ class RecordedAction(Base):
     # key_press, and so on. Shape is validated in the Pydantic schema.
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
+    # What the application said back: where it ended up, and any message that
+    # appeared because of this action. Nullable, and null on every recording
+    # made before it was captured - the generator treats it as corroboration
+    # rather than as an input. See `codegen/dataroles.py`.
+    response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
     # Lets a QA engineer drop a noisy step without deleting the evidence.
     is_ignored: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     note: Mapped[str | None] = mapped_column(Text)

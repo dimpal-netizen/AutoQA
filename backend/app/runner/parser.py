@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -44,6 +44,12 @@ class ParsedResult:
     error_message: str | None = None
     stack_trace: str | None = None
     failed_step: int | None = None
+    #: What the test had to change to get through - a fresh value where the
+    #: recorded one was refused, a comparable element where the recorded one was
+    #: not available. Empty on almost every result, and never ignorable when it
+    #: is not: a test that passed by doing something other than what was
+    #: recorded is not the same news as one that passed. See `_adaptations`.
+    adaptations: list[str] = field(default_factory=list)
 
 
 def parse_junit(path: Path) -> list[ParsedResult]:
@@ -67,6 +73,27 @@ def parse_junit(path: Path) -> list[ParsedResult]:
     for case in root.iter("testcase"):
         results.append(_parse_case(case))
     return results
+
+
+#: The property a generated test writes when it did something other than what
+#: was recorded. See `adapted` in the generated pages/_state.py.
+ADAPTATION = "autoqa_adaptation"
+
+
+def _adaptations(case) -> list[str]:
+    """What the test changed to get through, as it reported it.
+
+    pytest carries `record_property` into the JUnit report, which is already the
+    channel everything else here comes down - so a run that adapted arrives with
+    the evidence attached, and no separate file has to survive the workspace
+    being deleted.
+    """
+    found = []
+    for properties in case.iter("properties"):
+        for prop in properties.iter("property"):
+            if prop.get("name") == ADAPTATION and prop.get("value"):
+                found.append(str(prop.get("value"))[:500])
+    return found
 
 
 def _parse_case(case) -> ParsedResult:
@@ -99,6 +126,7 @@ def _parse_case(case) -> ParsedResult:
             error_message=_summarise(failure.get("message")),
             stack_trace=trace.strip() or None,
             failed_step=_failed_step(trace),
+            adaptations=_adaptations(case),
         )
 
     if error is not None:
@@ -112,6 +140,7 @@ def _parse_case(case) -> ParsedResult:
             duration_ms=duration_ms,
             error_message=_error_summary(error.get("message"), trace),
             stack_trace=trace,
+            adaptations=_adaptations(case),
         )
 
     if skipped is not None:
@@ -123,7 +152,10 @@ def _parse_case(case) -> ParsedResult:
         )
 
     return ParsedResult(
-        function_name=function_name, status=ResultStatus.PASSED, duration_ms=duration_ms
+        function_name=function_name,
+        status=ResultStatus.PASSED,
+        duration_ms=duration_ms,
+        adaptations=_adaptations(case),
     )
 
 

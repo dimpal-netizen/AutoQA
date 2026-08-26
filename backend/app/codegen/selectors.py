@@ -403,6 +403,7 @@ def locator_expression(
     answering to the same name, and it goes on *before* `.first` - the whole
     point is to choose which one, and `.first.and_(...)` would pick one and then
     check it, which is the same guess with an extra step.
+
     """
     ambiguous = not selector.unique or (
         selector.strategy in _VISIBLE_NAME and not scoped

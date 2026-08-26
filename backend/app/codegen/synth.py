@@ -567,6 +567,17 @@ def elements(pages: list[PageSpec]) -> list[dict[str, object]]:
 
     Returned in the `page_var.locator_name` form steps are stored in, so what
     the editor sends back is what comes out of the database next time.
+
+    One kind is deliberately absent. A state-dependent element registers a
+    second locator matching everything of its shape, for `one_of` to reach for
+    after the application refuses the recorded one. Nobody clicked it, no step
+    targets it, and it names a *set* rather than a thing - so offering it as
+    somewhere a step could point produced exactly what you would expect:
+
+        step 2: CatalogPage.product_add_to_cart_5_button_alternatives is on
+        /catalog, but the case is still on / …
+
+    an invented case aiming at internal machinery. See `LocatorSpec.alternatives_for`.
     """
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
     out: list[dict[str, object]] = []
@@ -576,6 +587,8 @@ def elements(pages: list[PageSpec]) -> list[dict[str, object]]:
         if variable is None:
             continue
         for locator in page.locators:
+            if locator.alternatives_for is not None:
+                continue
             out.append(
                 {
                     "target": f"{variable}.{locator.name}",

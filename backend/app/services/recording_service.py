@@ -136,6 +136,12 @@ class RecordingService:
                 "selectors": [s.model_dump(mode="json") for s in action.selectors],
                 "element": action.element.model_dump(mode="json") if action.element else None,
                 "payload": action.payload,
+                # None on any action whose page navigated before the reply
+                # arrived, and on every recording made by an extension that
+                # predates it. See `ApplicationResponse`.
+                "response": (
+                    action.response.model_dump(mode="json") if action.response else None
+                ),
                 "note": action.note,
                 "is_ignored": False,
             }

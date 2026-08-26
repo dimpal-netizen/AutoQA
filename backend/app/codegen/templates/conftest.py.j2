@@ -61,6 +61,38 @@ ACTION_TIMEOUT_MS = int(os.environ.get("AUTOQA_ACTION_TIMEOUT_MS", 60_000))
 ARTIFACTS = Path(__file__).parent / "artifacts"
 
 
+{% if needs_state %}
+@pytest.fixture(autouse=True)
+def _state_awareness(request: pytest.FixtureRequest, page: Page):
+    """Watch for application failures, and report anything the test had to adapt.
+
+    Two jobs, and both have to happen here because both need the page before the
+    test does. `watch` subscribes to the responses and JavaScript errors that
+    say the application is broken - the one piece of evidence that closes the
+    recovery gate, and it is gone by the time a step has finished failing.
+
+    Afterwards, every substitution the test made is attached to the result.
+    `record_property` puts it in the JUnit report, which is what AutoQA reads
+    back, so a run that adapted arrives in the report saying so. A recovered
+    test that looks like an ordinary pass is worse than a failing one: it is
+    evidence of nothing, and nobody knows to ask.
+    """
+    from urllib.parse import urlparse
+
+    from pages import _state
+
+    _state.reset()
+    # Scoped to the application under test. A real page fetches from a dozen
+    # places nobody here has an opinion about - analytics, tag managers, fonts,
+    # chat widgets - and those fail constantly. Counting them as evidence that
+    # the application is broken fails working tests for somebody else's outage.
+    _state.watch(page, site=urlparse(os.environ.get("BASE_URL", DEFAULT_BASE_URL)).netloc)
+    yield
+    for note in _state.adaptations():
+        request.node.user_properties.append(("autoqa_adaptation", note))
+
+
+{% endif %}
 @pytest.fixture(autouse=True)
 def _patient_actions(page: Page) -> None:
     """Give every action and navigation on this page the timeout above.

@@ -31,6 +31,12 @@ from pages._healing import {{ helpers | sort | join(", ") }}
 {% if ir.needs_sample_file %}
 from pages._files import sample_file
 {% endif %}
+{% if ir.state_helpers %}
+from pages._state import {{ ir.state_helpers | join(", ") }}
+{% endif %}
+{% if ir.needs_sync %}
+from pages._sync import after
+{% endif %}
 {% for variable, class_name in page_vars %}
 from pages.{{ modules[class_name] }} import {{ class_name }}
 {% endfor %}

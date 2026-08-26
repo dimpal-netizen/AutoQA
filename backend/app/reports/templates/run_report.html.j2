@@ -88,12 +88,37 @@
       <tr>
         <td>{{ row.name }}</td>
         <td>{{ row.browser }}</td>
-        <td><span class="badge {{ row.badge }}">{{ row.status }}</span></td>
+        <td><span class="badge {{ row.badge }}">{{ row.status }}</span>{% if row.adapted %} <span class="badge b-warn">adapted</span>{% endif %}</td>
         <td class="tabular" style="text-align:right">{{ row.duration }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+
+  {% if adapted %}
+  <h2>Adapted to the application's state ({{ adapted | length }})</h2>
+  <p>
+    These tests passed, but not by doing exactly what was recorded. The
+    application refused the recorded data or state - it already existed, or was
+    no longer available - so the test used something equivalent and carried on.
+    Worth a look: a test that adapts on every run is telling you the
+    application has moved away from what was recorded.
+  </p>
+  <table>
+    <thead>
+      <tr><th>Test</th><th>Browser</th><th>What changed</th></tr>
+    </thead>
+    <tbody>
+      {% for row in adapted %}
+      <tr>
+        <td>{{ row.name }}</td>
+        <td>{{ row.browser }}</td>
+        <td>{{ row.note }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 
   {% if failures %}
   <h2>Failures ({{ failures | length }})</h2>

@@ -55,6 +55,9 @@ class ResultRead(BaseModel):
     error_message: str | None = None
     stack_trace: str | None = None
     failed_step: int | None = None
+    #: What the test changed to get through, when the recorded data or state was
+    #: no longer acceptable. A pass with entries here is not an ordinary pass.
+    adaptations: list[str] = []
     retries: int = 0
     artifacts: list[ArtifactRead] = []
 

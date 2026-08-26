@@ -83,6 +83,52 @@ class ElementInfo(BaseModel):
     was_on_screen: bool | None = None
 
 
+class ApplicationResponse(BaseModel):
+    """What the application did in reply to one action.
+
+    A recording of what somebody did is only half of what happened; this is the
+    other half. Without it every recorded value looks equally permanent, because
+    from a list of clicks and keystrokes an address that must be new on every run
+    is indistinguishable from one that must already exist. The reply is what
+    tells them apart, and it is only knowable while the page is still in front of
+    the recorder.
+
+    Every field is optional and the whole object is optional, so a recording made
+    by an older extension - or one whose page navigated before the reply
+    arrived - is exactly as valid as it ever was. Nothing downstream may require
+    it; see `dataroles.py`, where it is treated as corroboration rather than as
+    an input.
+    """
+
+    #: What kind of thing happened, in the vocabulary the generator waits on:
+    #: navigated, dialog_opened, dialog_closed, messages, dom_changed, quiet.
+    #: The most decisive observation wins - a click that navigates also mutates
+    #: the DOM - and the rest are kept below as detail.
+    #:
+    #: `quiet` is a real answer, not a failure to find one. Plenty of actions
+    #: change nothing a browser can see, and a test that insists on waiting for
+    #: something after one waits for ever.
+    kind: str | None = Field(default=None, max_length=32)
+
+    url: str | None = Field(default=None, max_length=2048)
+    navigated: bool | None = None
+    title_changed: bool | None = None
+    dialog_opened: bool | None = None
+    dialog_closed: bool | None = None
+    #: How many DOM mutations the action set off. Zero means nothing on the page
+    #: moved, which is what makes "wait for nothing" a safe answer rather than a
+    #: guess.
+    mutations: int | None = Field(default=None, ge=0)
+    #: How long after the action the observation was taken, in milliseconds.
+    #: Recorded, never replayed - it says how patient the application needed
+    #: somebody to be, not how long the test should sleep.
+    settled_ms: int | None = Field(default=None, ge=0)
+    #: Sentences that *appeared* because of this action, not everything on the
+    #: page. Collected by shape - an alert role, a live region, a class with
+    #: error in it - never by what they say. Reading them happens later.
+    messages: list[str] = Field(default_factory=list, max_length=32)
+
+
 class ViewportInfo(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
@@ -110,6 +156,10 @@ class RecordedActionIn(BaseModel):
     selectors: list[Selector] = Field(default_factory=list)
     element: ElementInfo | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+    #: What the application said back. Absent on every recording made before it
+    #: was captured, and on any action whose page navigated before the reply
+    #: arrived - so it is corroboration, never a requirement.
+    response: ApplicationResponse | None = None
 
     note: str | None = None
 
@@ -195,6 +245,7 @@ class RecordedActionRead(BaseModel):
     selectors: list[Selector]
     element: ElementInfo | None
     payload: dict[str, Any]
+    response: ApplicationResponse | None = None
     is_ignored: bool
     note: str | None
 

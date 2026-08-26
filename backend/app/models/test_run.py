@@ -130,6 +130,17 @@ class TestResult(Base, TimestampMixin):
     # the difference between "it failed" and "it failed clicking Login".
     failed_step: Mapped[int | None] = mapped_column(Integer)
     retries: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # What the test had to change to get through, when the recorded data or
+    # state was no longer acceptable to the application: a fresh value in place
+    # of one it refused as a duplicate, a comparable element in place of one no
+    # longer available. Empty on almost every result.
+    #
+    # Stored rather than merely logged because a pass reached this way is not
+    # the same news as a pass. Somebody deciding whether to ship needs to be
+    # able to see that the workflow ran on different data - and to notice when
+    # a test has been quietly adapting on every run for a month, which is an
+    # application changing under it, not a test doing its job.
+    adaptations: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
 
     run: Mapped["TestRun"] = relationship(back_populates="results")
     test_case: Mapped["TestCase | None"] = relationship()

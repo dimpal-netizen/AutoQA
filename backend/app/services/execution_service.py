@@ -341,6 +341,7 @@ class ExecutionService:
                 error_message=parsed.error_message,
                 stack_trace=parsed.stack_trace,
                 failed_step=failed_step,
+                adaptations=parsed.adaptations,
             )
             self.db.flush()  # need the id to attach artifacts
             by_function[parsed.function_name] = result.id

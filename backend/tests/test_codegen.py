@@ -441,8 +441,12 @@ def test_the_test_body_covers_every_action(generated, sample) -> None:
         ".set_input_files(",
         ".drag_to(",
         "page.mouse.wheel(",
+        # Not `page.wait_for_url(` any more. What a step waits for is chosen
+        # from what the recorder observed the action doing - a navigation, a
+        # dialog, a message, the DOM settling - so the wait is one named call
+        # rather than one hardcoded assumption. See `_sync_call`.
+        "after(page, 'navigated'",
         "expect(",
-        "page.wait_for_url(",
     ]:
         assert fragment in code, f"generated test never uses {fragment}"
 

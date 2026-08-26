@@ -14,6 +14,7 @@ from app.ai.case_generator import (
     accept_all,
     generate_cases,
 )
+from app.ai.dataroles_ai import refine as refine_roles
 from app.ai.enhancer import enhance
 from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
@@ -251,6 +252,7 @@ class CodegenService:
                 "selectors": a.selectors,
                 "element": a.element,
                 "payload": a.payload,
+                "response": a.response,
                 "is_ignored": a.is_ignored,
             }
             for a in actions
@@ -274,7 +276,12 @@ class CodegenService:
         # anything narrower can be written against it afterwards - by hand, by
         # the model, or from the recording. See `segments.py`, which still
         # answers "where did they start over" for anything that wants to know.
-        ir = build_ir(raw, suite_name=suite_name, start_url=session.start_url)
+        ir = build_ir(
+            raw,
+            suite_name=suite_name,
+            start_url=session.start_url,
+            refine_roles=refine_roles,
+        )
 
         # AI pass: better names and descriptions on code that already works.
         # `enhance` never raises and never writes code, so the worst case here
@@ -751,12 +758,14 @@ class CodegenService:
                     "selectors": a.selectors,
                     "element": a.element,
                     "payload": a.payload,
+                    "response": a.response,
                     "is_ignored": a.is_ignored,
                 }
                 for a in actions
             ],
             suite_name=suite.name,
             start_url=suite.recording.start_url,
+            refine_roles=refine_roles,
         )
         return ir
 
