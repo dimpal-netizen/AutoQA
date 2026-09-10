@@ -1,0 +1,29 @@
+# Build context hygiene. Without this the 1.5 GB of run artifacts under
+# .autoqa/ and both node_modules trees are uploaded to the daemon on every
+# build, which turns a thirty-second rebuild into several minutes.
+.git
+.gitignore
+.vscode
+
+# Run artifacts: traces, videos, screenshots. Large, and rebuilt per run.
+.autoqa/
+generated/
+
+# Local secrets. The compose file passes real values as environment.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Dependencies, restored inside the image.
+**/node_modules/
+**/.next/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+frontend/tsconfig.tsbuildinfo
+
+# Tests and docs are not needed to run the thing.
+backend/tests/

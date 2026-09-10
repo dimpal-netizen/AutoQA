@@ -676,3 +676,85 @@ def test_a_name_defined_in_the_file_counts_as_provided() -> None:
             file_type=FileType.HELPER,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Recorded text that lands inside a docstring
+#
+# A docstring is an ordinary string literal, so everything in it goes through
+# escape processing - and recorded selectors are full of backslashes, because
+# that is how CSS escapes a colon in a class name. Tailwind writes `md:flex`,
+# the DOM reports `md\:flex`, and every generated suite carried
+#
+#   pages/home_page.py:24: SyntaxWarning: invalid escape sequence '\:'
+#
+# Today a warning, and `\:` quietly means two characters rather than one. In a
+# later Python it is a SyntaxError and the suite stops importing altogether.
+# ---------------------------------------------------------------------------
+def _escaped_class_action(seq: int) -> dict:
+    """A click whose recorded CSS carries a Tailwind escape."""
+    return {
+        "sequence": seq,
+        "action_type": "click",
+        "url": "https://s.test/",
+        "frame_path": [],
+        "selectors": [
+            {"strategy": "role_name", "value": "button|Sign In", "unique": True,
+             "score": 95},
+            {"strategy": "css", "value": r"div.hidden.md\:flex button.inline-flex",
+             "unique": False, "score": 55},
+        ],
+        "element": {
+            "tag": "button", "input_type": None, "role": "button",
+            "accessible_name": "Sign In", "text": "Sign In", "attributes": {},
+        },
+        "payload": {},
+        "is_ignored": False,
+    }
+
+
+def test_a_selector_with_a_css_escape_does_not_break_the_docstring() -> None:
+    import warnings
+
+    ir = build_ir([_escaped_class_action(0)], suite_name="Sign in",
+                  start_url="https://s.test/")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        files = {f.path: f.content for f in render(ir, browser_info={})}
+
+    page = next(c for p, c in files.items() if p.startswith("pages/") and "_" not in p[6:7])
+
+    # The backslash survives into the source doubled, so a reader of the
+    # docstring sees exactly the selector the recorder saw.
+    assert r"md\\:flex" in page
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        ast.parse(page)
+
+
+def test_validate_refuses_code_python_would_only_warn_about() -> None:
+    """The reason this shipped at all. `ast.parse` compiled it happily and said
+    everything it had to say through the warnings module, which nobody was
+    listening to."""
+    spec = GeneratedFileSpec(
+        path="pages/warned.py",
+        content='def f():\n    """Located by css: div.md\\:flex"""\n    return 1\n',
+        file_type=FileType.PAGE_OBJECT,
+    )
+
+    with pytest.raises(GeneratedCodeError, match="SyntaxWarning"):
+        validate(spec)
+
+
+def test_a_suite_name_with_a_backslash_survives_the_docstring() -> None:
+    import warnings
+
+    ir = build_ir([_escaped_class_action(0)], suite_name=r"Sign in \ out",
+                  start_url="https://s.test/")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        files = {f.path: f.content for f in render(ir, browser_info={})}
+        ast.parse(next(c for p, c in files.items() if p.startswith("tests/")))
+

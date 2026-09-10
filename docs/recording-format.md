@@ -87,7 +87,7 @@ Omit `duration_ms` and the backend uses the last action's `timestamp_ms`.
 | `action_type` | ✅ | One of the 13 below |
 | `timestamp_ms` | ✅ | Milliseconds since the recording started |
 | `url` | ✅ | Page URL when the action happened |
-| `frame_path` | | iframe chain, outermost first. `[]` for the main frame |
+| `frame_path` | | The frames between the page and the element, outermost first. `[]` for the main frame, which is almost every element. See below |
 | `selectors` | see below | Ranked candidates |
 | `element` | | Snapshot of the element for readable descriptions |
 | `payload` | see below | Action-specific data |
@@ -154,6 +154,45 @@ Notes:
   no longer available try a comparable one. See `backend/app/codegen/dataroles.py`.
 - **Reject generated ids.** `#\:r1\:`, `#ember1234`, and long hashes change on every
   build. Emit them as `nth_child` at best, never as `css_id`.
+
+### Frames
+
+An element inside an `<iframe>` is meaningless without the frames above it, so
+each one is *described* rather than pointed at:
+
+```json
+"frame_path": [
+  { "name": "checkout", "title": "Checkout", "index": 0 },
+  { "src": "https://pay.example.com/widget?session=abc",
+    "url": "https://pay.example.com/widget/card", "index": 1 }
+]
+```
+
+| Field | Notes |
+|---|---|
+| `name` | The `name` attribute — a developer's own handle on the frame |
+| `title` | The `title` attribute |
+| `element_id` | The `id`, unless it looks build-generated |
+| `src` | What the frame loads. Matched on its path, so a session token in the query does not make it a different frame |
+| `url` | Where the frame had got to, which is not always its `src` |
+| `index` | Position among its siblings. **A fallback, never a first choice** |
+
+The generator picks the first of `name`, `title`, `element_id`, `src` that is
+present, and falls back to the index. The order is about who decided the value:
+the first three are choices somebody made about *that* frame, `src` is a fact
+about it, and an index is a fact about its **neighbours** — a page that gains a
+chat widget renumbers every frame after it.
+
+A list of plain strings is also accepted and treated as literal iframe
+selectors. That is what every recording made before frames were captured
+carries, and since the only value ever sent was `[]`, it is a promise about
+nothing.
+
+**Who fills this in.** In browser-recorder mode, the *backend* does, from
+Playwright's own view of which frame a message arrived from. A script inside a
+cross-origin frame cannot see the document that holds it — `window.frameElement`
+throws, by design, and that design is a browser security boundary. Playwright
+sits outside it and can see both sides.
 
 ### What the application said back
 

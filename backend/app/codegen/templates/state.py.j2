@@ -21,6 +21,15 @@ purpose:
   a page that simply did not do what it did during recording - is left to fail,
   because "it did not work and nobody said why" is what a defect looks like too.
 
+* **In its own words, wherever it says them.** Plenty of applications never
+  write the refusal into the page at all. They answer the request the step made
+  - `200 OK`, `{"status":"error","msg":"… has already purchased"}` - and their
+  own script decides to render nothing, so the button simply does not work and
+  the page sits there saying nothing. Reading only the DOM reports that as "it
+  did not do what it did when it was recorded and gave no reason", which is a
+  true sentence about a message the browser was holding all along. So the
+  application's answers are read as well as its pages.
+
 * **Evidence of a defect stops everything.** A 5xx, a JavaScript exception, a
   stack trace on the page: these end the attempt immediately and let the test
   fail. Retrying through a broken application until something goes green is the
@@ -33,6 +42,7 @@ purpose:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -40,6 +50,25 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from pages._healing import every
+
+
+class NoValidTestData(AssertionError):
+    """Nothing on the page could stand in for the data the recording used.
+
+    Distinct from `StateConflict` because it calls for something different.
+    A conflict says the application refused; this says the application was
+    willing and the *fixture* has run out - every course bought, every seat
+    taken, every reference already registered. Nobody should be sent to debug
+    the application for it, and nobody should be able to mistake it for a pass.
+
+    `step` is the step that could not be got past, and it is what tells an
+    enclosing `workflow` whether this is the end of the road. Raised at the
+    choice itself, the fixture really has run out. Raised anywhere else, it
+    means only that the step could not recover *where it stood* - which is
+    precisely what the workflow exists to do somewhere else.
+    """
+
+    step: int | None = None
 
 
 class StateConflict(AssertionError):
@@ -86,8 +115,24 @@ SETTLE_MS = int(os.environ.get("AUTOQA_ACTION_TIMEOUT_MS", 60_000))
 #: form is resubmitted with new data. Bounded because "keep trying" is not a
 #: test strategy: an application refusing twenty times has something to say and
 #: the report should carry it rather than a tally of attempts.
-MAX_MEMBERS = 8
-MAX_SUBMISSIONS = 3
+#:
+#: Three was too few, and it was reported as though it were the application's
+#: fault. A catalogue page offers a dozen or more of the same thing; giving up
+#: after three of them and saying "the fixture has run out of usable data" is
+#: untrue - nine were never looked at. The bound is there to stop a loop, not
+#: to sample, so it belongs near the size of a page of results.
+MAX_MEMBERS = int(os.environ.get("AUTOQA_MAX_DATA_CANDIDATES", 12))
+MAX_SUBMISSIONS = int(os.environ.get("AUTOQA_MAX_SUBMISSIONS", 3))
+
+#: How alike a candidate has to be before it stands in for the recorded data.
+#:
+#: The whole point of a threshold rather than "the next one that is clickable".
+#: A list of courses and a Download PDF link can sit in the same markup and
+#: answer the same selector, and swapping one for the other does not preserve
+#: what the test was about - it just makes something green. Below this line the
+#: run stops with `NO_VALID_TEST_DATA`, which is a true report and an actionable
+#: one.
+ALIKE_ENOUGH = 0.80
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +144,32 @@ class _Evidence:
 
     defects: list = field(default_factory=list)
     adaptations: list = field(default_factory=list)
+    #: The application's own answers to the requests the steps made, newest
+    #: last. Kept unread: the body is only fetched when a step has to work out
+    #: whether it was refused, so a run where everything works pays nothing for
+    #: this. See `_wire_refusal`.
+    answers: list = field(default_factory=list)
+    #: Entities a *later* step refused, so the selection point stops offering
+    #: them. Kept by the text on the element rather than by the element itself,
+    #: because rewinding reloads the page and every stamp on it goes with it.
+    refused_later: set = field(default_factory=set)
+    #: What the selection point last chose, so a refusal further on knows which
+    #: entity to blame.
+    in_play: str = ""
+    #: What the application said the last time it refused, for the report.
+    last_refusal: str = ""
+    #: Recorded value -> what actually ran, for the rest of the test.
+    #:
+    #: Substituting at the step that failed and nowhere else is the bug this
+    #: exists to prevent. A workflow picks an item, then adds it, then checks
+    #: out with it, then confirms it by name - and a test that swaps the first
+    #: of those and replays the recorded name in the other three is not testing
+    #: a workflow, it is testing four unrelated things, three of which now refer
+    #: to something nobody selected.
+    #:
+    #: Keyed on the recorded text, so a workflow using two entities substitutes
+    #: whichever of them ran out and leaves the other exactly as recorded.
+    standing_in: dict = field(default_factory=dict)
 
 
 _seen = _Evidence()
@@ -127,13 +198,94 @@ def watch(page, *, site: str = "") -> None:
         "response",
         lambda response: (
             _seen.defects.append(f"HTTP {response.status} from {response.url[:200]}")
-            if response.status >= 500 and _belongs_to(response.url, site)
+            if response.status >= 500
+            and _belongs_to(response.url, site)
+            and not _guessed_at(response)
             else None
         ),
     )
     page.on(
         "pageerror",
         lambda error: _seen.defects.append(f"JavaScript error: {str(error)[:200]}"),
+    )
+    page.on("response", lambda response: _remember(response, site))
+
+
+#: How many of the application's answers are kept. A refusal comes back in the
+#: answer to the request the step made, so the interesting one is always among
+#: the most recent handful; a page that polls in the background would otherwise
+#: grow this without bound over a long test.
+MAX_ANSWERS = 40
+
+#: How much of an answer is read. Big enough for any message an application
+#: writes, small enough that a file download or an embedded image is skipped
+#: rather than searched.
+MAX_BODY = 200_000
+
+
+def _remember(response, site: str) -> None:
+    """Keep the application's answer to a step, in case the step has to explain
+    itself later.
+
+    Only what the page *asked for*: `xhr` and `fetch`, which is exactly a script
+    on the page putting a question to its own back end. Documents are left out
+    because the DOM scan already reads those, and everything else - images,
+    stylesheets, fonts, the analytics beacons - has nothing to say about whether
+    a step was refused.
+
+    Nothing is read here. The body is fetched later, by the one step that needs
+    it, because reading every answer of every request would cost a round trip
+    per asset on every page in the suite.
+    """
+    try:
+        if response.request.resource_type not in ("xhr", "fetch"):
+            return
+        if not _belongs_to(response.url, site) or _guessed_at(response):
+            return
+    except Exception:  # noqa: BLE001 - unreadable answers are not evidence
+        return
+    _seen.answers.append(response)
+    del _seen.answers[:-MAX_ANSWERS]
+
+
+#: Headers a browser sets when it is fetching something on spec.
+#:
+#: `Sec-Purpose` is the Speculation Rules header; `Purpose` and `X-Moz` are what
+#: browsers sent for the same thing before it was specified. Any of them means
+#: the request was a guess about what would be wanted next.
+_ON_SPEC = ("sec-purpose", "purpose", "x-moz")
+
+
+def _guessed_at(response) -> bool:
+    """Was this a request the browser made on spec, rather than one it needed?
+
+    The distinction decides whether a 5xx is evidence of anything, and getting
+    it wrong stopped a working sign-in dead. Cloudflare's Speed Brain injects
+    speculation rules, the browser prefetches the page behind the button before
+    it is pressed, and on this site that prefetch came back
+
+        503  other  https://qademo.com/login
+            sec-purpose: prefetch
+            sec-speculation-tags: "cf-speed-brain"
+
+    while the actual navigation a moment later returned the login page
+    perfectly. Nothing the test did was affected and nothing a person would
+    have seen was wrong - but a 5xx from the application's own host is the one
+    thing that stops everything, so the step failed and reported the
+    application broken on the strength of a guess that did not pan out.
+
+    A failed speculation is the browser being wrong about the future. Only what
+    the page actually asked for says anything about whether the application
+    works.
+    """
+    try:
+        headers = response.request.headers
+    except Exception:  # noqa: BLE001 - unreadable; counted, as everywhere else
+        return False
+    return any(
+        word in str(headers.get(name, "")).lower()
+        for name in _ON_SPEC
+        for word in ("prefetch", "prerender")
     )
 
 
@@ -164,6 +316,28 @@ def reset() -> None:
     """Forget everything from the previous test. Called by conftest."""
     _seen.defects.clear()
     _seen.adaptations.clear()
+    _seen.answers.clear()
+    _seen.standing_in.clear()
+    _seen.refused_later.clear()
+    _seen.in_play = ""
+    _seen.last_refusal = ""
+
+
+def instead(recorded: str) -> str:
+    """What actually ran in place of this recorded value.
+
+    Wrapped around every literal in the generated test that names data the
+    workflow might have had to replace - an expected value, a filled field, a
+    label looked for later on. Returns the recorded value unchanged when
+    nothing was substituted, which is almost always, so a test where everything
+    worked reads exactly as it was recorded.
+    """
+    return _seen.standing_in.get(recorded, recorded)
+
+
+def substituted() -> dict:
+    """The whole mapping, for the report. Recorded value -> what ran."""
+    return dict(_seen.standing_in)
 
 
 def adaptations() -> list:
@@ -219,7 +393,7 @@ def _mark(page) -> tuple:
         _conflicts(page).evaluate_all(f"els => els.forEach(el => el.setAttribute({SEEN!r}, '1'))")
     except Exception:  # noqa: BLE001 - unstampable only costs a re-read
         pass
-    return (len(_seen.defects),)
+    return (len(_seen.defects), len(_seen.answers))
 
 
 def _conflicts(page):
@@ -233,6 +407,10 @@ def _verdict(page, mark: tuple, navigates) -> tuple:
     read first and ends the matter, so an application that is failing cannot be
     retried into a pass by a test that noticed the refusal message first.
 
+    Then whether the step did what it was recorded doing, which is the only
+    unambiguous evidence of success there is - and which has to be settled
+    before anything is read off the page. See below.
+
     Then the refusal, which is the only thing that ever justifies trying again.
 
     What is left over is the interesting case, and it is deliberately treated as
@@ -242,7 +420,7 @@ def _verdict(page, mark: tuple, navigates) -> tuple:
     one, only the first is recoverable. So the test fails, and a person reads the
     report.
     """
-    (defects,) = mark
+    defects, answers = mark
 
     if navigates is not None:
         try:
@@ -257,7 +435,11 @@ def _verdict(page, mark: tuple, navigates) -> tuple:
         # the application accepted it quietly, which is what acceptance looks
         # like on most forms.
         deadline = time.monotonic() + REFUSAL_MS / 1_000
-        while time.monotonic() < deadline and not _refusal(page):
+        while (
+            time.monotonic() < deadline
+            and not _refusal(page)
+            and not _wire_refusal(answers)
+        ):
             try:
                 page.wait_for_timeout(120)
             except Exception:  # noqa: BLE001 - page gone; the read below decides
@@ -284,17 +466,39 @@ def _verdict(page, mark: tuple, navigates) -> tuple:
     if on_page:
         return BROKEN, on_page
 
-    said = _refusal(page)
+    # Arriving where the recording arrived *is* the step working, and that has
+    # to be settled before the page is read for refusals - because a step that
+    # navigates lands on a document none of whose text was stamped by `_mark`.
+    # Everything on it is unseen by definition, so every word on the
+    # destination that happens to be refusal vocabulary reads as a refusal this
+    # step provoked.
+    #
+    # It reads exactly as absurdly as it sounds. A sign-in that worked, landing
+    # on the catalogue it was recorded landing on, was reported as
+    #
+    #   Step 7 (Click "Sign in"): the application refused the recorded data -
+    #   Out of Stock
+    #
+    # because one product on that catalogue was out of stock. The test then
+    # went looking for another Sign in button to press, on the catalogue.
+    #
+    # A refusal is something an application says *instead* of doing what was
+    # asked. If it did what was asked, nothing it says is a refusal of it.
+    if arrived:
+        return ACCEPTED, ""
+
+    said = _refusal(page) or _wire_refusal(answers)
     if said:
         return REFUSED, said
 
-    if navigates is None or arrived:
+    if navigates is None:
         return ACCEPTED, ""
 
     return BROKEN, (
         f"it did not reach {navigates.pattern!r} within {SETTLE_MS}ms, as it did "
-        "when it was recorded, and the application gave no reason - which is "
-        "what a defect looks like, so nothing was retried"
+        "when it was recorded, and the application gave no reason - not on the "
+        "page and not in its answer to the request - which is what a defect "
+        "looks like, so nothing was retried"
     )
 
 
@@ -331,6 +535,72 @@ def _refusal(page) -> str:
     return ""
 
 
+def _wire_refusal(since: int) -> str:
+    """The refusal the application sent back, if it sent one and never showed it.
+
+    The case the DOM cannot cover, and it is not an exotic one. A script on the
+    page posts the step's request, the application answers `200 OK` with
+    `{"status":"error","msg":"Course … has already purchased"}`, and the script
+    does nothing with it. Nothing changes on screen, nothing navigates, and the
+    step fails with the application's own explanation sitting unread in a
+    response the browser has been holding the whole time.
+
+    Read newest first: a step that provoked several requests is being judged on
+    the last word it got, and an earlier answer may well have been fine.
+
+    `since` is how many answers had already arrived before the step, so a
+    refusal from a previous step is never read as this one's - the same question
+    `_refusal` answers by stamping what was already on the page.
+    """
+    for response in reversed(_seen.answers[since:]):
+        said = _said_in(response)
+        if said:
+            return said
+    return ""
+
+
+def _said_in(response) -> str:
+    """A refusal in one answer, in the application's own words."""
+    try:
+        body = response.text()
+    except Exception:  # noqa: BLE001 - a body that has gone is not evidence
+        return ""
+    if not body or len(body) > MAX_BODY or not CONFLICT.search(body):
+        return ""
+
+    # The application's own string, preferred over the raw bytes it arrived in:
+    # a report should carry `Course X has already purchased`, not
+    # `{"status":"error","msg":"Course X has already purchas`. Falls back to a
+    # window around the match for answers that are not JSON, or are JSON shaped
+    # in some way this does not expect.
+    said = _in_json(body)
+    if not said:
+        found = CONFLICT.search(body)
+        said = body[max(0, found.start() - 100):found.end() + 100]
+    return " ".join(said.split())[:200]
+
+
+def _in_json(body: str) -> str:
+    """The first string anywhere in a JSON answer that reads as a refusal."""
+    try:
+        return _walk(json.loads(body))
+    except Exception:  # noqa: BLE001 - not JSON, or not readable as any
+        return ""
+
+
+def _walk(value) -> str:
+    if isinstance(value, str):
+        return value if CONFLICT.search(value) else ""
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, list):
+        for item in value:
+            found = _walk(item)
+            if found:
+                return found
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # The two things a test is allowed to vary
 # ---------------------------------------------------------------------------
@@ -340,7 +610,7 @@ TRIED = "data-autoqa-tried"
 
 
 def one_of(page_object, name: str, *, step: int, described: str,
-           among: str | None = None, navigates=None) -> None:
+           among: str | None = None, navigates=None, entity: str = "") -> None:
     """Act on the recorded element; try a member beside it only if refused.
 
     STATE_DEPENDENT: the recorded element was one of several of the same shape -
@@ -360,12 +630,56 @@ def one_of(page_object, name: str, *, step: int, described: str,
     `among` is None whenever the recording gave no way of finding the elements
     beside this one. Then this is a plain click that reports a refusal properly,
     which is still better than one that reports it as a timeout.
+
+    `entity` is what the recording called the thing this step selects. When a
+    substitute is used, the pair is written into the runtime mapping so every
+    later step that names the recorded thing names the replacement instead -
+    see `instead`. Without that a workflow picks one item and then checks out
+    with the name of another.
     """
     page = page_of(page_object)
     origin = page.url
     refusals = []
+    # What was looked at and passed over, so a step that finds nothing can say
+    # so in terms somebody can act on.
+    rejected: dict = {}
 
     recorded = getattr(page_object, name)
+    members = every(page_object, among) if among else None
+
+    # Whether what this control says names the thing it belongs to or only what
+    # it does, which decides what gets written down as chosen and refused. See
+    # `_repeats`. Asked once, here, and carried through everything below.
+    by_card = bool(entity) and members is not None and _repeats(
+        members, _text_of(recorded)
+    )
+    was = _name_of(recorded, by_card) if entity else ""
+
+    # On a replay, the entity the recording used has already been refused by a
+    # step further on. Going straight past it is the difference between finding
+    # another one and asking the application the same question again.
+    if entity and (was or entity) in _seen.refused_later and among:
+        chosen = _untried(page_object, among, None, by_card, rejected)
+        if chosen is not None:
+            member, _ = chosen
+            now = _name_of(member, by_card) or entity
+            _stamp(member)
+            mark = _mark(page)
+            member.click()
+            verdict, because = _verdict(page, mark, navigates)
+
+            # The same rules as the ordinary path. Skipping past a refused
+            # entity is not licence to skip past a broken application, and a
+            # replacement that is itself refused has to fall through to the
+            # search below rather than be treated as chosen.
+            _stop_if_broken(verdict, because, step, described)
+            if verdict is ACCEPTED:
+                _seen.in_play = now
+                _stood_in(was or entity, now)
+                return
+            refusals.append(because)
+
+    profile = profile_of(recorded.first, members) if among else {}
     _stamp(recorded)
     mark = _mark(page)
 
@@ -379,25 +693,38 @@ def one_of(page_object, name: str, *, step: int, described: str,
         verdict, because = _verdict(page, mark, navigates)
 
     if verdict is ACCEPTED:
+        # Only a step that chose something says what is in play. A step that
+        # merely carries the workflow along - a Checkout, a Continue, a Next -
+        # has no opinion about it, and letting one overwrite this with nothing
+        # was enough to break the whole rewind: the workflow then wrote down
+        # that it had been refused "", excluded nothing on the next attempt,
+        # and chose the same thing again for as many attempts as it had.
+        if entity:
+            _seen.in_play = was or entity
         return
     _stop_if_broken(verdict, because, step, described)
     refusals.append(because)
 
     if among is None:
-        raise StateConflict(
+        raise _no_data(
+            step,
             f"Step {step} ({described}): the application refused it - {because} - "
             "and the recording holds no way of finding anything comparable to try "
             "instead."
         )
 
-    for attempt in range(MAX_MEMBERS):
+    tried = 0
+    for _ in range(MAX_MEMBERS):
         if page.url != origin:
             page.goto(origin, wait_until="domcontentloaded")
 
-        member = _untried(page_object, among)
-        if member is None:
+        chosen = _untried(page_object, among, profile, by_card, rejected)
+        if chosen is None:
             break
+        member, confidence = chosen
+        tried += 1
 
+        now = _name_of(member, by_card) if entity else ""
         _stamp(member)
         mark = _mark(page)
         try:
@@ -407,11 +734,16 @@ def one_of(page_object, name: str, *, step: int, described: str,
         verdict, because = _verdict(page, mark, navigates)
 
         if verdict is ACCEPTED:
+            # Every later step that names the recorded thing now names this one.
+            if entity:
+                _seen.in_play = now or entity
+                _stood_in(was or entity, now)
             adapted(
                 step,
                 described,
-                f"used a comparable element instead, after {len(refusals)} "
-                "refusal(s) of the recorded one",
+                f"used {now or 'a comparable element'} in place of "
+                f"{entity or 'the recorded one'}, at {confidence:.0%} confidence"
+                + (f" (was {was!r})" if was and not entity else ""),
                 refusals[0],
             )
             return
@@ -419,10 +751,22 @@ def one_of(page_object, name: str, *, step: int, described: str,
         _stop_if_broken(verdict, because, step, described)
         refusals.append(because)
 
-    raise StateConflict(
-        f"Step {step} ({described}): the application refused the recorded element "
-        f"and every comparable one tried ({len(refusals)} in total). "
-        f"Last refusal: {refusals[-1] or 'none given'}"
+    # Nothing on the page could stand in. Which of the two reasons it was
+    # matters to whoever reads this: everything comparable was refused as well,
+    # or nothing on the page was comparable enough to risk.
+    if tried:
+        raise _no_data(
+            step,
+            f"Step {step} ({described}): the application refused the recorded "
+            f"data and every comparable alternative tried ({len(refusals)} in "
+            f"total). Last refusal: {refusals[-1] or 'none given'}"
+            + _considered(rejected)
+        )
+    raise _no_data(
+        step,
+        f"Step {step} ({described}): the application refused the recorded data "
+        f"- {refusals[0] if refusals else 'no reason given'} - and nothing on "
+        f"{page.url} could stand in for it." + _considered(rejected)
     )
 
 
@@ -472,6 +816,133 @@ def _vanished(page, page_object, among, unreachable) -> tuple:
     )
 
 
+#: How many entities a workflow will work its way through before giving up.
+#: The same reasoning as everywhere else here: an application refusing three
+#: different ones has something to say, and the report should carry that rather
+#: than a tally of attempts.
+MAX_WORKFLOW_ATTEMPTS = 3
+
+
+def workflow(page, steps, *, step: int, described: str, restart) -> None:
+    """Run the part of the test that depends on one chosen thing, and if the
+    application refuses it at the end, come back and choose another.
+
+    Some applications will not tell you a thing is unavailable until you have
+    tried to take it. There is no state on the listing page, nothing on the
+    item, nothing in the cart - the refusal arrives at the last step, after four
+    or five perfectly successful ones. Recovering there is not a matter of
+    retrying the last step: retrying it asks the same question about the same
+    thing and gets the same answer for ever. What has to happen is what a person
+    would do - go back to where the choice was made, choose something else, and
+    do it again.
+
+    So `steps` is everything from the choice onwards, and `restart` is how to
+    get back to where the choice is made. Between attempts the entity that was
+    refused is written down, and the selection point skips it - the page has
+    been reloaded by then, so nothing on the page itself remembers.
+
+    Only a refusal rewinds. A defect, a timeout, an element that never appeared:
+    those end the test where they happened, because replaying a workflow through
+    a broken application until something goes green reports health that was
+    never measured.
+    """
+    for attempt in range(MAX_WORKFLOW_ATTEMPTS):
+        if attempt:
+            # Only a name. An empty one would go into `refused_later` and match
+            # every member whose text could not be read, so a single unreadable
+            # element would take the whole set out of play.
+            if _seen.in_play:
+                _seen.refused_later.add(_seen.in_play)
+            adapted(
+                step,
+                described,
+                f"went back to where the choice is made and left "
+                f"{_seen.in_play!r} out of it",
+                _seen.last_refusal,
+            )
+            restart()
+
+        mark = _mark(page)
+        # Where the stamps `_mark` just made actually live. A workflow walks
+        # through pages, and `_refusal` can only tell a new message from an old
+        # one on the document it stamped - see below.
+        stamped = page.url
+        _seen.last_refusal = ""
+
+        try:
+            steps()
+        except NoValidTestData as exhausted:
+            # The whole reason this loop exists, and the case it was silently
+            # failing on. An application that only says no at the very end says
+            # it at a step that chooses nothing - a Checkout, a Confirm, a Place
+            # Order. That step has no thing of its own to vary, so it looked for
+            # another button like the one it just pressed, found nothing
+            # comparable, and reported that the fixture had run out - two pages
+            # away from the choice that actually needed changing, with a listing
+            # full of untried alternatives sitting behind it.
+            #
+            # Raised at the choice itself, it is exactly what it says and the
+            # run stops. Raised anywhere else, it means the step could not
+            # recover where it stood, and going back to the choice is the only
+            # thing that could have helped.
+            if getattr(exhausted, "step", None) == step:
+                raise
+            _seen.last_refusal = str(exhausted)[:200]
+            continue
+        except StateConflict as conflict:
+            # A step inside said the application refused it. That is the case
+            # this exists for - but only if nothing says the application is
+            # broken, which `_stop_if_broken` has already ruled on by raising
+            # with "NOT retried" in it.
+            if "NOT retried" in str(conflict):
+                raise
+            _seen.last_refusal = str(conflict)[:200]
+            continue
+
+        # Every step ran without objecting. Did the application object anyway,
+        # at the end?
+        #
+        # The page is only worth asking if it is still the page that was
+        # stamped. `_refusal` reports what is *unstamped*, and a workflow that
+        # has walked from a catalogue through a basket to a confirmation is
+        # looking at a document that never could have been stamped - so every
+        # word on it is unseen, and any of it that happens to be refusal
+        # vocabulary reads as the application refusing the whole workflow.
+        #
+        # It did exactly that. A purchase that completed, signed out, and
+        # landed back on a home page showing one sold-out product came out as
+        #
+        #   went back to where the choice is made and left 'Name on card' out
+        #   of it - the application said: Out of Stock
+        #
+        # and replayed the entire journey until the run timed out mid-click.
+        #
+        # The answer's own words are a different matter: `_wire_refusal` reads
+        # what the application said in reply to a request this attempt made,
+        # which no amount of navigating makes ambiguous.
+        said = _wire_refusal(mark[1])
+        if not said and page.url == stamped:
+            said = _refusal(page)
+        if not said:
+            return                      # the workflow completed
+
+        # It completed every step and *then* the application objected.
+        if len(_seen.defects) > mark[0]:
+            raise StateConflict(
+                f"Step {step} ({described}) was refused - {said} - but the "
+                f"application also failed during it ({_seen.defects[-1]}), so "
+                "nothing was retried."
+            )
+        _seen.last_refusal = said
+
+    raise _no_data(
+        step,
+        f"Step {step} ({described}): the workflow was refused with every one of "
+        f"the {MAX_WORKFLOW_ATTEMPTS} things tried. Last refusal: "
+        f"{_seen.last_refusal or 'none given'}"
+    )
+
+
 def _stop_if_broken(verdict, because: str, step: int, described: str) -> None:
     """Nothing is retried through a broken application.
 
@@ -494,6 +965,87 @@ def _stop_if_broken(verdict, because: str, step: int, described: str) -> None:
 STAMP_MS = 1_000
 
 
+def _text_of(locator) -> str:
+    """What an element says, as a person reading the page would see it."""
+    try:
+        return " ".join((locator.first.inner_text() or "").split())[:120]
+    except Exception:  # noqa: BLE001 - unreadable is not a name
+        return ""
+
+
+def _repeats(members, text: str) -> bool:
+    """Do two members of the set say the same thing?
+
+    Which decides whether what an element says is its *name* or its *function*.
+    A list of courses whose links carry the titles answers no: each says
+    something different, and that something identifies it. A list of courses
+    with an Add to Cart button on every card answers yes - and the difference
+    matters more than anything else in this file, because a workflow refused at
+    the end writes down what it chose so the next attempt can avoid it. Written
+    down as "Add to Cart", the next attempt avoids every course on the page and
+    the recovery cannot work at all.
+    """
+    if not text:
+        return False
+    try:
+        total = min(members.count(), MAX_PROFILED)
+    except Exception:  # noqa: BLE001 - nothing to compare against
+        return False
+
+    same = 0
+    for index in range(total):
+        if _text_of(members.nth(index)) == text:
+            same += 1
+            if same > 1:
+                return True
+    return False
+
+
+def _nearby_name(locator) -> str:
+    """What the thing this control belongs to is called.
+
+    The heading of whatever encloses it - a row, a card, a tile, a list item.
+    Asked only when the control's own words turn out to name its function
+    rather than the thing, and deliberately not asked otherwise: an element that
+    already says something distinctive is better evidence than the box around
+    it.
+    """
+    try:
+        return " ".join((locator.first.evaluate(
+            r"""(el) => {
+                const own = (el.innerText || '').trim();
+                let card = el.closest(
+                    'li,tr,article,[class*=card],[class*=item],[class*=product],'
+                    + '[class*=tile],[class*=course]'
+                ) || el.parentElement;
+                for (let hop = 0; card && hop < 4; hop++) {
+                    const heading = card.querySelector(
+                        'h1,h2,h3,h4,h5,h6,[class*=title],[class*=name]'
+                    );
+                    const said = heading && (heading.innerText || '').trim();
+                    if (said && said !== own) return said;
+                    card = card.parentElement;
+                }
+                return '';
+            }"""
+        ) or "").split())[:120]
+    except Exception:  # noqa: BLE001 - unreadable is not a name
+        return ""
+
+
+def _name_of(locator, by_card: bool = False) -> str:
+    """What to call the thing this element selects, for the report and the
+    record of what has already been refused.
+
+    `by_card` comes from `_repeats`, asked once per set rather than once per
+    member: the reads are cheap individually and there can be twenty of them.
+    """
+    text = _text_of(locator)
+    if not by_card:
+        return text
+    return _nearby_name(locator) or text
+
+
 def _stamp(locator) -> None:
     """Mark an element as tried, so it is not offered again as an alternative."""
     try:
@@ -502,25 +1054,283 @@ def _stamp(locator) -> None:
         pass
 
 
-def _untried(page_object, among: str):
-    """A member of the set that has not been clicked yet, and can be clicked."""
+#: How many rejected candidates the report names. Enough to see the shape of
+#: what was on the page; not so many that a catalogue of two hundred buries the
+#: sentence that matters.
+MAX_REPORTED = 10
+
+
+def _considered(rejected: dict) -> str:
+    """What was looked at and passed over, in words somebody can act on.
+
+    "The fixture this test runs against has run out of usable data" was the
+    whole of what this used to say, and it was not true and not useful: on a
+    page of a dozen courses it meant three were tried and nine were never
+    named. Whoever reads a blocked run needs to know which ones were there,
+    which were passed over, and why each - that is the difference between a
+    report and a shrug.
+    """
+    if not rejected:
+        return ""
+    lines = [
+        f"  - {called}: {why}"
+        for called, why in list(rejected.items())[:MAX_REPORTED]
+    ]
+    more = len(rejected) - len(lines)
+    if more > 0:
+        lines.append(f"  - ...and {more} more")
+    return (
+        f"\n\n{len(rejected)} candidate(s) were found on the page and none "
+        "could be used:\n" + "\n".join(lines)
+    )
+
+
+def _no_data(step: int, message: str) -> NoValidTestData:
+    """Say which step ran out, so an enclosing workflow can tell the two apart."""
+    exhausted = NoValidTestData(message)
+    exhausted.step = step
+    return exhausted
+
+
+def _stood_in(original: str, replacement: str) -> None:
+    """Write down that one thing ran in place of another, for the steps after it.
+
+    Keyed on what the recorded thing is actually *called* rather than on the
+    label of the control that chose it, because that is the string the rest of
+    the test carries - a basket line, a confirmation heading, an assertion. A
+    mapping from "Add to Cart" to a course title would match nothing later on
+    and, worse, would rewrite the words "Add to Cart" wherever they appeared.
+    """
+    if original and replacement and replacement != original:
+        _seen.standing_in[original] = replacement
+
+
+def _untried(page_object, among: str, profile: dict | None = None,
+             by_card: bool = False, rejected: dict | None = None):
+    """The best untried member of the set, if one is close enough to the original.
+
+    Returns (member, confidence) or None.
+
+    "The next one that is clickable" was the whole selection rule before this,
+    and it is not good enough. A list of courses and a Download PDF link sit in
+    the same markup and answer the same selector; so do a product and the
+    "Compare" toggle beside it. Swapping the recorded item for one of those does
+    not preserve what the test was about, it just makes something green - which
+    is the one outcome worse than a red run.
+
+    So each candidate is scored against a profile of the recorded item and the
+    best is taken, provided it clears `ALIKE_ENOUGH`. The profile is the
+    element's own vocabulary - its `data-*` values, its class tokens, its role -
+    which is what the members of a real set share and what tells them from
+    whatever else happens to be built the same way. Deliberately *not* its name:
+    the name is the one thing that must differ.
+
+    `rejected` is filled in as candidates are turned down, keyed by what each
+    one is called, so a run that finds nothing usable can say what it looked at
+    and why it passed on each - which "the fixture has run out of usable data"
+    conspicuously did not.
+    """
     members = every(page_object, among)
     try:
-        total = min(members.count(), MAX_MEMBERS)
+        total = members.count()
     except Exception:  # noqa: BLE001 - nothing to choose from
         return None
 
+    def turned_down(called: str, index: int, why: str) -> None:
+        if rejected is not None:
+            rejected[called or f"candidate {index + 1}"] = why
+
+    best = None
     for index in range(total):
         member = members.nth(index)
         try:
+            called = _name_of(member, by_card)
             if member.get_attribute(TRIED):
+                turned_down(called, index, "already tried in this run")
                 continue
-            if member.is_visible() and member.is_enabled():
-                return member
+            if not (member.is_visible() and member.is_enabled()):
+                turned_down(called, index, "not on offer - hidden or disabled")
+                continue
+            # Refused by a step further down the workflow on an earlier attempt.
+            # The page has been reloaded since, so nothing on it remembers -
+            # only this does.
+            if called and called in _seen.refused_later:
+                turned_down(called, index, "the application refused it earlier")
+                continue
         except Exception:  # noqa: BLE001 - gone between the count and the question
             continue
-    return None
 
+        confidence = _alike(member, profile) if profile else 1.0
+        if confidence < ALIKE_ENOUGH:
+            turned_down(
+                called, index,
+                f"only {confidence:.0%} like the recorded one, and "
+                f"{ALIKE_ENOUGH:.0%} is required to stand in for it",
+            )
+            continue
+        if best is None or confidence > best[1]:
+            best = (member, confidence)
+
+    return best
+
+
+#: Members read when working out what the set has in common. A catalogue page
+#: shows a dozen or two; reading more than this to learn the same answer is
+#: paying for precision nobody uses.
+MAX_PROFILED = 20
+
+
+def _raw_profile(element) -> dict:
+    """Everything an element states about itself, before deciding what matters.
+
+    Identity is left out from the start. The name, the id, the href and the test
+    id are exactly what distinguishes one member of a set from another, and a
+    substitute is *supposed* to differ in those - scoring on them would reject
+    every alternative, which is the failure this has to avoid.
+    """
+    try:
+        return element.evaluate(
+            r"""(el) => {
+                const data = {};
+                for (const {name, value} of Array.from(el.attributes || [])) {
+                    if (!name.startsWith('data-')) continue;
+                    if (/id$|key$|index$|uid$/i.test(name)) continue;   // identity
+                    data[name] = value;
+                }
+                const card = el.closest('li,tr,article,section,form') || el.parentElement || el;
+                return {
+                    tag: el.tagName.toLowerCase(),
+                    role: el.getAttribute('role') || '',
+                    type: el.getAttribute('type') || '',
+                    classes: (el.className || '').toString().split(/\s+/).filter(Boolean),
+                    cardClasses: (card.className || '').toString().split(/\s+/).filter(Boolean),
+                    data,
+                };
+            }"""
+        )
+    except Exception:  # noqa: BLE001 - unreadable; the caller treats it as no profile
+        return {}
+
+
+def profile_of(element, among=None) -> dict:
+    """What the recorded item is, in the vocabulary its *neighbours* share.
+
+    The distinction this draws is the whole thing, and getting it wrong rejects
+    every substitute or accepts any of them.
+
+    A fact stated about one member and no other is about that *instance*:
+    `data-product-id`, `data-outcome`, a class carrying a slug. Members differ in
+    those by design, so scoring on them means no candidate ever agrees and the
+    run stops with "nothing was similar enough" on a page full of alternatives.
+
+    A fact several members state identically is about the *kind*:
+    `data-category="course"`, a `product-tile` class, a role. That is exactly
+    what tells a course from the Download PDF link built out of the same markup,
+    and it is the only thing worth scoring.
+
+    So the set is read, and a fact survives only if some other member states it
+    too. An empty profile is a real answer: a set whose members share no stated
+    vocabulary offers nothing to compare, and membership of the set - already
+    established by the selector that found them - is then the only evidence
+    there is. Everything scores 1.0, which is the behaviour this had before any
+    of it, and the right one.
+
+    Read live rather than carried from the recording, deliberately. An
+    application that changes its markup changes it for every member at once, so
+    a profile taken now compares like with like; one carried from six months ago
+    would reject the whole list.
+    """
+    mine = _raw_profile(element)
+    if not mine or among is None:
+        return mine
+
+    others = []
+    try:
+        total = min(among.count(), MAX_PROFILED)
+    except Exception:  # noqa: BLE001 - nothing to compare against
+        return mine
+    for index in range(total):
+        other = among.nth(index)
+        raw = _raw_profile(other)
+        if raw:
+            others.append(raw)
+
+    if len(others) < 2:
+        return mine
+
+    shared = {"tag": mine.get("tag"), "role": "", "type": "", "classes": [],
+              "cardClasses": [], "data": {}}
+
+    for key in ("role", "type"):
+        value = mine.get(key)
+        if value and sum(1 for o in others if o.get(key) == value) > 1:
+            shared[key] = value
+
+    # A key is dropped only on *positive* evidence that it identifies the
+    # instance rather than the kind: several members carry it and no two of them
+    # agree. `data-slug` on a list of three reads a, b, c and is plainly an id;
+    # `data-kind` reads course, course, course and is plainly a category.
+    #
+    # Below three members there is not enough to tell them apart, so the key is
+    # kept. That errs towards refusing a substitute rather than accepting a
+    # wrong one, which is the direction to err in: a refusal is reported and
+    # actionable, and a wrong substitute is a green test that proved nothing.
+    for key, value in (mine.get("data") or {}).items():
+        carrying = [o for o in others if key in (o.get("data") or {})]
+        values = [(o.get("data") or {})[key] for o in carrying]
+        looks_like_an_id = len(carrying) >= 3 and len(set(values)) == len(values)
+        if not looks_like_an_id:
+            shared["data"][key] = value
+
+    for key in ("classes", "cardClasses"):
+        wanted = set(mine.get(key) or [])
+        shared[key] = sorted(
+            token for token in wanted
+            if sum(1 for o in others if token in set(o.get(key) or [])) > 1
+        )
+
+    return shared
+
+
+def _alike(candidate, profile: dict) -> float:
+    """How much of the set's shared vocabulary this candidate also states.
+
+    A share of the facts that were *checkable*, so an item described by two
+    things is not marked down against one described by six. The `data-*` values
+    weigh most, because an application that labels its markup at all labels it
+    with the thing that matters - a category, a kind, a state - and that is
+    precisely what separates a course from a PDF.
+
+    A profile with nothing in it scores everything 1.0. See `profile_of`: there
+    is nothing to compare, and membership of the set is the evidence.
+    """
+    theirs = _raw_profile(candidate)
+    if not theirs:
+        return 0.0
+    if theirs.get("tag") != profile.get("tag"):
+        return 0.0                      # a different kind of control entirely
+
+    scored = agreed = 0.0
+
+    for key, weight in (("role", 1.0), ("type", 1.0)):
+        wanted = profile.get(key)
+        if wanted:
+            scored += weight
+            agreed += weight if theirs.get(key) == wanted else 0.0
+
+    for key, value in (profile.get("data") or {}).items():
+        scored += 2.0
+        agreed += 2.0 if (theirs.get("data") or {}).get(key) == value else 0.0
+
+    for key, weight in (("classes", 1.5), ("cardClasses", 1.0)):
+        wanted = set(profile.get(key) or [])
+        if not wanted:
+            continue
+        found = set(theirs.get(key) or [])
+        scored += weight
+        agreed += weight * (len(wanted & found) / len(wanted))
+
+    return (agreed / scored) if scored else 1.0
 
 def submit(
     page_object, name: str, *, step: int, described: str, renew=(), navigates=None

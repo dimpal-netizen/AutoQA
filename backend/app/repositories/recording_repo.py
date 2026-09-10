@@ -70,7 +70,13 @@ class RecordingRepository(BaseRepository[RecordingSession]):
         stmt = (
             select(RecordedAction)
             .where(RecordedAction.session_id == session_id)
-            .order_by(RecordedAction.sequence)
+            # By the clock, then the sequence. Every page in a recording sets
+            # its timestamps against the same session start - the backend tells
+            # it how long the session has been running when it asks to join - so
+            # the clock orders actions across pages correctly and a block number
+            # does not. With one page the two agree, which is every recording
+            # made before tabs were handled.
+            .order_by(RecordedAction.timestamp_ms, RecordedAction.sequence)
             .offset(skip)
             .limit(limit)
         )
@@ -86,6 +92,21 @@ class RecordingRepository(BaseRepository[RecordingSession]):
 
     def max_timestamp_ms(self, session_id: int) -> int | None:
         stmt = select(func.max(RecordedAction.timestamp_ms)).where(
+            RecordedAction.session_id == session_id
+        )
+        return self.db.scalar(stmt)
+
+    def max_sequence(self, session_id: int) -> int | None:
+        """The highest sequence stored, which is not the same as how many.
+
+        Counting was near enough while actions in flight were lost on every
+        navigation - the stored sequences were then always 0..n-1 with no gaps.
+        Now that they survive, one gap makes the count an under-estimate, the
+        next page starts numbering from a sequence that already exists, and the
+        upload's ON CONFLICT DO NOTHING discards the rest of the recording
+        without a word. See `_session_progress`.
+        """
+        stmt = select(func.max(RecordedAction.sequence)).where(
             RecordedAction.session_id == session_id
         )
         return self.db.scalar(stmt)

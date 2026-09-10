@@ -1,0 +1,109 @@
+# AutoQA, deployed.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Kept separate from docker-compose.yml, which supplies Postgres and Redis to a
+# developer running the app from source. This one runs the app itself.
+#
+# Redis and pgAdmin are deliberately absent. Nothing in the application uses
+# Redis except the health endpoint's report on it — Celery is a dependency that
+# nothing calls, and runs are dispatched as threads inside the API process. And
+# pgAdmin is configured for desktop use, with no login screen, which is not a
+# thing to put on a public host.
+#
+# See docs/deployment.md.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Not published. The API reaches it over the compose network; anything on
+    # the host that needs it can come through an SSH tunnel.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+      SECRET_KEY: ${SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+
+      # Exact-match origins. In production the permissive localhost regex is
+      # switched off, so this list is the whole of what may call the API.
+      CORS_ORIGINS: ${CORS_ORIGINS}
+
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+
+      # Absolute, and on volumes. The defaults are relative to backend/ and
+      # would put a run's artifacts inside the container's writable layer,
+      # where they vanish on the next deploy.
+      STORAGE_PATH: /data/storage
+      WORKSPACE_PATH: /data/workspaces
+      GENERATED_PATH: /data/generated
+
+      TEST_TIMEOUT_SECONDS: ${TEST_TIMEOUT_SECONDS:-600}
+      RUN_TIMEOUT_SECONDS: ${RUN_TIMEOUT_SECONDS:-900}
+      DEFAULT_BROWSERS: ${DEFAULT_BROWSERS:-chromium,firefox,webkit}
+
+      AUTOQA_VIRTUAL_DISPLAY: ${AUTOQA_VIRTUAL_DISPLAY:-1}
+    volumes:
+      - storage_data:/data/storage
+      - workspace_data:/data/workspaces
+      - generated_data:/data/generated
+    # Chromium needs more than Docker's default 64 MB of shared memory. Below
+    # about 512 MB it dies mid-run with "Target closed" — which looks exactly
+    # like an application crash and is not one.
+    shm_size: 1gb
+    ports:
+      # Bound to loopback: the reverse proxy publishes these, not Docker.
+      # 6080 is the recording screen and has no password on it - see
+      # docker/backend-entrypoint.sh.
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:6080:6080"
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Baked into the JavaScript at build time, so this must be the address
+        # a visitor's browser can reach. Changing it means rebuilding.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  postgres_data:
+  storage_data:
+  workspace_data:
+  generated_data:

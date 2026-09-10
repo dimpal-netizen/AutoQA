@@ -812,6 +812,17 @@ export function plainError(message: string): string | null {
   if (/Timeout .*exceeded/i.test(message) && /waiting for/i.test(message)) {
     return sentence(`${thing} never appeared. The test waited and then gave up.`);
   }
+  // What the test itself reported, without the network evidence appended
+  // underneath it.
+  //
+  // Every real page fails a handful of requests to somewhere nobody in the test
+  // has an opinion about - an analytics beacon, a tag manager, an advert - and
+  // those are listed under the error as context. Matching the headline against
+  // the whole thing meant a click that timed out on a button was announced as
+  // "the page could not be reached at all", because a Google Analytics beacon
+  // three lines below had been aborted.
+  const failure = message.split(/\n\s*\n\d+ network requests? failed/i)[0];
+
   if (/expected not to be|not_to_have_url/i.test(message)) {
     return "The page address was the one the test said it should not be.";
   }
@@ -829,7 +840,7 @@ export function plainError(message: string): string | null {
   if (/to_contain_text|expected to contain text/i.test(message)) {
     return "The text on the page was not the text the test expected.";
   }
-  if (/ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|net::ERR/i.test(message)) {
+  if (/ERR_NAME_NOT_RESOLVED|ERR_CONNECTION|net::ERR/i.test(failure)) {
     return "The page could not be reached at all — the address did not respond.";
   }
   if (/ModuleNotFoundError|ImportError/i.test(message)) {

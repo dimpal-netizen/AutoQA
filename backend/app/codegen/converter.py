@@ -123,6 +123,18 @@ class LocatorSpec:
     # The locator matching everything of the same shape as this one, when the
     # recording holds a way of finding them. Read only after a refusal.
     among: str | None = None
+    # What the recorder saw the element *be*, as opposed to how it found it:
+    # role, accessible name, label, placeholder, test id, text. Every recorded
+    # selector can break at once - a redesign renames one class and takes the
+    # css, the xpath and the nth-child with it - and then the only thing left
+    # that still describes the element is this. See `_describe_element` and
+    # `_derived` in the healing template.
+    describes: dict[str, str] = field(default_factory=dict)
+    # The frame the element was recorded inside, as the expression that reaches
+    # it - empty for the page itself, which is almost every element. Healing
+    # searches here and nowhere else: a payment frame and the page around it
+    # both have a Submit button, and finding the wrong one passes.
+    inside: str = ""
     # Set on that second locator, naming the one it serves. It is not an element
     # the recording ever touched - no step targets it, and nothing but a refused
     # step ever reads it - so anything counting the elements a recording used
@@ -184,6 +196,8 @@ class PageSpec:
                 role=locator.role,
                 among=locator.among,
                 alternatives_for=locator.alternatives_for,
+                describes=locator.describes,
+                inside=locator.inside,
             )
         )
         return name
@@ -219,6 +233,9 @@ class StepSpec:
     code: list[str]
     description: str
     page_var: str | None = None
+    #: The address this step happened at. Only read to work out where a
+    #: workflow has to go back to - see `TestIR.restart_url`.
+    page_url: str = ""
     locator_name: str | None = None
     input_data: str | None = None
     expected_result: str | None = None
@@ -240,6 +257,20 @@ class StepSpec:
     # split survives normalisation, which drops and merges actions and would
     # otherwise leave nothing to line the two up by.
     segment: int = 0
+
+
+def _acts(step: StepSpec) -> bool:
+    """Does this step ask the application for something it could refuse?
+
+    Clicking and submitting do. Hovering, scrolling, reading and asserting do
+    not - they observe a page that is already there. The distinction is what
+    tells a choice the workflow depends on from one made on the way out; see
+    `TestIR.selection_point`.
+    """
+    return any(
+        "one_of(" in line or "submit(" in line or ".click(" in line
+        for line in step.code
+    )
 
 
 @dataclass
@@ -284,6 +315,90 @@ class TestIR:
     unique_values: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
+    def selection_point(self) -> int | None:
+        """The step where the workflow chooses the thing it is about.
+
+        Some applications will not say a thing is unavailable until you have
+        tried to take it: nothing on the listing, nothing on the item, nothing
+        in the basket, and then a refusal at the last step after four perfectly
+        successful ones. Retrying that step asks the same question about the
+        same thing for ever. The only recovery is to go back to where the choice
+        was made and choose something else - so the generated test has to know
+        where that was.
+
+        It is the *last* step that selects one of a set - the one closest to the
+        action that gets refused. A journey passes through several such steps on
+        its way: a modal dismissed, a section opened, a page of results turned.
+        Rewinding to the first of them would replay the whole journey to change
+        a choice made near the end of it, and would offer to dismiss a different
+        modal rather than to take a different thing.
+
+        The latest one is both the cheapest to replay and the right place: it is
+        where the thing the workflow is about was actually settled on.
+
+        With one qualification, and it is the whole of the difficulty. A choice
+        has to have a workflow *after* it, or choosing again changes nothing -
+        and recordings end the way sessions end, with a click on My Account and
+        a click on Sign Out. Those are choices by every local test: one of
+        several links, named, clicked once. Taken as the selection point, the
+        replayable part of the test began *after* the step that gets refused,
+        so the refusal had nothing to rewind to and the run stopped with a
+        listing full of untried alternatives sitting two pages behind it.
+
+        What separates the choice from the coda is where the test goes next. A
+        choice that matters is followed by pages the recording had not reached
+        yet - a basket, a form, a confirmation. A sign-out is followed by pages
+        it has already been to, or by nothing at all. So: the last choice the
+        journey goes somewhere *new* after.
+
+        Falling back, when no choice leads anywhere new, to the last one
+        followed by something that acts on the application at all. A single-page
+        application never changes address, and it would otherwise be left with
+        no recovery whatever.
+
+        None when the recording chose nothing, which is most recordings.
+        """
+        choices = [
+            index
+            for index, step in enumerate(self.steps)
+            if any(
+                line.lstrip().startswith("one_of(") and "entity=" in line
+                for line in step.code
+            )
+        ]
+
+        for index in reversed(choices):
+            been = {step.page_url for step in self.steps[: index + 1] if step.page_url}
+            if any(
+                step.page_url and step.page_url not in been
+                for step in self.steps[index + 1:]
+            ):
+                return index
+
+        for index in reversed(choices):
+            if any(_acts(step) for step in self.steps[index + 1:]):
+                return index
+        return None
+
+    @property
+    def restart_url(self) -> str:
+        """The address the choice is made at, for getting back to it."""
+        chosen = self.selection_point
+        if chosen is None:
+            return ""
+        for step in reversed(self.steps[: chosen + 1]):
+            if step.page_url:
+                return step.page_url
+        return self.start_url
+
+    @property
+    def needs_instead(self) -> bool:
+        """True when any step translates a recorded name through the mapping."""
+        return any(
+            "instead(" in line for step in self.steps for line in step.code
+        )
+
+    @property
     def state_helpers(self) -> list[str]:
         """Which pages/_state.py helpers this module's steps actually call.
 
@@ -315,6 +430,20 @@ class TestIR:
     def needs_state(self) -> bool:
         """True when anything in this module needs pages/_state.py."""
         return bool(self.state_helpers)
+
+    #: What the recording called each thing a STATE_DEPENDENT step selects.
+    #:
+    #: Collected so that every *later* literal naming one of them can be
+    #: translated at run time. Substituting at the step that failed and nowhere
+    #: else is the bug this exists to prevent: a workflow picks an item, adds
+    #: it, checks out with it and confirms it by name, and a test that swaps the
+    #: first of those and replays the recorded name in the other three is no
+    #: longer testing a workflow.
+    entity_names: set = field(default_factory=set)
+    #: Names that label a clickable thing on more than one page, and so name a
+    #: control rather than the thing the workflow is about. See
+    #: `_repeated_controls`.
+    controls: set = field(default_factory=set)
 
     @property
     def needs_sync(self) -> bool:
@@ -951,6 +1080,9 @@ def build_ir(
     # said back - and not at one action in isolation. See `dataroles.py`.
     recorded = list(normalise(actions, host=urlparse(start_url).hostname))
     roles = {**classify_values(recorded), **classify_targets(recorded)}
+    # Which names are controls rather than the subject of the workflow. Only
+    # answerable across the whole recording - see `_repeated_controls`.
+    ir.controls = _repeated_controls(recorded)
     if refine_roles is not None:
         try:
             roles = refine_roles(recorded, roles, start_url=start_url)
@@ -1132,6 +1264,11 @@ def _build_step(
             base_expression=base,
             revealed=_was_revealed(element),
             tag=str((element or {}).get("tag") or "").lower(),
+            describes=_describe_element(element),
+            # `root` is the page unless the recording put the element in a
+            # frame, in which case it is the chain of frame_locator calls that
+            # reaches it - see `frame_root`.
+            inside=root if root != "self.page" else "",
             # Only a *target* role. A value's role describes the step, and
             # putting it here split one field into two locators: the click that
             # focused it and the fill that followed disagreed about the role,
@@ -1159,6 +1296,11 @@ def _build_step(
     description = ""
     input_data: str | None = None
     expected: str | None = None
+    # The names known *before* this step. A step that selects a thing must not
+    # translate its own name - it is the step that decides what the name maps
+    # to, so wrapping it would key the mapping on its own output.
+    named_already = set(ir.entity_names)
+
     # A state-aware step does its own waiting, because the address the recording
     # arrived at belongs to the recorded data. Waiting for it outside the helper
     # would fail on exactly the runs this exists to save.
@@ -1322,9 +1464,10 @@ def _build_step(
         sequence=sequence,
         segment=segment,
         action=kind,
-        code=code,
+        code=_through_the_mapping(code, named_already),
         description=description,
         page_var=page_var,
+        page_url=_clean_url(str(action.get("url") or "")),
         locator_name=name,
         input_data=input_data,
         expected_result=expected,
@@ -1567,6 +1710,30 @@ _OUTCOMES = {
 }
 
 
+def _through_the_mapping(code: list[str], entities: set) -> list[str]:
+    """Wrap literals naming a substitutable thing, so later steps follow it.
+
+    Only literals that are *exactly* a recorded entity name, and only in steps
+    generated after the step that selects it - the set is empty until then, so
+    the step doing the selecting is never rewritten to translate its own name.
+
+    `instead` returns the recorded value unchanged when nothing was substituted,
+    which is almost always. A run where everything worked reads exactly as it
+    was recorded, and only a run that had to adapt reads differently.
+    """
+    if not entities:
+        return code
+
+    rewritten = []
+    for line in code:
+        for entity in entities:
+            literal = py_str(entity)
+            if literal in line and "instead(" not in line:
+                line = line.replace(literal, f"instead({literal})")
+        rewritten.append(line)
+    return rewritten
+
+
 def _describes(waiting: str, action: dict[str, Any]) -> str:
     """What the wait is waiting for, in the words a test-case sheet prints."""
     if "'navigated'" in waiting:
@@ -1579,6 +1746,59 @@ def _describes(waiting: str, action: dict[str, Any]) -> str:
     if "dialog_closed" in waiting:
         return "The dialog closes"
     return "The page finishes updating"
+
+
+# ---------------------------------------------------------------------------
+# What the element was, as opposed to how it was found
+# ---------------------------------------------------------------------------
+#: Attributes an application chooses on purpose and a redesign rarely touches.
+#: A `name` is what a form field is called on the wire, a `type` is what it is,
+#: an `href` is where a link goes. Classes are absent on purpose: they are the
+#: one thing a redesign always changes, and they are already carried by the
+#: recorded css selector.
+_STABLE_ATTRIBUTES = (
+    "data-testid", "data-test-id", "data-test", "data-cy",
+    "name", "type", "href", "placeholder", "aria-label",
+)
+
+
+def _describe_element(element: dict[str, Any] | None) -> dict[str, str]:
+    """What the recorder saw the element *be*, for finding it again later.
+
+    Every recorded selector can break at once, and routinely does: a redesign
+    renames one class and takes the css path, the xpath and the nth-child with
+    it in a single commit. Healing then holds four ways of finding an element
+    and no working way at all, which reads in the report as the element having
+    been removed - a far more alarming thing than a stylesheet edit.
+
+    This is what is left when that happens. Not a way of *finding* the element,
+    a description of it: what it is called, what kind of thing it is, what it
+    says. From that a new locator can be built against the page as it stands -
+    and, the part that matters, then checked, because the description also says
+    what a right answer would look like. See `_derived` in the healing template.
+
+    Deliberately small. Everything in it is something a person would use to
+    point the element out across the room, and nothing in it is a position.
+    """
+    element = element or {}
+    attributes = element.get("attributes") or {}
+
+    # `label` rather than `name` for the accessible name, because `name` is also
+    # an HTML attribute and a form field routinely has both. Sharing one key,
+    # the attribute overwrote the accessible name - so a Save button described
+    # itself as "save" and every later comparison was against the wrong fact.
+    described = {
+        "tag": str(element.get("tag") or "").lower(),
+        "role": str(element.get("role") or ""),
+        "label": str(element.get("accessible_name") or "")[:120],
+        "text": str(element.get("text") or "")[:120],
+    }
+    for key in _STABLE_ATTRIBUTES:
+        value = attributes.get(key)
+        if value:
+            described[key] = str(value)[:200]
+
+    return {key: value for key, value in described.items() if value}
 
 
 def _sync_call(ir: TestIR, action: dict[str, Any], kind: ActionType) -> str | None:
@@ -1759,10 +1979,92 @@ def _state_call(
         )
 
     among_arg = f", among={py_str(among)}" if among else ""
+
+    # What the recording called the thing this step selects. Handed to `one_of`
+    # so that if a substitute is used, the pair goes into the runtime mapping
+    # and every later step naming the recorded thing names the replacement.
+    entity = _entity_name(action, ir.controls)
+    entity_arg = ""
+    if entity and among:
+        ir.entity_names.add(entity)
+        entity_arg = f", entity={py_str(entity)}"
+
     return (
         f"one_of({page_var}, {py_str(name)}, step={sequence}, "
-        f"described={described}{among_arg}{arrives})"
+        f"described={described}{among_arg}{entity_arg}{arrives})"
     )
+
+
+def _entity_name(action: dict[str, Any], controls: set) -> str:
+    """What the recording called the thing a step selects, if it selects a thing.
+
+    Its accessible name, or its visible text - whichever the recorder captured.
+    That is what an application prints back at you further down a workflow, in a
+    basket line, a confirmation heading, a summary row, so it is the string a
+    later step will be carrying.
+
+    Empty when the element is a *control* rather than the subject of the
+    workflow, and telling those apart matters more than anything else here. A
+    Checkout link sits on the listing, on the basket and on the billing page,
+    and it is repeated in the markup on each - which is exactly the shape of a
+    list of items, and it was being read as one. The generated test then called
+    Checkout the thing it was about, mapped the word "Checkout" through the
+    substitution table, and offered to press a *different* Checkout when the
+    application refused. None of which is what a person means by "try another
+    course".
+
+    The signal is `controls`, worked out across the whole recording: a name that
+    labels clicked elements on more than one page is a control. The thing a
+    workflow is about is chosen once and then referred to; the buttons that move
+    it along recur, and recur under the same name.
+
+    Empty, too, for anything you *type into*. A field is not a choice - there is
+    nothing to choose between, and offering to fill a different one is not a
+    thing anybody means. That was not hypothetical either: on a checkout form
+    the card-holder name box was read as the thing the workflow was about, so
+    the workflow rewound to it, wrote down that "Name on card" had been refused,
+    and replayed the whole purchase to try a different box to type a name into.
+    """
+    element = action.get("element") or {}
+    if str(element.get("tag") or "").lower() in _FIELDS:
+        return ""
+    for key in ("accessible_name", "text"):
+        value = str(element.get(key) or "").strip()
+        if value:
+            return "" if value[:120] in controls else value[:120]
+    return ""
+
+
+#: Elements that hold a value rather than name a thing. A `select` is here with
+#: the rest of them: what a workflow might reasonably vary is which *option* is
+#: picked, never which dropdown is used.
+_FIELDS = frozenset({"input", "textarea", "select"})
+
+
+def _repeated_controls(actions: list[dict[str, Any]]) -> set:
+    """Names that label something clickable on more than one page.
+
+    Checkout, Continue, Next, Submit, Back - whatever this particular
+    application happens to call them, and nothing is assumed about that. The
+    test is only that the same name turned up on more than one address, which a
+    thing being chosen does not do and a control that carries you through a
+    journey always does.
+    """
+    pages_by_name: dict[str, set] = {}
+
+    for action in actions:
+        if ActionType(action["action_type"]) is not ActionType.CLICK:
+            continue
+        element = action.get("element") or {}
+        for key in ("accessible_name", "text"):
+            value = str(element.get(key) or "").strip()[:120]
+            if value:
+                pages_by_name.setdefault(value, set()).add(
+                    _clean_url(str(action.get("url") or ""))
+                )
+                break
+
+    return {name for name, pages in pages_by_name.items() if len(pages) > 1}
 
 
 # Selectors whose value is text a human would recognise, most natural first.

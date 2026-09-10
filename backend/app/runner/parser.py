@@ -79,6 +79,50 @@ def parse_junit(path: Path) -> list[ParsedResult]:
 #: was recorded. See `adapted` in the generated pages/_state.py.
 ADAPTATION = "autoqa_adaptation"
 
+#: The property a generated test writes when a step could not reach its element
+#: and the browser was asked why. See `diagnose` in the generated
+#: pages/_healing.py.
+DIAGNOSIS = "autoqa_diagnosis"
+
+#: What each diagnosis means for the verdict.
+#:
+#: The distinction the old single boolean could not draw. An element that has
+#: genuinely gone is a finding about the application and belongs in red; one
+#: that was underneath a consent banner, or below the fold, or still arriving,
+#: is a finding about the test and belongs in Blocked, where nobody is asked to
+#: go and debug a page that works.
+#:
+#: Anything unlisted stays with the old answer, which is what an unknown
+#: diagnosis deserves.
+_DIAGNOSED = {
+    "ELEMENT_REMOVED": ResultStatus.FAILED,
+    "ELEMENT_DISABLED": ResultStatus.FAILED,
+    "ELEMENT_HIDDEN": ResultStatus.FAILED,
+    "ELEMENT_BLOCKED": ResultStatus.ERROR,
+    "ELEMENT_OUTSIDE_VIEWPORT": ResultStatus.ERROR,
+    "ELEMENT_NOT_READY": ResultStatus.ERROR,
+    "PAGE_NOT_READY": ResultStatus.ERROR,
+    "ELEMENT_IN_IFRAME": ResultStatus.ERROR,
+    # A frame that is not there, or not readable yet, is the test looking in the
+    # wrong document - nobody should be sent to debug a page that works. A frame
+    # that IS there with nothing in it that matches is the other thing entirely:
+    # the application changed, and that belongs in red.
+    "FRAME_NOT_FOUND": ResultStatus.ERROR,
+    "FRAME_NOT_READY": ResultStatus.ERROR,
+    "CROSS_ORIGIN_FRAME_UNAVAILABLE": ResultStatus.ERROR,
+    "TARGET_FOUND_IN_WRONG_FRAME": ResultStatus.ERROR,
+    "TARGET_NOT_FOUND_IN_FRAME": ResultStatus.FAILED,
+}
+
+
+def _diagnosis(case) -> str:
+    """Why the step could not reach its element, as the browser answered."""
+    for properties in case.iter("properties"):
+        for prop in properties.iter("property"):
+            if prop.get("name") == DIAGNOSIS and prop.get("value"):
+                return str(prop.get("value"))[:500]
+    return ""
+
 
 def _adaptations(case) -> list[str]:
     """What the test changed to get through, as it reported it.
@@ -112,18 +156,58 @@ def _parse_case(case) -> ParsedResult:
 
     if failure is not None:
         trace = (failure.text or "")
+        diagnosed = _diagnosis(case)
+        # A test that could not reach its element never asked the application
+        # anything, so it has no verdict to report - see `could_not_run`. When
+        # the browser was asked *why* it could not reach it, that answer is
+        # better than the guess, because it can tell an element that has been
+        # deleted from one that is merely underneath a cookie banner.
+        status = (
+            ResultStatus.ERROR
+            if could_not_run(failure.get("message"), trace)
+            else ResultStatus.FAILED
+        )
+        # Did the test reach a verdict of its own? `_state` raises only after
+        # weighing what the application actually said and did, and that ranks
+        # above anything read off the element afterwards.
+        #
+        # It was not ranking above it, and the result was a report that had the
+        # story backwards. A step whose click was answered `HTTP 503` by the
+        # application's own server came out as
+        #
+        #   ELEMENT_NOT_READY: sign_in_button - it is on the page but was not
+        #   usable in time — ... failed and was NOT retried: HTTP 503 ...
+        #
+        # headlined as Blocked, under the words "That is a problem with the
+        # test, not evidence of a bug in your application" - about a 503. The
+        # element diagnosis is an observation made after the fact; when the test
+        # has already said why it stopped, that reason leads.
+        concluded = _STATE_CONFLICT in trace or _NO_TEST_DATA in trace
+        if not concluded:
+            code = diagnosed.split(":", 1)[0].strip()
+            status = _DIAGNOSED.get(code, status)
+        elif _STATE_CONFLICT in trace:
+            # The test reached the application and the application answered.
+            # That is a failure, not a test that could not run.
+            status = ResultStatus.FAILED
+
+        if _NO_TEST_DATA in trace or _NO_TEST_DATA in (failure.get("message") or ""):
+            status = ResultStatus.ERROR
+
+        summary = _summarise(failure.get("message"))
+        if diagnosed:
+            if not summary:
+                summary = diagnosed
+            elif concluded:
+                summary = f"{summary} — {diagnosed}"
+            else:
+                summary = f"{diagnosed} — {summary}"
+
         return ParsedResult(
             function_name=function_name,
-            # Not always FAILED. A test that could not reach its element never
-            # asked the application anything, so it has no verdict to report -
-            # see `could_not_run`.
-            status=(
-                ResultStatus.ERROR
-                if could_not_run(failure.get("message"), trace)
-                else ResultStatus.FAILED
-            ),
+            status=status,
             duration_ms=duration_ms,
-            error_message=_summarise(failure.get("message")),
+            error_message=(summary or "")[:500] or None,
             stack_trace=trace.strip() or None,
             failed_step=_failed_step(trace),
             adaptations=_adaptations(case),
@@ -157,6 +241,24 @@ def _parse_case(case) -> ParsedResult:
         duration_ms=duration_ms,
         adaptations=_adaptations(case),
     )
+
+
+#: The generated test ran out of usable data - every comparable alternative was
+#: refused too, or nothing on the page was enough like the recorded item to risk
+#: substituting. The application was willing; the fixture is exhausted.
+#:
+#: Blocked rather than failed, because nobody should be sent to debug an
+#: application over it, and it must never be mistaken for a pass.
+_NO_TEST_DATA = "NoValidTestData"
+
+#: The generated test asked the application and the application answered: it
+#: refused, or it failed, and `_state` weighed the two and decided nothing was
+#: safe to retry. A verdict, in other words - which is why it outranks the
+#: element diagnosis both in what the report says and in what it is called.
+#:
+#: Failed rather than blocked. The test reached the application; whatever it
+#: found there is a finding, not a test that could not run.
+_STATE_CONFLICT = "StateConflict"
 
 
 #: Playwright verbs that *drive* the page. Every one of them needs the element

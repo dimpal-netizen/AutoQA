@@ -361,6 +361,28 @@ def py_str(value: str) -> str:
     return repr(value)
 
 
+def py_doc(value: str) -> str:
+    """Recorded text, safe to drop inside a generated docstring.
+
+    A docstring is an ordinary string literal, so everything in it is subject
+    to escape processing — and recorded selectors are full of backslashes,
+    because that is how CSS escapes a colon in a class name. Tailwind writes
+    `md:flex`, the DOM reports `md\\:flex`, and the generated page object said
+
+        pages/home_page.py:24: SyntaxWarning: invalid escape sequence '\\:'
+
+    on every import. Today that is a warning and `\\:` quietly means two
+    characters rather than one; in a later Python it is a SyntaxError and the
+    whole suite stops importing.
+
+    Backslashes are doubled and quotes escaped, so the docstring shows exactly
+    what the recorder saw, whatever it saw. Escaping every quote rather than
+    only `\"\"\"` is deliberate: a value ending in one quote would otherwise
+    close the docstring a character early.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 #: Locators naming something a visitor can see. Sites duplicate these freely —
 #: a desktop and a mobile copy of the same link, a call-to-action repeated in
 #: two sections — and the duplicate is often absent when the recording is made.
@@ -455,11 +477,69 @@ def _render(selector: Selector, root: str) -> str:
             return f"{root}.locator({py_str(selector.value)})"
 
 
-def frame_root(frame_path: list[str], base: str = "page") -> str:
-    """Chain frame_locator calls for an element inside iframes."""
+#: How a frame is chosen, best first.
+#:
+#: Ordered by who decided the value and how long it lasts. A `name` exists
+#: because a developer wanted to refer to the frame; a `title` because somebody
+#: wanted to describe it to a screen reader; an `id` because something needed to
+#: address it. All three are choices about *this* frame. A `src` is a fact about
+#: it. An index is a fact about its neighbours - which is why it is last: a page
+#: that gains a chat widget or an advert renumbers every frame after it, and a
+#: test pinned to "the second iframe" starts driving somebody else's.
+_FRAME_BY = ("name", "title", "element_id", "src")
+
+_FRAME_ATTRIBUTE = {"name": "name", "title": "title", "element_id": "id", "src": "src"}
+
+
+def frame_selector(frame: object) -> str:
+    """One frame, as a selector for the `<iframe>` element that holds it.
+
+    Accepts a descriptor or a literal selector string. The string form is what
+    every recording made before frames were captured carries, and it is passed
+    through untouched - it was already a selector and nothing here can improve
+    on it.
+    """
+    if isinstance(frame, str):
+        return frame
+
+    described = frame if isinstance(frame, dict) else getattr(frame, "__dict__", {})
+
+    for key in _FRAME_BY:
+        value = described.get(key)
+        if not value:
+            continue
+        if key == "src":
+            # Matched on a prefix, so a cache-busting query string or a session
+            # token in the URL does not make it a different frame. Playwright
+            # takes CSS attribute operators here, and `^=` is exactly this.
+            return f'iframe[src^={_before_query(str(value))!r}]'
+        return f"iframe[{_FRAME_ATTRIBUTE[key]}={str(value)!r}]"
+
+    index = described.get("index")
+    return f"iframe >> nth={int(index)}" if index is not None else "iframe"
+
+
+def _before_query(src: str) -> str:
+    """The stable part of a frame's address: everything up to the query."""
+    return src.split("?", 1)[0].split("#", 1)[0] or src
+
+
+def frame_root(frame_path: list, base: str = "page") -> str:
+    """Chain frame_locator calls for an element inside iframes.
+
+    Outermost first, because that is the order a browser has to resolve them in:
+    the second frame does not exist until the first has been found.
+
+    `frame_locator` rather than anything that reaches into the frame's document,
+    and that matters for more than tidiness. It is the only mechanism that works
+    across an origin boundary - a payment or consent frame is served from
+    somebody else's domain, and reading into it is a thing browsers exist to
+    prevent. Playwright drives it from outside the boundary, which is why this
+    works on the frames that most need it.
+    """
     root = base
     for frame in frame_path:
-        root = f"{root}.frame_locator({py_str(frame)})"
+        root = f"{root}.frame_locator({py_str(frame_selector(frame))})"
     return root
 
 

@@ -7,6 +7,7 @@ runtime failure three phases away. Every file is parsed before it is returned.
 from __future__ import annotations
 
 import ast
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.codegen.converter import TestIR, page_variables
 from app.codegen.dataroles import CONFLICT
-from app.codegen.selectors import py_str
+from app.codegen.selectors import py_doc, py_str
 from app.models.enums import FileType
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -49,6 +50,9 @@ def _environment() -> Environment:
         keep_trailing_newline=True,
     )
     env.filters["pystr"] = py_str
+    # For recorded text that lands *inside* a docstring rather than in a string
+    # literal of its own. See `py_doc`.
+    env.filters["pydoc"] = py_doc
     return env
 
 
@@ -102,7 +106,7 @@ def render(ir: TestIR, *, browser_info: dict[str, Any] | None = None) -> list[Ge
     # was recorded. The conflict vocabulary is handed to the template from
     # `dataroles`, so the half that decides which steps may recover and the half
     # that decides whether a refusal happened can never drift apart.
-    if ir.needs_state:
+    if ir.needs_state or ir.needs_instead or ir.selection_point is not None:
         files.append(
             GeneratedFileSpec(
                 path="pages/_state.py",
@@ -192,7 +196,7 @@ def _viewport(browser_info: dict[str, Any] | None) -> tuple[int, int]:
 #: perfectly good Python, it just refers to something that is not there.
 _MUST_BE_IMPORTED = (
     "re", "uuid4", "expect", "sample_file", "set_checked", "reveal", "unhealed",
-    "one_of", "submit", "after",
+    "one_of", "submit", "after", "instead", "workflow",
 )
 
 
@@ -231,13 +235,33 @@ def validate(spec: GeneratedFileSpec) -> None:
     if not spec.path.endswith(".py"):
         return
 
+    # Warnings are collected, not printed, and then treated as failures. Python
+    # says a great deal about code it will nonetheless compile, and this file
+    # already had every word of it:
+    #
+    #   pages/home_page.py:24: SyntaxWarning: invalid escape sequence '\:'
+    #
+    # A Tailwind class - `md:flex` in the markup, `md\:flex` once CSS escapes
+    # the colon - written into a docstring, where `\:` is not an escape Python
+    # knows. It compiled anyway, so `validate` passed it, and it went out in
+    # every generated suite. Deprecated escapes become SyntaxError in a later
+    # Python, so this was a suite that would one day stop importing entirely.
     try:
-        ast.parse(spec.content, filename=spec.path)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ast.parse(spec.content, filename=spec.path)
     except SyntaxError as exc:
         line = (spec.content.splitlines() or [""])[max(0, (exc.lineno or 1) - 1)]
         raise GeneratedCodeError(
             f"{spec.path} line {exc.lineno}: {exc.msg}\n  {line.strip()}"
         ) from exc
+
+    for warning in caught:
+        if issubclass(warning.category, SyntaxWarning):
+            raise GeneratedCodeError(
+                f"{spec.path} line {warning.lineno}: "
+                f"{warning.category.__name__}: {warning.message}"
+            )
 
     missing = _undefined(spec.content)
     if missing:

@@ -90,6 +90,11 @@ def _state_awareness(request: pytest.FixtureRequest, page: Page):
     yield
     for note in _state.adaptations():
         request.node.user_properties.append(("autoqa_adaptation", note))
+    for recorded, ran in _state.substituted().items():
+        request.node.user_properties.append(
+            ("autoqa_adaptation", f"data: {recorded!r} was replaced by {ran!r} "
+                                  "for the rest of the test")
+        )
 
 
 {% endif %}
@@ -127,17 +132,53 @@ def browser_context_args(browser_context_args: dict) -> dict:
 
 @pytest.fixture(autouse=True)
 def _screenshot_on_failure(request: pytest.FixtureRequest, page: Page):
-    """Capture a screenshot when a test fails.
+    """Capture a screenshot when a test fails, and say why the step could not run.
 
-    Without this a CI failure gives you a stack trace and nothing else; with it
-    you can see what the page actually looked like.
+    Without the screenshot a CI failure gives you a stack trace and nothing
+    else; with it you can see what the page actually looked like.
+
+    The diagnosis is the other half, and it is only knowable here. Once the test
+    has failed the browser is still open on the page that defeated it, so this
+    is the last moment anyone can ask whether the element was missing, hidden,
+    scrolled away, or underneath something - and those four call for four
+    completely different responses from whoever reads the report. Afterwards the
+    context is torn down and all that survives is "not visible".
+
+    Best-effort throughout: a diagnosis that cannot be taken changes nothing
+    about the failure, which is already recorded.
     """
     yield
 
     failed = request.node.stash.get(_REPORT_KEY, False) if _REPORT_KEY else False
-    if failed:
-        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    if not failed:
+        return
+
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    try:
         page.screenshot(path=str(ARTIFACTS / f"{request.node.name}.png"), full_page=True)
+    except Exception:  # noqa: BLE001 - a page too broken to photograph
+        pass
+
+    try:
+        from pages._healing import diagnose, last_resolved
+
+        reaching_for = last_resolved()
+        if not reaching_for.get("locator"):
+            return
+
+        code, because = diagnose(
+            page,
+            reaching_for["locator"],
+            reaching_for.get("describes"),
+            reaching_for.get("inside"),
+        )
+        named = reaching_for.get("name") or "the element"
+        request.node.user_properties.append(
+            ("autoqa_diagnosis", f"{code}: {named} - {because}")
+        )
+        print(f"[autoqa] DIAGNOSIS {code}: {named} - {because}")
+    except Exception:  # noqa: BLE001 - see above
+        pass
 
 
 _REPORT_KEY = pytest.StashKey[bool]()
@@ -145,6 +186,7 @@ _REPORT_KEY = pytest.StashKey[bool]()
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
+    """Remember that the test failed, so the fixture above knows to look."""
     outcome = yield
     report = outcome.get_result()
     if report.when == "call" and report.failed:

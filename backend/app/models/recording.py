@@ -66,7 +66,9 @@ class RecordingSession(Base, TimestampMixin):
     actions: Mapped[list["RecordedAction"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="RecordedAction.sequence",
+        # See `list_actions`: the clock orders actions across pages, a block
+        # number does not.
+        order_by="RecordedAction.timestamp_ms, RecordedAction.sequence",
     )
     # The suite generated from this recording, if any. viewonly because
     # TestSuite owns the foreign key and the lifecycle.
@@ -114,9 +116,15 @@ class RecordedAction(Base):
     timestamp_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    # iframe chain from the top document down to the element, empty for the
-    # main frame. Phase 3 turns this into chained frame_locator() calls.
-    frame_path: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    # The frames between the page and the element, outermost first; empty for
+    # the main frame, which is almost every element. Turned into chained
+    # frame_locator() calls at generation time.
+    #
+    # Holds either a list of literal iframe selectors - what every recording
+    # made before frames were captured carries, and always empty - or a list of
+    # descriptors saying what each frame is called, titled and loading. JSONB
+    # takes both without a migration, and `frame_root` reads both.
+    frame_path: Mapped[list[Any]] = mapped_column(JSONB, default=list, nullable=False)
 
     # Ranked selector candidates, best first. See SelectorStrategy.
     selectors: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)

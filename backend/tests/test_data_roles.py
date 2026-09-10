@@ -507,7 +507,10 @@ ALL_REFUSED = """
 
 
 @pytest.mark.integration
-def test_running_out_of_alternatives_fails_the_test(tmp_path: Path):
+def test_running_out_of_alternatives_is_no_valid_test_data(tmp_path: Path):
+    """Not a plain conflict. The application was willing every time - it is the
+    fixture that has run out, and that wants a different response from whoever
+    reads the report than an application defect does."""
     from playwright.sync_api import sync_playwright
 
     state, healing = generated_helpers(tmp_path)
@@ -518,9 +521,13 @@ def test_running_out_of_alternatives_fails_the_test(tmp_path: Path):
         state.watch(page)
         shelf = Listing(page, healing, "ul.items li:nth-child(1) a", "ul.items li a")
 
-        with pytest.raises(state.StateConflict, match="refused"):
+        with pytest.raises(state.NoValidTestData, match="every comparable"):
             state.one_of(shelf, "item", step=1, described='Click "One"',
                          among="item_alternatives")
+
+        # Still an AssertionError, so pytest reports it as a failure rather than
+        # an error - the test did reach the application and it did answer.
+        assert issubclass(state.NoValidTestData, AssertionError)
         browser.close()
 
 
@@ -599,19 +606,23 @@ def test_an_adaptation_is_written_down(tmp_path: Path):
     from playwright.sync_api import sync_playwright
 
     state, healing = generated_helpers(tmp_path)
+    # The two rows are identical in everything they state about themselves,
+    # which is what a real list looks like: an application does not publish
+    # which of its items will be refused. The refusal arrives when one is
+    # pressed, and nowhere else.
     html = """
     <!doctype html>
     <html><body>
       <div id="said"></div>
       <ul class="items">
-        <li><a href="#" class="row" data-ok="0">One</a></li>
-        <li><a href="#" class="row" data-ok="1">Two</a></li>
+        <li><a href="#" class="row">One</a></li>
+        <li><a href="#" class="row">Two</a></li>
       </ul>
       <script>
         document.querySelectorAll('.row').forEach((a) => a.addEventListener('click', (e) => {
           e.preventDefault();
           document.getElementById('said').innerText =
-            a.dataset.ok === '1' ? 'Done' : 'That one is already taken';
+            a.innerText === 'Two' ? 'Done' : 'That one is already taken';
           window.__last = a.innerText;
         }));
       </script>

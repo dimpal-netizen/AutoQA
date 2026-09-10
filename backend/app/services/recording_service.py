@@ -130,7 +130,12 @@ class RecordingService:
                 "action_type": action.action_type,
                 "timestamp_ms": action.timestamp_ms,
                 "url": action.url,
-                "frame_path": action.frame_path,
+                # Descriptors are dumped; a legacy selector string passes
+                # through as it is. JSONB holds either - see `frame_root`.
+                "frame_path": [
+                    f if isinstance(f, str) else f.model_dump(mode="json", exclude_none=True)
+                    for f in action.frame_path
+                ],
                 # mode="json" so enums become their string values — JSONB
                 # cannot serialise a Python enum.
                 "selectors": [s.model_dump(mode="json") for s in action.selectors],
