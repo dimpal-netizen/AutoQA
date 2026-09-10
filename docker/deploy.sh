@@ -39,7 +39,7 @@ echo "==> building and restarting"
 
 echo "==> waiting for the API"
 for _ in $(seq 1 60); do
-    if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+    if curl -fsS http://127.0.0.1:29381/health >/dev/null 2>&1; then
         echo "==> healthy"
         "${COMPOSE[@]}" ps
         exit 0

@@ -36,15 +36,15 @@ if [ "${AUTOQA_VIRTUAL_DISPLAY:-1}" = "1" ]; then
     [ -S "${socket}" ] || log "warning: ${socket} never appeared; recording will fail"
 
     # `-nopw` is deliberate and is why this port must never be published to the
-    # internet. Anyone who can reach 6080 can drive the browser, and that
+    # internet. Anyone who can reach 29383 can drive the browser, and that
     # browser is signed in to whatever the QA engineer signed in to. Keep it
     # behind the reverse proxy's auth, or on a private network, or off.
     log "starting x11vnc on :5900"
     x11vnc -display "${DISPLAY}" -forever -shared -nopw -quiet -rfbport 5900 \
         -listen localhost &
 
-    log "serving noVNC on :6080"
-    websockify --web=/usr/share/novnc 6080 localhost:5900 &
+    log "serving noVNC on :29383"
+    websockify --web=/usr/share/novnc 29383 localhost:5900 &
 fi
 
 # ---------------------------------------------------------------------------
@@ -67,10 +67,10 @@ alembic upgrade head
 #
 # Scaling out means moving execution onto a real queue first.
 # ---------------------------------------------------------------------------
-log "starting API on :8000"
+log "starting API on :29381"
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
-    --port 8000 \
+    --port 29381 \
     --workers 1 \
     --proxy-headers \
     --forwarded-allow-ips '*'

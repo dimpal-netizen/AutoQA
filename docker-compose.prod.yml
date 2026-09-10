@@ -83,10 +83,22 @@ services:
     shm_size: 1gb
     ports:
       # Bound to loopback: the reverse proxy publishes these, not Docker.
-      # 6080 is the recording screen and has no password on it - see
+      #
+      # Host-side ports are deliberately odd. 8000 and 3000 are what every
+      # other Python and Node service on a machine reaches for first, so a
+      # second application arriving later either fails to start or, worse,
+      # takes the port during a window when this one is down. 29381-29383 is a
+      # contiguous block nothing conventionally claims, and it sits below
+      # 32768 so it cannot collide with the ephemeral ports Linux hands out to
+      # outgoing connections.
+      #
+      # The containers listen on these too, so there is one number per service
+      # rather than a mapping to read backwards.
+      #
+      # 29383 is the recording screen and has no password on it - see
       # docker/backend-entrypoint.sh.
-      - "127.0.0.1:8000:8000"
-      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:29381:29381"
+      - "127.0.0.1:29383:29383"
 
   web:
     build:
@@ -100,7 +112,7 @@ services:
     depends_on:
       - api
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:29382:29382"
 
 volumes:
   postgres_data:

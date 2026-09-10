@@ -43,7 +43,7 @@ it, and noVNC serves it to a browser tab: the QA engineer presses Record in the
 web app, opens the recording screen, and drives the server's browser from their
 own machine.
 
-**The recording screen has no password on it.** Anyone who can reach port 6080
+**The recording screen has no password on it.** Anyone who can reach port 29383
 can drive that browser, and that browser is signed in to whatever the engineer
 signed in to. Compose binds it to `127.0.0.1`, so it is reachable only through
 the reverse proxy — put authentication in front of it, or keep it on a private
@@ -94,7 +94,7 @@ recording quietly fails to save.
 Check it:
 
 ```bash
-curl -fsS localhost:8000/health
+curl -fsS localhost:29381/health
 docker compose -f docker-compose.prod.yml logs -f api
 ```
 
@@ -132,11 +132,11 @@ What the config handles, and why each part is there:
 
 | Route | Goes to | Why it needs saying |
 |---|---|---|
-| `/api/` | `:8000` | `proxy_buffering off` — artifacts are streamed by `FileResponse` and a trace runs to tens of megabytes. With buffering on, nginx spools the whole file before sending a byte and a download looks like a hang. 300s timeouts, because generating a suite calls an AI provider. |
-| `/health` | `:8000` | Kept off the API prefix so uptime checks do not depend on the version. |
-| `/static/` | `:8000` | `recorder.js`, injected into recorded pages. |
-| `/record/` | `:6080` | Basic auth, plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. 1 hour timeouts, because a recording session lasts as long as the person clicking. |
-| `/` | `:3000` | The web app. |
+| `/api/` | `:29381` | `proxy_buffering off` — artifacts are streamed by `FileResponse` and a trace runs to tens of megabytes. With buffering on, nginx spools the whole file before sending a byte and a download looks like a hang. 300s timeouts, because generating a suite calls an AI provider. |
+| `/health` | `:29381` | Kept off the API prefix so uptime checks do not depend on the version. |
+| `/static/` | `:29381` | `recorder.js`, injected into recorded pages. |
+| `/record/` | `:29383` | Basic auth, plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. 1 hour timeouts, because a recording session lasts as long as the person clicking. |
+| `/` | `:29382` | The web app. |
 
 Also set: `client_max_body_size 64m`. nginx defaults to 1 MB, and test-case
 spreadsheets are uploaded through the API — over the limit, nginx returns 413
@@ -150,17 +150,17 @@ If you set `AUTOQA_VIRTUAL_DISPLAY=0`, delete the `/record/` block.
 
 ```caddy
 autoqa.example.com {
-	handle /api/*    { reverse_proxy 127.0.0.1:8000 }
-	handle /health   { reverse_proxy 127.0.0.1:8000 }
-	handle /static/* { reverse_proxy 127.0.0.1:8000 }
+	handle /api/*    { reverse_proxy 127.0.0.1:29381 }
+	handle /health   { reverse_proxy 127.0.0.1:29381 }
+	handle /static/* { reverse_proxy 127.0.0.1:29381 }
 
 	handle /record/* {
 		basic_auth { qa $2a$14$...  }   # caddy hash-password
 		uri strip_prefix /record
-		reverse_proxy 127.0.0.1:6080
+		reverse_proxy 127.0.0.1:29383
 	}
 
-	handle { reverse_proxy 127.0.0.1:3000 }
+	handle { reverse_proxy 127.0.0.1:29382 }
 }
 ```
 

@@ -1,0 +1,9 @@
+# Shell scripts must reach Linux with LF endings.
+#
+# Git on Windows converts to CRLF on checkout by default, and a CRLF entrypoint
+# fails inside a container with "no such file or directory" — pointing at a file
+# that is plainly there, because the kernel is looking for an interpreter named
+# "/usr/bin/env bash\r". Nothing in the message says so.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf

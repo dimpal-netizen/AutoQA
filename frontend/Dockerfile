@@ -22,6 +22,9 @@ RUN npm run build
 FROM node:20-bookworm-slim
 
 ENV NODE_ENV=production
+# `next start` reads PORT, so the port moves without editing package.json.
+# Odd on purpose — see the ports block in docker-compose.prod.yml.
+ENV PORT=29382
 WORKDIR /app
 
 # The whole tree rather than a standalone bundle, because next.config.ts does
@@ -29,9 +32,9 @@ WORKDIR /app
 # on is a change to the app's own configuration, not to its deployment.
 COPY --from=build /app ./
 
-EXPOSE 3000
+EXPOSE 29382
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD node -e "fetch('http://localhost:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+    CMD node -e "fetch('http://localhost:29382').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["npm", "run", "start"]

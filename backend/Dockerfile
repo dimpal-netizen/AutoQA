@@ -53,10 +53,11 @@ COPY backend/ /app/backend/
 COPY docker/backend-entrypoint.sh /usr/local/bin/autoqa-entrypoint
 RUN chmod +x /usr/local/bin/autoqa-entrypoint
 
-# 8000 the API, 6080 the recording screen over noVNC.
-EXPOSE 8000 6080
+# 29381 the API, 29383 the recording screen over noVNC. Odd on purpose — see
+# the ports block in docker-compose.prod.yml.
+EXPOSE 29381 29383
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+    CMD curl -fsS http://localhost:29381/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/autoqa-entrypoint"]
