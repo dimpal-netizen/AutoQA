@@ -303,7 +303,7 @@ def test_the_prompt_does_not_ask_for_cases_longer_than_it_accepts():
     prompt = load_prompt(
         "generate_cases", suite_name="S", start_url="u", pages="p",
         steps="\n".join(f"{i}. step" for i in range(28)), target_count=12,
-        guidance="",
+        guidance="", guidance_reminder="",
     )
 
     assert "Do not replay it" in prompt
@@ -311,6 +311,64 @@ def test_the_prompt_does_not_ask_for_cases_longer_than_it_accepts():
     # The length it asks for has to fit the length it enforces.
     assert "Four to eight steps is normal" in prompt
     assert MAX_STEPS >= 30
+
+
+# ---------------------------------------------------------------------------
+# The brief the person typed
+# ---------------------------------------------------------------------------
+def _prompt_for(guidance: str | None, count: int = 12) -> str:
+    from app.ai.case_generator import _asked_for, _last_word
+    from app.ai.client import load_prompt
+
+    return load_prompt(
+        "generate_cases", suite_name="S", start_url="u", pages="p", steps="s",
+        target_count=count,
+        guidance=_asked_for(guidance, count),
+        guidance_reminder=_last_word(guidance, count),
+    )
+
+
+def test_a_brief_is_the_last_thing_the_model_reads():
+    """It was the twenty-seventh line of two hundred and thirty-two.
+
+    Everything after it is generic rules, so the last instruction before
+    answering was a note about step counts — and batches came back covering the
+    four categories evenly with the brief touched once. Whatever is said last is
+    what a model is holding when it starts writing, and the brief is the one
+    instruction that came from a person.
+    """
+    prompt = _prompt_for("the phone number validation rules")
+    tail = "\n".join(prompt.splitlines()[-12:])
+
+    assert "the phone number validation rules" in tail
+    # And still stated up front, where the categories are introduced.
+    assert prompt.count("the phone number validation rules") >= 2
+
+
+def test_a_brief_outranks_the_category_quota():
+    """"Write 12 cases covering these categories" sat one line under the brief
+    and read as four quotas to satisfy alongside it."""
+    prompt = _prompt_for("the phone number rules")
+
+    assert "not four quotas to satisfy alongside it" in prompt
+    assert "write fewer rather than filling the gap" in prompt
+
+
+def test_no_brief_adds_nothing_at_all():
+    """An empty heading reads as a requirement to be satisfied somehow."""
+    plain = _prompt_for(None)
+
+    assert "BEFORE YOU ANSWER" not in plain
+    assert "WHAT THESE TEST CASES ARE FOR" not in plain
+
+
+def test_a_brief_is_collapsed_and_capped():
+    """It is somebody's free text arriving in a prompt."""
+    from app.ai.case_generator import _brief
+
+    assert _brief("  the   phone \n rules  ") == "the phone rules"
+    assert len(_brief("x" * 5000)) == 1000
+    assert _brief(None) == ""
 
 
 def test_a_whole_batch_rejected_says_so_rather_than_naming_one(recorded):
@@ -340,19 +398,17 @@ def test_nothing_samples():
 
 def test_every_provider_that_can_be_pinned_is_pinned():
     """A provider left sampling reintroduces the whole problem silently."""
-    from pathlib import Path
+    from app.ai.client import SEED, TEMPERATURE
+    from app.ai.langchain_client import _provider
 
-    ai = Path(__file__).resolve().parent.parent / "app" / "ai"
-    for provider in ("gemini.py", "openai_client.py"):
-        source = (ai / provider).read_text(encoding="utf-8")
-        assert "temperature=TEMPERATURE" in source, provider
-        assert "seed=SEED" in source, provider
+    for name in ("gemini", "openai"):
+        kwargs = _provider(name).kwargs
+        assert kwargs["temperature"] == TEMPERATURE, name
+        assert kwargs["seed"] == SEED, name
 
     # Claude Opus 5 removed temperature outright — sending it is a 400 — so it
     # is steered by the prompt instead. Asserted so nobody "fixes" the gap.
-    claude = (ai / "claude.py").read_text(encoding="utf-8")
-    assert "temperature=" not in claude
-    assert "were REMOVED on Claude Opus 5" in claude
+    assert "temperature" not in _provider("claude").kwargs
 
 
 def test_an_existing_module_name_is_never_reused(recorded):

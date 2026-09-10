@@ -60,25 +60,47 @@ CHECK_MS = 1_000
 class Reachability:
     """What was on each page when it was opened cold.
 
-    `unusable` is the important half: the pages we never actually reached. Asked
-    for the cart and handed a login form, "none of these elements exist" is a
-    fact about being signed out, and acting on it would withhold every element
-    on the page - turning a probe that failed into a suite with nothing left to
-    write about.
+    `unusable` is the pages that were asked for and answered with something
+    else - a login wall, an error page, a redirect.
 
-    Arriving somewhere and finding it bare is the opposite, and is exactly what
-    this is for. An empty cart really has no Checkout button. That page is
-    usable, it just has nothing on it, and a case built on what is missing is
-    the case worth not writing.
+    Those elements are withheld, and it took a suite full of impossible tests to
+    settle that. This used to offer them, on the reasoning that "asked for the
+    cart and handed a login form" says nothing about the cart, and withholding
+    on no evidence would leave a suite with nothing to write about.
+
+    The reasoning misses what the probe actually did. It replays *the
+    recording's own sign-in* before it starts. Being bounced anyway is not an
+    absence of evidence - it is evidence that this suite cannot reach that page,
+    because a generated case gets the identical sign-in put in front of it (see
+    `_restore_sign_in`) and will be bounced identically.
+
+    Offering them anyway is how one real project ended up with a batch where
+    every case opened a multi-step wizard and reached straight for a field two
+    steps in. Nothing was reachable, every case timed out, and the one guard
+    against exactly that had waved all thirty-seven elements through.
+
+    Not knowing at all is still different, and still handled: `probe` returns
+    None when it could not run, and generation then proceeds exactly as it did
+    before. A probe is an extra source of truth, never a gate - but a probe that
+    ran and was refused has told us something, and this is it.
+
+    Arriving somewhere and finding it bare is different again, and is what this
+    is for. An empty cart really has no Checkout button. That page is usable, it
+    just has nothing on it.
     """
 
     visible: set[tuple[str, str]] = field(default_factory=set)
     unusable: set[str] = field(default_factory=set)
+    #: Did the recorded sign-in work? None when the recording never signed in,
+    #: so there was nothing to try. False is the single most useful thing this
+    #: class can report: every protected page is unreachable, every case built
+    #: on one will fail, and the cause is one expired password.
+    signed_in: bool | None = None
 
     def offers(self, page: PageSpec, locator_name: str) -> bool:
         """Should the model be offered this element?"""
         if page.class_name in self.unusable:
-            return True  # nothing was learned here; change nothing
+            return False
         return (page.class_name, locator_name) in self.visible
 
 
@@ -141,7 +163,9 @@ def _walk(ir: TestIR, sign_in: list[StepSpec]) -> Reachability | None:
                 healing = None
 
             if sign_in:
-                _replay_sign_in(page, _by_variable(ir.pages), sign_in)
+                found.signed_in = _replay_sign_in(
+                    page, _by_variable(ir.pages), sign_in
+                )
 
             for spec in ir.pages:
                 _one_page(page, healing, spec, found)
@@ -149,9 +173,17 @@ def _walk(ir: TestIR, sign_in: list[StepSpec]) -> Reachability | None:
             browser.close()
 
     logger.info(
-        "Probed %s: %d element(s) on screen cold, %d page(s) told us nothing",
+        "Probed %s: %d element(s) on screen cold, %d page(s) could not be reached",
         ir.suite_name, len(found.visible), len(found.unusable),
     )
+    if found.signed_in is False:
+        logger.warning(
+            "Probing %s: the recorded sign-in did not work, so every page "
+            "behind it was refused and its elements are withheld. Check the "
+            "account the recording used still exists and its password is "
+            "current.",
+            ir.suite_name,
+        )
     return found
 
 
@@ -219,7 +251,7 @@ def _path(url: str) -> str:
     return (urlparse(url).path or "/").rstrip("/").lower() or "/"
 
 
-def _replay_sign_in(page, pages: dict[str, PageSpec], steps: list[StepSpec]) -> None:
+def _replay_sign_in(page, pages: dict[str, PageSpec], steps: list[StepSpec]) -> bool:
     """Replay the recorded sign-in, so the pages behind it can be opened.
 
     Driven through the page objects, one action at a time, rather than by
@@ -234,7 +266,7 @@ def _replay_sign_in(page, pages: dict[str, PageSpec], steps: list[StepSpec]) -> 
     """
     first = next((s for s in steps if s.page_var in pages), None)
     if first is None:
-        return
+        return False
     try:
         page.goto(pages[first.page_var].url, wait_until="domcontentloaded", timeout=30_000)
         with suppress(Exception):
@@ -242,7 +274,7 @@ def _replay_sign_in(page, pages: dict[str, PageSpec], steps: list[StepSpec]) -> 
         page.wait_for_timeout(SETTLE_MS)
     except Exception:  # noqa: BLE001 - cannot sign in; pages will say so
         logger.info("Could not open the sign-in page while probing", exc_info=True)
-        return
+        return False
 
     for step in steps:
         if not (step.page_var and step.locator_name):
@@ -259,7 +291,7 @@ def _replay_sign_in(page, pages: dict[str, PageSpec], steps: list[StepSpec]) -> 
                 target.click(timeout=5_000)
         except Exception:  # noqa: BLE001 - unable to sign in; pages will say so
             logger.debug("Sign-in step failed while probing", exc_info=True)
-            return
+            return False
 
     # Leaving the login page is the signal that signing in worked. Waiting for
     # the network to go quiet is not: the request is still in the air when it
@@ -271,7 +303,9 @@ def _replay_sign_in(page, pages: dict[str, PageSpec], steps: list[StepSpec]) -> 
         page.wait_for_url(lambda url: _path(url) != login_path, timeout=SIGN_IN_MS)
     except Exception:  # noqa: BLE001
         logger.info("Signed in and stayed on the login page; probing anonymously")
-        return
+        return False
 
     with suppress(Exception):
         page.wait_for_load_state("networkidle", timeout=IDLE_MS)
+
+    return True

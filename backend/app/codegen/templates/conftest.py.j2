@@ -36,7 +36,78 @@ DEFAULT_BASE_URL = {{ base_url | pystr }}
 EXPECT_TIMEOUT_MS = int(os.environ.get("AUTOQA_EXPECT_TIMEOUT_MS", 10_000))
 expect.set_options(timeout=EXPECT_TIMEOUT_MS)
 
+# How long one action waits for its element, and how long a navigation started
+# by one is given to arrive. Playwright's own default is thirty seconds, and a
+# recorded journey against a real application outgrows it:
+#
+#     TimeoutError: Timeout 30000ms exceeded.
+#     waiting for navigation to ".../property-owner/add-property"
+#
+# The click had worked. The site loads a map widget and a pile of advertising
+# and analytics, the suite runs three browsers at once on one machine, and the
+# page a person waited a moment for during recording takes longer than that when
+# something else is competing for the CPU.
+#
+# Recording is unhurried in a way that replay is not - somebody stops to read
+# the form, and the application has finished settling long before they click
+# again. A replay clicks the instant the previous step returns.
+#
+# Waiting longer costs nothing when the step succeeds: every wait here returns
+# the moment its condition holds. The extra time is only ever spent on a step
+# that was going to fail, which is exactly when being sure it really failed is
+# worth the wait.
+ACTION_TIMEOUT_MS = int(os.environ.get("AUTOQA_ACTION_TIMEOUT_MS", 60_000))
+
 ARTIFACTS = Path(__file__).parent / "artifacts"
+
+
+{% if needs_state %}
+@pytest.fixture(autouse=True)
+def _state_awareness(request: pytest.FixtureRequest, page: Page):
+    """Watch for application failures, and report anything the test had to adapt.
+
+    Two jobs, and both have to happen here because both need the page before the
+    test does. `watch` subscribes to the responses and JavaScript errors that
+    say the application is broken - the one piece of evidence that closes the
+    recovery gate, and it is gone by the time a step has finished failing.
+
+    Afterwards, every substitution the test made is attached to the result.
+    `record_property` puts it in the JUnit report, which is what AutoQA reads
+    back, so a run that adapted arrives in the report saying so. A recovered
+    test that looks like an ordinary pass is worse than a failing one: it is
+    evidence of nothing, and nobody knows to ask.
+    """
+    from urllib.parse import urlparse
+
+    from pages import _state
+
+    _state.reset()
+    # Scoped to the application under test. A real page fetches from a dozen
+    # places nobody here has an opinion about - analytics, tag managers, fonts,
+    # chat widgets - and those fail constantly. Counting them as evidence that
+    # the application is broken fails working tests for somebody else's outage.
+    _state.watch(page, site=urlparse(os.environ.get("BASE_URL", DEFAULT_BASE_URL)).netloc)
+    yield
+    for note in _state.adaptations():
+        request.node.user_properties.append(("autoqa_adaptation", note))
+    for recorded, ran in _state.substituted().items():
+        request.node.user_properties.append(
+            ("autoqa_adaptation", f"data: {recorded!r} was replaced by {ran!r} "
+                                  "for the rest of the test")
+        )
+
+
+{% endif %}
+@pytest.fixture(autouse=True)
+def _patient_actions(page: Page) -> None:
+    """Give every action and navigation on this page the timeout above.
+
+    Set per page rather than globally because that is the only place Playwright
+    offers: the defaults live on the page object, and pytest-playwright makes a
+    fresh one for every test.
+    """
+    page.set_default_timeout(ACTION_TIMEOUT_MS)
+    page.set_default_navigation_timeout(ACTION_TIMEOUT_MS)
 
 
 @pytest.fixture(scope="session")
@@ -61,17 +132,53 @@ def browser_context_args(browser_context_args: dict) -> dict:
 
 @pytest.fixture(autouse=True)
 def _screenshot_on_failure(request: pytest.FixtureRequest, page: Page):
-    """Capture a screenshot when a test fails.
+    """Capture a screenshot when a test fails, and say why the step could not run.
 
-    Without this a CI failure gives you a stack trace and nothing else; with it
-    you can see what the page actually looked like.
+    Without the screenshot a CI failure gives you a stack trace and nothing
+    else; with it you can see what the page actually looked like.
+
+    The diagnosis is the other half, and it is only knowable here. Once the test
+    has failed the browser is still open on the page that defeated it, so this
+    is the last moment anyone can ask whether the element was missing, hidden,
+    scrolled away, or underneath something - and those four call for four
+    completely different responses from whoever reads the report. Afterwards the
+    context is torn down and all that survives is "not visible".
+
+    Best-effort throughout: a diagnosis that cannot be taken changes nothing
+    about the failure, which is already recorded.
     """
     yield
 
     failed = request.node.stash.get(_REPORT_KEY, False) if _REPORT_KEY else False
-    if failed:
-        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    if not failed:
+        return
+
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    try:
         page.screenshot(path=str(ARTIFACTS / f"{request.node.name}.png"), full_page=True)
+    except Exception:  # noqa: BLE001 - a page too broken to photograph
+        pass
+
+    try:
+        from pages._healing import diagnose, last_resolved
+
+        reaching_for = last_resolved()
+        if not reaching_for.get("locator"):
+            return
+
+        code, because = diagnose(
+            page,
+            reaching_for["locator"],
+            reaching_for.get("describes"),
+            reaching_for.get("inside"),
+        )
+        named = reaching_for.get("name") or "the element"
+        request.node.user_properties.append(
+            ("autoqa_diagnosis", f"{code}: {named} - {because}")
+        )
+        print(f"[autoqa] DIAGNOSIS {code}: {named} - {because}")
+    except Exception:  # noqa: BLE001 - see above
+        pass
 
 
 _REPORT_KEY = pytest.StashKey[bool]()
@@ -79,6 +186,7 @@ _REPORT_KEY = pytest.StashKey[bool]()
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
+    """Remember that the test failed, so the fixture above knows to look."""
     outcome = yield
     report = outcome.get_result()
     if report.when == "call" and report.failed:

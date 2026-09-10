@@ -267,6 +267,144 @@ def test_it_falls_through_to_a_working_way_and_says_so(tmp_path: Path):
 
 
 @pytest.mark.integration
+def test_a_locator_that_now_matches_twice_drives_the_first(tmp_path: Path):
+    """From a real replay of a recorded journey, red on a working page:
+
+        Locator.click: Error: strict mode violation:
+        get_by_role("link", name="Home", exact=True) resolved to 2 elements
+
+    The recorder saw one match and said so, so the generator did not add
+    `.first`. Pages gain elements — a footer nav, a breadcrumb — and a selector
+    that was unique on the day is not any more. Playwright then refuses to guess
+    and the whole recorded test errors out.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    # The page has grown a second "Home" link since it was recorded.
+    page_file = tmp_path / "page.html"
+    page_file.write_text(
+        "<!doctype html><html><body>"
+        '<nav><a href="/">Home</a></nav>'
+        '<footer><a href="/">Home</a></footer>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        candidates = [
+            ("role_name", lambda: page.get_by_role("link", name="Home", exact=True)),
+        ]
+
+        with pytest.warns(healing.Healed, match="more than one element"):
+            located = healing.heal("home_link", candidates)
+
+        # Usable rather than an error — which is the whole point.
+        located.click()
+        browser.close()
+
+
+@pytest.mark.integration
+def test_a_hidden_copy_is_passed_over_for_the_one_on_screen(tmp_path: Path):
+    """From run 196, sixty seconds spent on a site that was working:
+
+        waiting for get_by_text("Online Courses", exact=True).first
+          - locator resolved to <a href="/online-cle">
+          - element is not visible          (117 times, then red)
+
+    The site ships a mobile menu and a desktop menu and hides one of them. The
+    recorded way of finding the link matched the hidden copy; the recorded css
+    path matched the copy on screen the whole time.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    page_file = tmp_path / "page.html"
+    page_file.write_text(
+        "<!doctype html><html><body>"
+        '<nav class="mobile" style="display:none"><a href="/m">Online Courses</a></nav>'
+        '<nav class="desktop"><a id="wanted" href="/d">Online Courses</a></nav>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        candidates = [
+            ("text", lambda: page.get_by_text("Online Courses", exact=True).first),
+            ("css", lambda: page.locator("nav.desktop a")),
+        ]
+
+        with pytest.warns(healing.Healed, match="not visible"):
+            located = healing.heal("online_courses_link", candidates, tag="a")
+
+        assert located.first.evaluate("e => e.id") == "wanted"
+        located.click(timeout=2_000)  # usable, not merely found
+        browser.close()
+
+
+@pytest.mark.integration
+def test_an_element_hidden_by_design_is_still_the_answer(tmp_path: Path):
+    """A styled checkbox is 0x0 and every recorded way of finding it says so.
+
+    Preferring what can be seen must not mean healing away from an element
+    that is invisible on purpose — `set_checked` exists to click its label.
+    """
+    import importlib.util
+
+    from playwright.sync_api import sync_playwright
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_healing", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+
+    page_file = tmp_path / "page.html"
+    page_file.write_text(
+        "<!doctype html><html><body>"
+        '<label><input id="terms" type="checkbox" style="appearance:none;width:0;height:0">'
+        "I agree</label>"
+        "</body></html>",
+        encoding="utf-8",
+    )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        candidates = [("css", lambda: page.locator("#terms"))]
+        located = healing.heal("terms_checkbox", candidates, tag="input")
+
+        assert located.first.evaluate("e => e.id") == "terms"
+        healing.set_checked(located, True)
+        assert located.is_checked()
+        browser.close()
+
+
+@pytest.mark.integration
 def test_no_warning_when_the_first_way_still_works(tmp_path: Path):
     """Healing must be silent when nothing has changed, or the noise makes the
     warning that matters unreadable."""
@@ -588,3 +726,95 @@ def test_a_spare_of_the_right_kind_is_still_used(tmp_path) -> None:
 
         assert located.first.evaluate("e => e.id") == "submit"
         browser.close()
+
+
+# ---------------------------------------------------------------------------
+# Scrolling, for a run somebody is watching
+# ---------------------------------------------------------------------------
+TALL_PAGE = """<!doctype html><body style="margin:0">
+<div style="height:4000px"></div>
+<!-- type=button: a submit navigates, and the new document would arrive with an
+     empty `samples` - the scroll being measured erased by the click after it. -->
+<form class="login"><button id="submit" type="button">Login</button></form>
+<script>
+window.samples = [];
+addEventListener('scroll', () => samples.push(Math.round(scrollY)), {passive: true});
+</script></body>"""
+
+
+def _healing_module(tmp_path: Path, *, watching: bool, monkeypatch):
+    """The generated helper, imported with AUTOQA_WATCH set or not.
+
+    `_WATCHING` is read at import, so the variable has to be set before the
+    module body runs - which is the whole point: a run decides once whether
+    anyone is watching it, not per action.
+    """
+    import importlib.util
+
+    monkeypatch.delenv("AUTOQA_WATCH", raising=False)
+    if watching:
+        monkeypatch.setenv("AUTOQA_WATCH", "1")
+
+    module = tmp_path / "_healing.py"
+    module.write_text(generate(BUTTON_WAYS)["pages/_healing.py"], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(f"_healing_{watching}", module)
+    healing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(healing)
+    assert healing._WATCHING is watching
+    return healing
+
+
+def _scroll_path(healing, tmp_path: Path) -> list[int]:
+    from playwright.sync_api import sync_playwright
+
+    page_file = tmp_path / "tall.html"
+    page_file.write_text(TALL_PAGE, encoding="utf-8")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(page_file.as_uri())
+
+        located = healing.heal(
+            "login_button", [("css_id", lambda: page.locator("#submit"))], tag="button"
+        )
+        located.click()
+        page.wait_for_timeout(600)  # a scroll event lands a frame after the scroll
+        samples = page.evaluate("window.samples")
+        browser.close()
+
+    return samples
+
+
+@pytest.mark.integration
+def test_a_watched_run_scrolls_instead_of_teleporting(tmp_path: Path, monkeypatch):
+    """Playwright's own scroll-into-view is a jump, and neither `slow_mo` nor
+    CSS `scroll-behavior: smooth` changes that - both were measured. Watching a
+    long form fill in, the page simply teleports and there is no telling how far
+    it went or which field is now under the cursor."""
+    healing = _healing_module(tmp_path, watching=True, monkeypatch=monkeypatch)
+
+    path = _scroll_path(healing, tmp_path)
+
+    # Many intermediate offsets rather than one jump, rising to the target.
+    assert len(path) > 10, f"scrolled in {len(path)} step(s) - that is a jump"
+    assert path == sorted(path)
+
+
+@pytest.mark.integration
+def test_a_headless_run_is_left_alone(tmp_path: Path, monkeypatch):
+    """Nobody is watching, so gliding would buy nothing and cost a wait on
+    every single action."""
+    healing = _healing_module(tmp_path, watching=False, monkeypatch=monkeypatch)
+
+    assert len(_scroll_path(healing, tmp_path)) <= 2
+
+
+@pytest.mark.integration
+def test_the_element_ends_up_in_the_same_place_either_way(tmp_path: Path, monkeypatch):
+    """Gliding moves the page, never the choice of element. If these disagreed,
+    a watched run and a headless run would be different tests."""
+    watched = _scroll_path(_healing_module(tmp_path, watching=True, monkeypatch=monkeypatch), tmp_path)
+    plain = _scroll_path(_healing_module(tmp_path, watching=False, monkeypatch=monkeypatch), tmp_path)
+
+    assert watched[-1] == plain[-1]

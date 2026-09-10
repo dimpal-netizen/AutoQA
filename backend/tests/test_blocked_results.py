@@ -152,3 +152,97 @@ def test_the_report_separates_the_two(tmp_path: Path) -> None:
     # The evidence survives the reclassification - a blocked test still has to
     # be diagnosable, it just must not be filed as a defect.
     assert "not visible" in results["test_blocked"].stack_trace
+
+
+# ---------------------------------------------------------------------------
+# Whose account of the failure leads
+#
+# The element diagnosis is an observation made after the fact: it says what was
+# true of the element once the step had already failed. `_state` raises only
+# after weighing what the application actually said and did. When both are
+# present, the verdict is the cause and the diagnosis is a detail - and getting
+# that the wrong way round produced a report that read
+#
+#   ELEMENT_NOT_READY: sign_in_button - it is on the page but was not usable in
+#   time â€” ... failed and was NOT retried: HTTP 503 ...
+#
+# headlined "Blocked", under the words "That is a problem with the test, not
+# evidence of a bug in your application" - about a 503 from the application's
+# own server.
+# ---------------------------------------------------------------------------
+def _junit(tmp_path, *, diagnosis: str, trace: str, message: str):
+    from app.runner.parser import parse_junit
+    from xml.sax.saxutils import escape, quoteattr
+
+    report = tmp_path / "results.xml"
+    report.write_text(
+        '<?xml version="1.0"?><testsuite>'
+        '<testcase name="test_x[chromium]" time="3.0">'
+        f'<properties><property name="autoqa_diagnosis" value={quoteattr(diagnosis)}/></properties>'
+        f"<failure message={quoteattr(message)}>{escape(trace)}</failure>"
+        "</testcase></testsuite>",
+        encoding="utf-8",
+    )
+    return parse_junit(report)[0]
+
+
+_A_503 = (
+    'pages._state.StateConflict: Step 1 (Click "Sign in") failed and was NOT '
+    "retried: HTTP 503 from https://app.test/login. That is not a data or state "
+    "conflict, so the recorded step stands and this is a real failure."
+)
+_NOT_READY = (
+    "ELEMENT_NOT_READY: sign_in_button - it is on the page but was not usable in time"
+)
+
+
+def test_the_reason_the_test_stopped_leads_the_report(tmp_path: Path) -> None:
+    result = _junit(tmp_path, diagnosis=_NOT_READY, trace=_A_503,
+                    message="StateConflict: HTTP 503 from https://app.test/login.")
+
+    assert result.error_message.startswith("StateConflict")
+    assert "HTTP 503" in result.error_message
+    # Kept, because it is still worth knowing - just not first.
+    assert _NOT_READY in result.error_message
+
+
+def test_an_application_that_answered_is_a_failure_not_a_blocked_test(
+    tmp_path: Path,
+) -> None:
+    """`ELEMENT_NOT_READY` maps to blocked, and blocked is reported as "the test
+    never got as far as checking anything". That is true of an element nobody
+    could reach; it is not true of a step the server answered 503."""
+    result = _junit(tmp_path, diagnosis=_NOT_READY, trace=_A_503,
+                    message="StateConflict: HTTP 503 from https://app.test/login.")
+
+    assert result.status.value == "failed"
+
+
+def test_without_a_verdict_the_diagnosis_still_leads(tmp_path: Path) -> None:
+    """The other half. When the test has said nothing about why it stopped, what
+    the browser found is the best account there is, and it goes first."""
+    result = _junit(
+        tmp_path,
+        diagnosis="ELEMENT_HIDDEN: sign_in_button - it is present but not visible",
+        trace="playwright._impl._errors.TimeoutError: Timeout 30000ms exceeded.",
+        message="TimeoutError: Timeout 30000ms exceeded.",
+    )
+
+    assert result.error_message.startswith("ELEMENT_HIDDEN")
+    assert result.status.value == "failed"
+
+
+def test_running_out_of_data_is_still_blocked(tmp_path: Path) -> None:
+    """Unchanged, and it must stay that way: the application was willing, the
+    fixture is exhausted, and nobody should be sent to debug the application."""
+    result = _junit(
+        tmp_path,
+        diagnosis=_NOT_READY,
+        trace='pages._state.NoValidTestData: Step 9 (Click "Add"): the application '
+              "refused the recorded data and every comparable alternative tried.",
+        message="NoValidTestData: the application refused the recorded data",
+    )
+
+    assert result.status.value == "error"
+    assert result.error_message.startswith("NoValidTestData")
+

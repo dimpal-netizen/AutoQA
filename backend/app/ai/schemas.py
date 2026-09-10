@@ -256,3 +256,22 @@ class FailureAnalysis(BaseModel):
     is_product_bug: bool = Field(
         description="True if the application is broken, false if the test is"
     )
+
+
+class ClassifiedField(BaseModel):
+    """One recorded value the deterministic rules could not place.
+
+    `number` rather than a field name, so the answer can be matched back to the
+    exact value it is about. Two fields on one form are routinely called the
+    same thing, and matching on prose the model retyped is how a role ends up
+    applied to the wrong one.
+    """
+
+    number: int = Field(description="The number this field was listed under")
+    role: str = Field(description="One of: UNIQUE, EXISTING, STATIC, UNKNOWN")
+    why: str = Field(description="One short sentence, for the generated code to carry")
+    confidence: float = Field(ge=0.0, le=1.0, description="How sure you are")
+
+
+class ClassifiedFields(BaseModel):
+    fields: list[ClassifiedField] = Field(default_factory=list)

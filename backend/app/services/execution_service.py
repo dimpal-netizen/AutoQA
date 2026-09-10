@@ -18,6 +18,7 @@ happening.
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -44,10 +45,35 @@ from app.runner import registry
 from app.runner.executor import ExecutionOutcome, run_suite
 from app.runner.parser import step_from_traceback
 from app.services.codegen_service import CodegenService
-from app.services.sample_file_service import load_all as load_samples
 from app.services.exceptions import NotFound, ValidationError
+from app.services.sample_file_service import load_all as load_samples
 
 logger = logging.getLogger(__name__)
+
+#: The one place a generated module names its test. Renaming a case for a run
+#: means rewriting this and nothing else: the case name lives in the docstring,
+#: and page objects and locators are named after elements rather than the test.
+_DEF = re.compile(r"^def (?P<name>test_\w+)\(", re.M)
+
+
+def _made_distinct(case, *, taken: set[str]) -> tuple[str, str, str]:
+    """(function name, path, code) for a case whose name is already in use.
+
+    The rename happens in a copy of the code, on its way into the workspace.
+    Nothing is written back: the stored case is what a person opens in the
+    editor and what regeneration will replace, and neither should acquire a
+    suffix because of how some run happened to be assembled.
+    """
+    stem, suffix = case.function_name, 2
+    while f"{stem}_{suffix}" in taken:
+        suffix += 1
+    renamed = f"{stem}_{suffix}"
+
+    return (
+        renamed,
+        f"tests/{renamed}.py",
+        _DEF.sub(f"def {renamed}(", case.code, count=1),
+    )
 
 
 class ExecutionService:
@@ -238,7 +264,25 @@ class ExecutionService:
         return started
 
     def _prepare(self, run: TestRun) -> tuple[dict[str, str] | None, dict[str, object]]:
-        """The files to run, and a lookup from function name back to the case."""
+        """The files to run, and a lookup from function name back to the case.
+
+        Two cases can arrive holding the same function name and the same file
+        path. Case names are clipped to a length before they become identifiers,
+        so "Agent Registration with Form Field Corrections 1" and "... 2" both
+        came out as `test_agent_registration_with_form_field` - the suffix that
+        told them apart was the part that got cut.
+
+        Written as a dict keyed on those, the second silently replaced the
+        first: one file in the workspace, one test collected, one result. The
+        run reported "1 passed" for a suite of two and nothing anywhere said a
+        test had gone missing. A test that vanishes is worse than a test that
+        fails, because a failure is on screen.
+
+        So the collision is resolved here rather than trusted not to happen.
+        Each case gets a path and a function name of its own, renamed in its own
+        copy of the code and nowhere else - the stored case is untouched, and
+        the results come back attributable one to one.
+        """
         suite = run.suite
         if suite is None:
             self._fail(run, "The test suite was deleted before the run started.")
@@ -246,11 +290,23 @@ class ExecutionService:
 
         bundle: dict[str, str] = {file.path: file.content for file in suite.files}
         wanted = set(run.case_ids)
-        cases = {case.function_name: case for case in suite.cases if case.id in wanted}
+        cases: dict[str, object] = {}
 
         for case in suite.cases:
-            if case.id in wanted:
-                bundle[case.file_path] = case.code
+            if case.id not in wanted:
+                continue
+
+            function_name, path, code = case.function_name, case.file_path, case.code
+            if function_name in cases or path in bundle:
+                function_name, path, code = _made_distinct(case, taken=set(cases))
+                logger.warning(
+                    "Run %s: case %s shares a name with another in this suite - "
+                    "running it as %s so both are collected",
+                    run.id, case.id, function_name,
+                )
+
+            cases[function_name] = case
+            bundle[path] = code
 
         if not cases:
             self._fail(run, "None of the selected test cases still exist.")
@@ -285,6 +341,7 @@ class ExecutionService:
                 error_message=parsed.error_message,
                 stack_trace=parsed.stack_trace,
                 failed_step=failed_step,
+                adaptations=parsed.adaptations,
             )
             self.db.flush()  # need the id to attach artifacts
             by_function[parsed.function_name] = result.id

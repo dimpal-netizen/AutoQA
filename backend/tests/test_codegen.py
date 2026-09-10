@@ -8,14 +8,19 @@ three phases away.
 import ast
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from app.codegen.converter import build_ir, normalise, page_identity
 from app.codegen.generator import GeneratedCodeError, GeneratedFileSpec, render, validate
-from app.codegen.selectors import Selector, best_selector, element_name, locator_expression, snake_case
+from app.codegen.selectors import (
+    Selector,
+    best_selector,
+    element_name,
+    locator_expression,
+    snake_case,
+)
 from app.models.enums import ActionType, FileType, SelectorStrategy
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_recording.json"
@@ -436,8 +441,12 @@ def test_the_test_body_covers_every_action(generated, sample) -> None:
         ".set_input_files(",
         ".drag_to(",
         "page.mouse.wheel(",
+        # Not `page.wait_for_url(` any more. What a step waits for is chosen
+        # from what the recorder observed the action doing - a navigation, a
+        # dialog, a message, the DOM settling - so the wait is one named call
+        # rather than one hardcoded assumption. See `_sync_call`.
+        "after(page, 'navigated'",
         "expect(",
-        "page.wait_for_url(",
     ]:
         assert fragment in code, f"generated test never uses {fragment}"
 
@@ -593,10 +602,16 @@ def test_the_bundle_is_collectable_by_pytest(generated, tmp_path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(spec.content, encoding="utf-8")
 
+    # The executor's own command and environment, not a hand-rolled pair. A
+    # bundle that collects under different flags than the ones it will actually
+    # be run with is not the bar this test claims to hold.
+    from app.models.enums import Browser
+    from app.runner.executor import _command, _environment
+
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header",
-         "-p", "no:cacheprovider"],
+        [*_command(Browser.CHROMIUM, headless=True), "--collect-only", "--no-header"],
         cwd=tmp_path,
+        env=_environment(None),
         capture_output=True,
         text=True,
         timeout=120,
@@ -661,3 +676,85 @@ def test_a_name_defined_in_the_file_counts_as_provided() -> None:
             file_type=FileType.HELPER,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Recorded text that lands inside a docstring
+#
+# A docstring is an ordinary string literal, so everything in it goes through
+# escape processing - and recorded selectors are full of backslashes, because
+# that is how CSS escapes a colon in a class name. Tailwind writes `md:flex`,
+# the DOM reports `md\:flex`, and every generated suite carried
+#
+#   pages/home_page.py:24: SyntaxWarning: invalid escape sequence '\:'
+#
+# Today a warning, and `\:` quietly means two characters rather than one. In a
+# later Python it is a SyntaxError and the suite stops importing altogether.
+# ---------------------------------------------------------------------------
+def _escaped_class_action(seq: int) -> dict:
+    """A click whose recorded CSS carries a Tailwind escape."""
+    return {
+        "sequence": seq,
+        "action_type": "click",
+        "url": "https://s.test/",
+        "frame_path": [],
+        "selectors": [
+            {"strategy": "role_name", "value": "button|Sign In", "unique": True,
+             "score": 95},
+            {"strategy": "css", "value": r"div.hidden.md\:flex button.inline-flex",
+             "unique": False, "score": 55},
+        ],
+        "element": {
+            "tag": "button", "input_type": None, "role": "button",
+            "accessible_name": "Sign In", "text": "Sign In", "attributes": {},
+        },
+        "payload": {},
+        "is_ignored": False,
+    }
+
+
+def test_a_selector_with_a_css_escape_does_not_break_the_docstring() -> None:
+    import warnings
+
+    ir = build_ir([_escaped_class_action(0)], suite_name="Sign in",
+                  start_url="https://s.test/")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        files = {f.path: f.content for f in render(ir, browser_info={})}
+
+    page = next(c for p, c in files.items() if p.startswith("pages/") and "_" not in p[6:7])
+
+    # The backslash survives into the source doubled, so a reader of the
+    # docstring sees exactly the selector the recorder saw.
+    assert r"md\\:flex" in page
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        ast.parse(page)
+
+
+def test_validate_refuses_code_python_would_only_warn_about() -> None:
+    """The reason this shipped at all. `ast.parse` compiled it happily and said
+    everything it had to say through the warnings module, which nobody was
+    listening to."""
+    spec = GeneratedFileSpec(
+        path="pages/warned.py",
+        content='def f():\n    """Located by css: div.md\\:flex"""\n    return 1\n',
+        file_type=FileType.PAGE_OBJECT,
+    )
+
+    with pytest.raises(GeneratedCodeError, match="SyntaxWarning"):
+        validate(spec)
+
+
+def test_a_suite_name_with_a_backslash_survives_the_docstring() -> None:
+    import warnings
+
+    ir = build_ir([_escaped_class_action(0)], suite_name=r"Sign in \ out",
+                  start_url="https://s.test/")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        files = {f.path: f.content for f in render(ir, browser_info={})}
+        ast.parse(next(c for p, c in files.items() if p.startswith("tests/")))
+

@@ -53,6 +53,12 @@ class ReportContext:
 
     rows: list[dict] = field(default_factory=list)
     failures: list[dict] = field(default_factory=list)
+    #: Tests that passed by doing something other than what was recorded. Kept
+    #: apart from `rows` so the report can say so in its own section: a pass
+    #: reached by substituting data the application would accept is a different
+    #: thing from a pass, and burying it in a green table hides the one fact
+    #: somebody reading the report most needs to check.
+    adapted: list[dict] = field(default_factory=list)
     omitted_screenshots: int = 0
 
 
@@ -95,8 +101,18 @@ def build_report(
                 "status": result.status.value,
                 "badge": _BADGE.get(result.status, "b-skip"),
                 "duration": _duration(result.duration_ms),
+                "adapted": bool(getattr(result, "adaptations", None)),
             }
         )
+
+        for note in getattr(result, "adaptations", None) or []:
+            context.adapted.append(
+                {
+                    "name": result.case_name,
+                    "browser": result.browser.value,
+                    "note": note,
+                }
+            )
 
         if result.status not in (ResultStatus.FAILED, ResultStatus.ERROR):
             continue
@@ -131,6 +147,7 @@ def build_report(
         pass_rate=round(run.passed / total * 100),
         rows=context.rows,
         failures=context.failures,
+        adapted=context.adapted,
         omitted_screenshots=context.omitted_screenshots,
     )
 

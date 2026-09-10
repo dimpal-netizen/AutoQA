@@ -14,17 +14,16 @@ from app.ai.case_generator import (
     accept_all,
     generate_cases,
 )
+from app.ai.dataroles_ai import refine as refine_roles
 from app.ai.enhancer import enhance
 from app.codegen.converter import TestIR, build_ir
 from app.codegen.generator import GeneratedCodeError, render
-from app.codegen.probe import probe
+from app.codegen.probe import Reachability, probe
 from app.codegen.recorded_cases import (
     FROM_RECORDING,
     cases_from_recording,
     why_nothing,
 )
-from app.codegen.segments import as_tests
-from app.codegen.segments import split as split_recording
 from app.codegen.synth import (
     SynthesisError,
     module_for,
@@ -97,6 +96,39 @@ def _why_nothing_was_usable(outcome) -> str:
 
     detail = "; ".join(f"{reason} ({n})" for reason, n in ranked[:3])
     return f"None of the {total} suggested cases could be used. {detail}"
+
+
+def _with_the_probe(reason: str, found) -> str:
+    """Add what the probe saw to a generation that produced nothing.
+
+    Without this the message names the symptom and hides the cause. A recording
+    whose sign-in has stopped working has every protected page refused, every
+    element on them withheld, and nothing left to write cases about - and what
+    reached the screen was "every element in this recording can only be found by
+    its position in the page", which is about selectors and sends somebody off
+    adding test ids that were never the problem.
+    """
+    if found is None:
+        return reason
+
+    if getattr(found, "signed_in", None) is False:
+        return (
+            f"{reason}\n\nThe recorded sign-in no longer works: every page "
+            "behind it answered with the login form, so nothing on those pages "
+            "could be offered. Check the account the recording used still "
+            "exists and its password is current, then record again."
+        )
+
+    unusable = sorted(getattr(found, "unusable", ()) or ())
+    if unusable:
+        return (
+            f"{reason}\n\n{len(unusable)} page(s) could not be opened on their "
+            f"own ({', '.join(unusable[:3])}), so their elements were withheld. "
+            "A page that needs something done first cannot be reached by a test "
+            "that starts there."
+        )
+
+    return reason
 
 
 def _pages_by_variable(ir: TestIR):
@@ -220,30 +252,36 @@ class CodegenService:
                 "selectors": a.selectors,
                 "element": a.element,
                 "payload": a.payload,
+                "response": a.response,
                 "is_ignored": a.is_ignored,
             }
             for a in actions
         ]
 
-        # A recording is rarely one test. Somebody tries logging in, gets an
-        # error, tries again, then goes off to register - see `segments.py`.
-        # Cut here, before `build_ir`, because normalisation drops and merges
-        # actions and afterwards there is nothing to line the two up by. Each
-        # action carries the number of the test it belongs to, and the steps
-        # built from it inherit that.
-        segments = split_recording(raw)
-        starts: list[str] = []
-        for number, segment in enumerate(segments):
-            starts.append(str(segment[0].get("url") or session.start_url))
-            for action in segment:
-                action["segment"] = number
-
-        # One IR for the whole recording, not one per segment. The page objects
-        # and the locator names on them come from here, so every case in the
-        # suite refers to `login.email_input` and means the same element. Built
-        # per segment they would be numbered independently, and a case would
-        # import a property the page object does not have.
-        ir = build_ir(raw, suite_name=suite_name, start_url=session.start_url)
+        # One recording, one test case.
+        #
+        # This used to be cut into a case per attempt - somebody tries logging
+        # in, gets an error, tries again - on the reasoning that four things
+        # were tested and should be reported on separately. The reasoning was
+        # right about the recording and wrong about the code: a slice begins
+        # part-way through a journey, and all it gets to make up for that is a
+        # `goto`. Everything the earlier steps had built up is gone. Segment two
+        # of a registration opens the form and types into field six, on a page
+        # where the first five are empty and the account it needed was never
+        # created. It cannot pass, and it fails for a reason that has nothing to
+        # do with the application.
+        #
+        # The whole recording, in order, is the one thing that is known to work:
+        # somebody sat and did it. That is what a regression test is for, and
+        # anything narrower can be written against it afterwards - by hand, by
+        # the model, or from the recording. See `segments.py`, which still
+        # answers "where did they start over" for anything that wants to know.
+        ir = build_ir(
+            raw,
+            suite_name=suite_name,
+            start_url=session.start_url,
+            refine_roles=refine_roles,
+        )
 
         # AI pass: better names and descriptions on code that already works.
         # `enhance` never raises and never writes code, so the worst case here
@@ -286,69 +324,51 @@ class CodegenService:
                 suite, name=suite_name, description=description, generator=generator
             )
 
-        # One case per test the person performed, not one per recording. The
-        # slices share this suite's pages, so every case says
-        # `login.email_input` and means the same element - see `segments.py`.
-        slices = list(as_tests(ir, starts))
-        for number, slice_ir in slices:
-            try:
-                slice_files = render(slice_ir, browser_info=session.browser_info)
-            except GeneratedCodeError as exc:
-                # One unrenderable slice must not lose the others. Nothing about
-                # a recording says its third attempt is more important than its
-                # first, so dropping the batch over one of them is the wrong
-                # trade every time.
-                logger.exception(
-                    "Recording %s: could not render test %d", recording_id, number + 1
+        # The recording, whole, as one case. Its module is the one `render`
+        # already produced from this same IR, so nothing is compiled twice and
+        # the file the suite writes to disk is the file the case holds.
+        test_file = next(f for f in rendered if f.path == ir.file_path)
+        case = self.cases.create(
+            suite_id=suite.id,
+            project_id=session.project_id,
+            name=suite_name,
+            description=(
+                (polish.description + " " if polish.description else "")
+                + f"{len(ir.steps)} steps across {len(ir.pages)} page(s)."
+                + (
+                    f" {ir.fragile_count} step(s) use a fragile selector."
+                    if ir.fragile_count
+                    else ""
                 )
-                raise ValidationError(
-                    f"Generated code was not valid Python: {exc}"
-                ) from exc
+            ),
+            function_name=ir.function_name,
+            file_path=ir.file_path,
+            code=test_file.content,
+            source=CaseSource.RECORDING,
+            status=CaseStatus.DRAFT,
+            category=CaseCategory.RECORDED,
+            priority=CasePriority.HIGH,
+            generated_by=GENERATOR,
+            tags=["recorded"],
+            is_enabled=True,
+            version=1,
+        )
 
-            test_file = next(f for f in slice_files if f.path == slice_ir.file_path)
-            case = self.cases.create(
-                suite_id=suite.id,
-                project_id=session.project_id,
-                # Numbered only when there is more than one. A recording of a
-                # single journey keeps the name it has always had.
-                name=suite_name if len(slices) == 1 else f"{suite_name} {number + 1}",
-                description=(
-                    (polish.description + " " if polish.description and len(slices) == 1 else "")
-                    + f"{len(slice_ir.steps)} steps across {len(ir.pages)} page(s)."
-                    + (
-                        f" {slice_ir.fragile_count} step(s) use a fragile selector."
-                        if slice_ir.fragile_count
-                        else ""
-                    )
+        for step in ir.steps:
+            self.cases.add_step(
+                test_case_id=case.id,
+                sequence=step.sequence,
+                action=step.action,
+                description=step.description,
+                locator=(
+                    f"{step.page_var}.{step.locator_name}"
+                    if step.page_var and step.locator_name
+                    else None
                 ),
-                function_name=slice_ir.function_name,
-                file_path=slice_ir.file_path,
-                code=test_file.content,
-                source=CaseSource.RECORDING,
-                status=CaseStatus.DRAFT,
-                category=CaseCategory.RECORDED,
-                priority=CasePriority.HIGH,
-                generated_by=GENERATOR,
-                tags=["recorded"],
-                is_enabled=True,
-                version=1,
+                input_data=step.input_data,
+                expected_result=step.expected_result,
+                selector_strategy=step.strategy,
             )
-
-            for step in slice_ir.steps:
-                self.cases.add_step(
-                    test_case_id=case.id,
-                    sequence=step.sequence,
-                    action=step.action,
-                    description=step.description,
-                    locator=(
-                        f"{step.page_var}.{step.locator_name}"
-                        if step.page_var and step.locator_name
-                        else None
-                    ),
-                    input_data=step.input_data,
-                    expected_result=step.expected_result,
-                    selector_strategy=step.strategy,
-                )
 
         for spec in rendered:
             if spec.path == ir.file_path:
@@ -442,7 +462,7 @@ class CodegenService:
                 "This suite has no recording to generate test cases from."
             )
 
-        self._mark_reachable(recorded_ir)
+        reachability = self._mark_reachable(recorded_ir)
 
         outcome = generate_cases(recorded_ir, count=count, guidance=guidance)
 
@@ -464,9 +484,11 @@ class CodegenService:
             )
 
         if outcome.skipped:
-            raise ValidationError(outcome.skipped)
+            raise ValidationError(_with_the_probe(outcome.skipped, reachability))
         if not outcome.cases:
-            raise ValidationError(_why_nothing_was_usable(outcome))
+            raise ValidationError(
+                _with_the_probe(_why_nothing_was_usable(outcome), reachability)
+            )
 
         # Out with the previous generation, in with this one.
         for case in list(suite.cases):
@@ -552,7 +574,7 @@ class CodegenService:
         )
         return outcome
 
-    def _mark_reachable(self, recorded_ir) -> None:
+    def _mark_reachable(self, recorded_ir) -> Reachability | None:
         """Look at each page cold, so cases are not written against what is not
         there.
 
@@ -577,13 +599,15 @@ class CodegenService:
             sequence, _, _ = sign_in_sequence(recorded_ir.steps)
             found = probe(recorded_ir, sign_in=sequence)
             if found is None:
-                return
+                return None
 
             for page in recorded_ir.pages:
                 for locator in page.locators:
                     locator.reachable = found.offers(page, locator.name)
+            return found
         except Exception:  # noqa: BLE001 - generation proceeds without it
             logger.warning("Could not work out what is on each page", exc_info=True)
+            return None
 
     def _discard_runs(self, suite: TestSuite) -> None:
         """Throw away runs that tested code that has since been replaced.
@@ -734,12 +758,14 @@ class CodegenService:
                     "selectors": a.selectors,
                     "element": a.element,
                     "payload": a.payload,
+                    "response": a.response,
                     "is_ignored": a.is_ignored,
                 }
                 for a in actions
             ],
             suite_name=suite.name,
             start_url=suite.recording.start_url,
+            refine_roles=refine_roles,
         )
         return ir
 

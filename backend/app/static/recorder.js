@@ -29,6 +29,74 @@
   const SCROLL_QUIET_MS = 400;
   const PANEL_ID = "__autoqa_recorder_panel__";
 
+  /* Are we the page somebody is recording, or something embedded in it?
+   *
+   * The script is injected into every document in the browser, which is what
+   * lets an action inside a payment or consent frame be captured at all. It
+   * also means a page carrying ten embedded video players runs eleven
+   * recorders: eleven handshakes, eleven blocks of sequence numbers, eleven
+   * sets of timers, eleven panels - and eleven callers competing over the one
+   * channel back to the backend. Observed on a real account page, where the
+   * page's own recorder was crowded out by ten video players nobody touched and
+   * the recording stopped growing.
+   *
+   * Reading `window.top` across an origin boundary throws, and a frame that
+   * cannot see the top of the window is certainly not the top of it. */
+  const isTop = (() => {
+    try {
+      return window.top === window;
+    } catch {
+      return false;
+    }
+  })();
+
+  /* How long to wait before asking what the application said back.
+   *
+   * A recording of what somebody did is only half of what happened. The other
+   * half is the application's answer - it navigated, or it put a message on the
+   * screen - and without it every recorded value looks equally permanent. The
+   * generator cannot tell an address that must be new each run from one that
+   * must already exist, because from a list of clicks and keystrokes the two are
+   * identical. The answer is the thing that tells them apart, and it is only
+   * knowable here, at the moment it arrives.
+   *
+   * Long enough for a round trip to have rendered, short enough to be attached
+   * before the batch goes up. Best-effort throughout: a click that navigates
+   * unloads the page before this fires and the field is simply absent, which is
+   * exactly how a recorder written before this behaves, and what every consumer
+   * of it must go on handling. */
+  const RESPONSE_MS = 900;
+
+  /* Actions younger than this are held back by `flush`, so the answer above has
+   * somewhere to be attached to. One extra tick of latency on the most recent
+   * action, and nothing else changes. */
+  const SETTLE_MS = 1200;
+
+  /* Where applications put the sentence they want you to read. Deliberately
+   * about the *shape* of a message and never about what it says: an alert role,
+   * a live region, a class with error or message in it. Reading which of them
+   * is a refusal happens later and elsewhere - here we only collect. */
+  const MESSAGE_SELECTOR = [
+    "[role=alert]", "[role=status]", "[aria-live]", "[aria-invalid=true]",
+    "[class*=error]", "[class*=Error]", "[class*=alert]", "[class*=Alert]",
+    "[class*=message]", "[class*=Message]", "[class*=toast]", "[class*=Toast]",
+    "[class*=notification]", "[class*=warning]", "[class*=invalid]",
+    "[id*=error]", "[id*=message]",
+  ].join(",");
+
+  const MAX_MESSAGES = 12;
+  const MAX_MESSAGE_CHARS = 300;
+
+  /* Elements that are a dialog by declaration rather than by looking like one.
+   * The ARIA roles and the HTML element, nothing else - a class called "modal"
+   * is on half the pages on the internet whether anything is open or not. */
+  const DIALOG_SELECTOR = "dialog[open],[role=dialog],[role=alertdialog]";
+
+  /* A DOM that has stopped changing. Two polls at the same mutation count is
+   * enough: the point is not to measure the page, only to notice that it has
+   * finished doing whatever the click set off. */
+  const QUIET_MS = 250;
+
   // ==== selector engine ===================================================
   // Ranking must match backend/app/models/enums.py SELECTOR_RANK.
 
@@ -260,11 +328,120 @@
     return out.sort((a, b) => RANK[a.strategy] - RANK[b.strategy] || b.score - a.score);
   }
 
+  /* What the page is saying right now, as a list of sentences.
+   *
+   * Collected before an action and again after it, so that only what *appeared*
+   * is reported. A form that already shows "Required" on three fields would
+   * otherwise report them as the answer to every keystroke after it. */
+  function messagesOnScreen() {
+    const seen = new Set();
+    try {
+      for (const el of document.querySelectorAll(MESSAGE_SELECTOR)) {
+        const text = (el.innerText || "").trim().replace(/\s+/g, " ");
+        if (!text || text.length > MAX_MESSAGE_CHARS) continue;
+        seen.add(text);
+        if (seen.size >= MAX_MESSAGES) break;
+      }
+    } catch {
+      /* A selector the browser dislikes is not worth failing a recording for. */
+    }
+    return seen;
+  }
+
+  /* How much the page has changed since the recorder started watching.
+   *
+   * One observer for the whole document, started once, counting. Comparing a
+   * count before an action with the count after it says whether the click did
+   * anything at all - which is the difference between an outcome worth waiting
+   * for and one there is nothing to wait for. */
+  let mutations = 0;
+  let watcher = null;
+
+  function watchMutations() {
+    if (watcher || typeof MutationObserver !== "function") return;
+    try {
+      watcher = new MutationObserver((records) => { mutations += records.length; });
+      watcher.observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, characterData: true,
+      });
+    } catch {
+      watcher = null;   /* An observer we cannot start is one outcome we cannot see. */
+    }
+  }
+
+  function dialogsOpen() {
+    try {
+      return Array.from(document.querySelectorAll(DIALOG_SELECTOR))
+        .filter((el) => {
+          const box = el.getBoundingClientRect?.();
+          return box && box.width > 0 && box.height > 0;
+        }).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  /* Everything about the page an action could change, as one small object.
+   * Taken before the action and again after it; the difference is the outcome.
+   *
+   * `pageSnapshot`, not `snapshot`: this file already had a `snapshot()`, which
+   * returns the recorder's own status for the panel and for subscribers. Two
+   * declarations of the same name in one scope, and the later one wins - so
+   * `record` was handing the recorder's status to the outcome comparison, which
+   * threw on every single action and left every outcome unrecorded. */
+  function pageSnapshot() {
+    return {
+      url: location.href,
+      title: document.title || "",
+      mutations,
+      dialogs: dialogsOpen(),
+      messages: messagesOnScreen(),
+    };
+  }
+
+  /* What actually happened, in the vocabulary the generator waits on.
+   *
+   * Ordered by how specific the answer is, because a click that navigates also
+   * mutates the DOM and a modal that opens also changes the message count -
+   * so the most decisive observation wins and the rest are recorded as detail.
+   * `quiet` is a real answer and not a failure to find one: plenty of actions
+   * genuinely change nothing a browser can see, and a test that insists on
+   * waiting for something is a test that waits for ever. */
+  function outcomeOf(before, after, startedAt) {
+    const appeared = [...after.messages].filter((text) => !before.messages.has(text));
+    const detail = {
+      url: after.url,
+      navigated: after.url !== before.url,
+      title_changed: after.title !== before.title,
+      dialog_opened: after.dialogs > before.dialogs,
+      dialog_closed: after.dialogs < before.dialogs,
+      mutations: Math.max(0, after.mutations - before.mutations),
+      messages: appeared,
+      settled_ms: Date.now() - startedAt,
+    };
+
+    if (detail.navigated) detail.kind = "navigated";
+    else if (detail.dialog_opened) detail.kind = "dialog_opened";
+    else if (detail.dialog_closed) detail.kind = "dialog_closed";
+    else if (appeared.length) detail.kind = "messages";
+    else if (detail.mutations > 0 || detail.title_changed) detail.kind = "dom_changed";
+    else detail.kind = "quiet";
+
+    return detail;
+  }
+
   function describeElement(el, wasOnScreen) {
     const attributes = {};
-    for (const attr of ["id", "name", "class", "type", "href", "data-testid", "placeholder"]) {
+    // The last five say what the *field* requires, which is the deterministic
+    // half of deciding whether a recorded value can be replayed as it stands.
+    // See `dataroles.py`: a field carrying autocomplete="email" is describing
+    // itself, and describing itself in a way that is the same on every site.
+    for (const attr of [
+      "id", "name", "class", "type", "href", "data-testid", "placeholder",
+      "autocomplete", "pattern", "required", "maxlength", "minlength",
+    ]) {
       const v = el.getAttribute?.(attr);
-      if (v) attributes[attr] = v.slice(0, 200);
+      if (v) attributes[attr] = String(v).slice(0, 200);
     }
     const box = el.getBoundingClientRect?.();
     return {
@@ -298,6 +475,15 @@
       sessionId: null,
       sessionName: null,
       sequence: 0,
+      /* How many actions this recording has captured, which is no longer the
+       * same thing as the next sequence number.
+       *
+       * They were one field until pages started being given their own block of
+       * sequence numbers, so that two live pages could not hand out the same
+       * one. The panel then read "captured 200001" after two clicks - a true
+       * statement about a number nobody wanted, in the place where somebody
+       * was looking for a count. */
+      captured: 0,
       startedAt: 0,
       pausedAt: 0,
       pausedMs: 0,     // subtracted from timestamps so a pause is not a giant wait
@@ -330,7 +516,7 @@
     if (!state) return { status: IDLE, captured: 0, uploaded: 0 };
     return {
       status: state.status,
-      captured: state.sequence,
+      captured: state.captured,
       uploaded: state.uploaded,
       pending: state.pending.length,
       sessionId: state.sessionId,
@@ -352,7 +538,16 @@
         console.error("[AutoQA] listener failed:", error);
       }
     });
-    paint();
+    // The panel is a convenience; the capture is the point. A page with a
+    // Content-Security-Policy that refuses inline styles, or Trusted Types
+    // refusing an innerHTML assignment, must cost us the panel and nothing
+    // else - and it has to say so, because a panel that quietly stops
+    // appearing is exactly the failure nobody can describe afterwards.
+    try {
+      paint();
+    } catch (error) {
+      console.error("[AutoQA] panel failed, still recording:", error);
+    }
   }
 
   const insidePanel = (el) =>
@@ -360,7 +555,50 @@
 
   const capturing = () => state && state.status === RECORDING;
 
+  /* Every listener goes through here, so nothing a page can do reaches the
+   * event loop as an unhandled throw.
+   *
+   * A recorder that stops part-way through is the worst failure this thing has,
+   * because it looks like nothing: the panel is simply not there any more, the
+   * session is shorter than the journey, and there is no error anywhere to
+   * explain it. One element with a hostile `className` getter, one selector the
+   * page's own CSS engine rejects, one property that throws on access - any of
+   * them used to be enough, and the cost was the rest of the session.
+   *
+   * The action being recorded is lost; every action after it is not. And the
+   * reason is written to the console with a marker the backend picks up, so a
+   * recording that came out short can be explained instead of guessed at. */
+  function guard(name, fn) {
+    return (...args) => {
+      try {
+        return fn(...args);
+      } catch (error) {
+        console.error(`[AutoQA] ${name} failed, still recording:`, error);
+        return undefined;
+      }
+    };
+  }
+
+  /* Never throws, and that is load-bearing rather than tidy.
+   *
+   * `start` records the opening navigation *before* it attaches the listeners
+   * and builds the panel. So a page holding one element that throws when asked
+   * about itself - a framework proxy, a getter with a side effect, a custom
+   * element mid-upgrade - took the whole recorder down with it on that page:
+   * no panel, no listeners, nothing captured, and no error anywhere that a
+   * person could connect to what they saw. Which is exactly what "the recorder
+   * disappeared" looks like from the outside.
+   *
+   * The action being recorded is lost. Everything after it is not. */
   function record(actionType, el, payload = {}) {
+    try {
+      capture(actionType, el, payload);
+    } catch (error) {
+      console.error("[AutoQA] record failed, still recording:", error);
+    }
+  }
+
+  function capture(actionType, el, payload = {}) {
     if (!capturing()) return;
     if (el && insidePanel(el)) return;
 
@@ -368,8 +606,12 @@
     const pageLevel = ["navigate", "scroll"].includes(actionType);
     if (!pageLevel && actionType !== "key_press" && selectors.length === 0) return;
 
-    state.pending.push({
-      sequence: state.sequence++,
+    const before = pageSnapshot();
+    const startedAt = Date.now();
+    const action = {
+      // null until this frame has introduced itself; `flush` numbers them
+      // from the block it is given. See `join`.
+      sequence: state.sessionId ? state.sequence++ : null,
       action_type: actionType,
       timestamp_ms: Date.now() - state.startedAt - state.pausedMs,
       url: location.href,
@@ -377,8 +619,29 @@
       selectors,
       element: el ? describeElement(el, wasOnScreen(el)) : null,
       payload,
-    });
+      // Stripped by `flush`. Only here so the batch knows not to leave without
+      // the answer below.
+      _recordedAt: Date.now(),
+    };
+    state.pending.push(action);
+    state.captured++;
+
+    // What the application did in reply, attached to the action that provoked
+    // it. Never awaited and never allowed to fail: on a click that navigates
+    // this does not run at all, and `onPageHide` records the navigation
+    // instead. An action with no answer is what every recording made before
+    // this looks like, and everything downstream still has to handle it.
+    setTimeout(() => {
+      try {
+        if (action.response) return;   // `onPageHide` already answered
+        action.response = outcomeOf(before, pageSnapshot(), startedAt);
+      } catch {
+        /* Nothing here is worth interrupting a recording for. */
+      }
+    }, RESPONSE_MS);
+
     state.lastAction = `${actionType} → ${selectors[0]?.strategy ?? "page"}`;
+    state.capturedAt = Date.now();
     rememberWhatIsOnScreen();
     notify();
   }
@@ -627,23 +890,75 @@
     record("navigate", null, { url: location.href });
   }
 
+  /* The page is going away, and everything still in `pending` goes with it.
+   *
+   * There was no handler here at all, and the cost was invisible: actions are
+   * uploaded on a two-second tick, so a click that navigated took itself and
+   * anything else waiting with it out of the recording. The action most likely
+   * to be lost was the one that mattered most, and the recording simply came
+   * out shorter than the journey - which reads as the tester having done less,
+   * not as the recorder having dropped something.
+   *
+   * It also answers the outcome question for free. An action still waiting to
+   * hear back when the page is torn away *navigated* - that is what a
+   * navigation looks like from inside the page it leaves. The timer above never
+   * gets to run, so this is the only chance to say so.
+   *
+   * `pagehide` rather than `beforeunload`: it fires for a back/forward cache
+   * eviction too, and it does not ask the browser to show a leave-this-page
+   * prompt. */
+  function onPageHide({ flushOnly = false } = {}) {
+    if (!state?.pending?.length) return;
+    if (!flushOnly) {
+      for (const action of state.pending) {
+        if (!action.response) {
+          action.response = {
+            url: location.href, navigated: true, kind: "navigated", messages: [],
+          };
+        }
+      }
+    }
+    // The dispatch is what matters, not the reply: the binding call is on its
+    // way to the backend before this frame is torn down, and a reply nobody is
+    // left to receive costs nothing.
+    try { flush(); } catch { /* going away regardless */ }
+  }
+
   // `true` = capture phase, so we see events even if the page stops propagation.
   const LISTENERS = [
-    ["click", onClick, true],
-    ["input", onInput, true],
-    ["change", onChange, true],
-    ["keydown", onKeyDown, true],
-    ["mouseover", onMouseOver, true],
-    ["dragstart", onDragStart, true],
-    ["drop", onDrop, true],
-    ["scroll", onScroll, true],
-    ["popstate", onPopState, true],
+    ["click", guard("click", onClick), true],
+    ["input", guard("input", onInput), true],
+    ["change", guard("change", onChange), true],
+    ["keydown", guard("keydown", onKeyDown), true],
+    ["mouseover", guard("mouseover", onMouseOver), true],
+    ["dragstart", guard("dragstart", onDragStart), true],
+    ["drop", guard("drop", onDrop), true],
+    ["scroll", guard("scroll", onScroll), true],
+    ["popstate", guard("popstate", onPopState), true],
+    ["pagehide", guard("pagehide", onPageHide), true],
+    // Some browsers skip `pagehide` when a tab is discarded, and fire this
+    // instead. Flushing twice is free: uploads are idempotent by sequence.
+    //
+    // `flushOnly`, because this also fires every time somebody switches tab or
+    // minimises the window - and marking everything pending as "navigated"
+    // then would record an outcome that never happened.
+    ["visibilitychange", () => {
+      if (document.visibilityState === "hidden") onPageHide({ flushOnly: true });
+    }, true],
   ];
 
-  const attach = () =>
+  const attach = () => {
+    watchMutations();
     LISTENERS.forEach(([t, fn, c]) => document.addEventListener(t, fn, c));
-  const detach = () =>
+    // `pagehide` and `visibilitychange` are delivered to the window and the
+    // document respectively; listening on both costs nothing and misses
+    // neither.
+    window.addEventListener("pagehide", onPageHide, true);
+  };
+  const detach = () => {
     LISTENERS.forEach(([t, fn, c]) => document.removeEventListener(t, fn, c));
+    window.removeEventListener("pagehide", onPageHide, true);
+  };
 
   // ==== upload ============================================================
   async function api(path, body, method = "POST") {
@@ -668,14 +983,68 @@
     return text ? JSON.parse(text) : {};
   }
 
+  /* Everything ready to go up, leaving behind anything still waiting to hear
+   * back. Held actions go on the next tick two seconds later, so the cost is a
+   * little latency on the newest action and nothing at all on the rest.
+   *
+   * `stopping` overrides it: the recording is over, nothing more is coming, and
+   * a held action would be lost rather than delayed. */
+  function readyToSend() {
+    if (state.status === STOPPING) return state.pending.length;
+    const now = Date.now();
+    let count = 0;
+    for (const action of state.pending) {
+      if (action.response === undefined && now - (action._recordedAt ?? 0) < SETTLE_MS) break;
+      count++;
+    }
+    return count;
+  }
+
+  /* Introduce this frame to the backend, once it has something to say. */
+  async function join() {
+    const hello = await bridge({ type: "hello" });
+    state.sessionId = hello.sessionId;
+    state.sessionName = hello.sessionName;
+    state.projectId = hello.projectId;
+    state.projectName = hello.projectName;
+    state.sequence = hello.nextSequence;
+    state.captured = Math.max(state.captured, hello.actionCount);
+    state.uploaded = hello.actionCount;
+    state.startedAt = Date.now() - hello.elapsedMs;
+  }
+
   async function flush() {
-    if (!state?.sessionId || !state.pending.length) return;
-    const batch = state.pending.splice(0, state.pending.length);
+    if (!state || !state.pending.length) return;
+    const ready = readyToSend();
+    if (!ready) return;
+
+    // An embedded frame has not introduced itself until now, because until now
+    // it had nothing to introduce. Everything it recorded meanwhile is waiting
+    // without a number.
+    if (!state.sessionId) {
+      if (!bridge) return;
+      try {
+        await join();
+      } catch (error) {
+        state.error = `Could not join the recording: ${error.message}`;
+        return;
+      }
+    }
+
+    const batch = state.pending.splice(0, ready).map(({ _recordedAt, ...action }) => ({
+      ...action,
+      sequence: action.sequence === null ? state.sequence++ : action.sequence,
+    }));
     try {
       const result = bridge
         ? await bridge({ type: "actions", actions: batch })
         : await api(`/recordings/${state.sessionId}/actions`, { actions: batch });
       state.uploaded = result.action_count;
+      // The server is the only thing that knows the whole session. Seeding the
+      // count at `hello` undercounts by whatever the previous page still had in
+      // flight, so every successful batch corrects it: what is stored, plus
+      // what is still waiting to go.
+      state.captured = Math.max(state.captured, state.uploaded + state.pending.length);
       state.error = null;
       notify();
     } catch (error) {
@@ -688,10 +1057,34 @@
   }
 
   // ==== built-in panel (console use; the React bar passes panel:false) =====
+  /* Put the panel back if the page has taken it away.
+   *
+   * It is built once, when recording starts, and appended to `document.body`.
+   * Plenty of applications then replace that body wholesale - a router
+   * rendering a new view, a framework mounting over the server's markup, a
+   * `body.innerHTML =` in some widget - and the panel goes with it. The
+   * recorder carries on capturing perfectly happily, and the only thing the
+   * person recording can see is that it vanished, mid-session, for no reason
+   * they can name.
+   *
+   * Cheap to check and cheap to fix: it is one `getElementById` on a path that
+   * already runs after every action. */
+  function keepPanel() {
+    if (!state || !state.showPanel || state.status === IDLE) return null;
+
+    const existing = document.getElementById(PANEL_ID);
+    if (existing) return existing;
+    if (!document.body) return null;
+
+    buildPanel();
+    return document.getElementById(PANEL_ID);
+  }
+
   function paint() {
-    const panel = document.getElementById(PANEL_ID);
-    if (!panel || !state) return;
-    panel.querySelector("[data-count]").textContent = String(state.sequence);
+    if (!state) return;
+    const panel = keepPanel();
+    if (!panel) return;
+    panel.querySelector("[data-count]").textContent = String(state.captured);
     panel.querySelector("[data-uploaded]").textContent = String(state.uploaded);
     panel.querySelector("[data-last]").textContent = state.lastAction ?? "…";
     panel.querySelector("[data-status]").textContent = state.status;
@@ -705,6 +1098,11 @@
   }
 
   function buildPanel() {
+    // There is one panel. `start` builds it, and `keepPanel` builds it again
+    // when a page has taken it away - and those two can race on a fast first
+    // paint, so the invariant lives here rather than at either call site.
+    if (document.getElementById(PANEL_ID)) return;
+
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
     panel.style.cssText = `
@@ -763,7 +1161,9 @@
       throw new Error("Already recording");
     }
     state = freshState();
-    state.showPanel = options.panel !== false;
+    // One panel per recording, and it belongs to the page - not to each of
+    // the video players embedded in it.
+    state.showPanel = options.panel !== false && isTop;
 
     if (bridge) {
       // The backend already created the session and authorised it; this page
@@ -773,12 +1173,27 @@
       // the injected script: this file is re-injected on every navigation, so
       // a static sequence number would restart at 0 on the second page and
       // collide with actions already stored.
+      // An embedded frame waits. It attaches its listeners and records
+      // nothing until somebody actually does something inside it, at which
+      // point `flush` introduces it - see `join`. A video player nobody
+      // touches therefore costs one injected script and not one recorder.
+      if (!isTop) {
+        state.status = RECORDING;
+        attach();
+        state.uploadTimer = setInterval(guard("upload tick", flush), BATCH_MS);
+        return snapshot();
+      }
+
       const hello = await bridge({ type: "hello" });
       state.sessionId = hello.sessionId;
       state.sessionName = hello.sessionName;
       state.projectId = hello.projectId;
       state.projectName = hello.projectName;
       state.sequence = hello.nextSequence;
+      // Continuing a recording that already has actions in it: the count picks
+      // up where the session left off, while the sequence continues from this
+      // page's own block.
+      state.captured = hello.actionCount;
       state.uploaded = hello.actionCount;
       state.startedAt = Date.now() - hello.elapsedMs;
     } else {
@@ -822,16 +1237,24 @@
     record("navigate", null, { url: location.href });
 
     attach();
-    state.uploadTimer = setInterval(flush, BATCH_MS);
+    state.uploadTimer = setInterval(guard("upload tick", () => {
+      flush();
+      // The page may have removed the panel while nothing was being recorded.
+      try {
+        keepPanel();
+      } catch (error) {
+        console.error("[AutoQA] panel failed, still recording:", error);
+      }
+    }), BATCH_MS);
 
     // Single-page apps change the URL without a load event.
     let lastUrl = location.href;
-    state.urlTimer = setInterval(() => {
+    state.urlTimer = setInterval(guard("url watch", () => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
         record("navigate", null, { url: location.href });
       }
-    }, 400);
+    }), 400);
 
     if (state.showPanel) buildPanel();
     notify();
@@ -898,7 +1321,7 @@
       ...snapshot(),
       status: IDLE,
       sessionId: state.sessionId,
-      captured: session?.action_count ?? state.sequence,
+      captured: session?.action_count ?? state.captured,
       durationMs: session?.duration_ms ?? null,
     };
     state = null;
@@ -930,7 +1353,11 @@
   // a <body> to attach the panel to.
   if (bridge && injected) {
     const begin = () =>
-      start().catch((error) => console.error("[AutoQA]", error));
+      start().catch((error) =>
+        // The one failure that leaves no panel and captures nothing on this
+        // page. Named so the backend log says which document it was.
+        console.error(`[AutoQA] could not start on ${location.href}:`, error)
+      );
     if (document.body) begin();
     else document.addEventListener("DOMContentLoaded", begin, { once: true });
   }

@@ -146,6 +146,7 @@ def generate_cases(
                 steps=describe_steps(recorded),
                 target_count=count,
                 guidance=_asked_for(guidance, count),
+                guidance_reminder=_last_word(guidance, count),
             ),
             GeneratedCases,
             system=SYSTEM,
@@ -210,6 +211,10 @@ def _accept(
             # rejects a case that skipped the second, and the test goes red
             # against an application behaving correctly.
             recorded_steps=recorded.steps,
+            # Values the converter already refused to replay. A case copies
+            # them out of the steps it was shown, and they stop working for
+            # exactly the reason they were freshened in the first place.
+            unique_values=recorded.unique_values,
         )
     except SynthesisError as exc:
         # Expected often enough to be routine: the model referenced an element
@@ -324,10 +329,15 @@ The person asking has said what this batch is for:
 
     {asked}
 
-This is the brief. Write the cases they asked for first, and spend most of
-{target_count} on it - a batch that covers their subject thoroughly is worth more
-than one that mentions it twice and spreads the rest over things they did not
-ask about. Fill any remainder with the categories below.
+This is the brief, and it decides what this batch is about. Every one of the
+{target_count} cases should be about it unless the recording genuinely cannot
+support that many - in which case write fewer rather than filling the gap with
+cases about something else.
+
+The four categories below are the *kinds* of case to write about the brief -
+positive, negative, edge, security - not four quotas to satisfy alongside it. A
+brief about the phone number rules wants a positive phone case, a negative one,
+an edge one; it does not want two phone cases and ten about the password field.
 
 It decides which tests are worth writing. It does not change what a test may do:
 the actions, the elements you may name and what counts as a real check all still
@@ -336,6 +346,24 @@ hold, because those are what make a generated test safe to run.
 If the brief needs something this recording never reached - a page nobody
 recorded, an element that does not exist - say so in `skipped` reasoning or
 simply write fewer cases. Do not invent an element to satisfy it.
+"""
+
+#: The brief again, at the very end of the prompt.
+#:
+#: Not belt and braces. The brief sits at line 27 of 232, and everything after
+#: it is generic rules - so the last thing read before answering was a note
+#: about step counts, and the batch came back covering the four categories
+#: evenly with the brief touched once. Whatever is said last is what a model is
+#: holding when it starts writing, and this is the one instruction that came
+#: from a person rather than from us.
+_REMINDER = """
+BEFORE YOU ANSWER
+
+Re-read the brief: {asked}
+
+Every case you are about to write should be about that. Check each one against
+it and drop any that is not, rather than padding the batch out to
+{target_count}. Fewer cases about the right thing is the answer.
 """
 
 
@@ -350,8 +378,22 @@ def _asked_for(guidance: str | None, count: int = DEFAULT_COUNT) -> str:
     numbers, not one case about phone numbers and eleven about whatever the
     model would have chosen anyway.
     """
-    asked = " ".join((guidance or "").split())[:1000]
+    asked = _brief(guidance)
     return _GUIDANCE.format(asked=asked, target_count=count) if asked else ""
+
+
+def _brief(guidance: str | None) -> str:
+    """The person's words, collapsed and capped. Empty when they typed nothing."""
+    return " ".join((guidance or "").split())[:1000]
+
+
+def _last_word(guidance: str | None, count: int = DEFAULT_COUNT) -> str:
+    """The brief restated at the end of the prompt, or nothing.
+
+    Same text, second placement. See `_REMINDER` for why once was not enough.
+    """
+    asked = _brief(guidance)
+    return _REMINDER.format(asked=asked, target_count=count) if asked else ""
 
 
 def describe_steps(ir: TestIR) -> str:

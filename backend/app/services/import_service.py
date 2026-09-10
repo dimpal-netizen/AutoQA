@@ -372,6 +372,7 @@ class ImportService:
                 module_name=module_name,
                 function_name=function_name,
                 recorded_steps=recorded.steps,
+                unique_values=recorded.unique_values,
             )
         except SynthesisError as exc:
             return str(exc)

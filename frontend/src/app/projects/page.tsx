@@ -30,6 +30,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { SearchBox, matches } from "@/components/ui/search";
 import { SkeletonRows } from "@/components/ui/skeleton";
+import { useConfirm } from "@/components/ui/confirm";
 
 const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
 
@@ -80,6 +81,7 @@ function ProjectsView() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [query, setQuery] = useState("");
+  const { confirm, dialog } = useConfirm();
 
   useEffect(() => {
     // `cancelled` stops a slow response from setting state after unmount, and
@@ -121,7 +123,14 @@ function ProjectsView() {
   );
 
   async function handleDelete(project: Project) {
-    if (!confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: `Delete "${project.name}"?`,
+      body:
+        "Its recordings, test cases and run history go with it. " +
+        "This cannot be undone.",
+      confirmLabel: "Delete project",
+    });
+    if (!ok) return;
 
     try {
       await api.projects.remove(project.id);
@@ -133,6 +142,7 @@ function ProjectsView() {
 
   return (
     <div className="animate-in">
+      {dialog}
       <PageHeader
         title="Projects"
         description="Pick a project to record and run its tests. Each project is one web application."

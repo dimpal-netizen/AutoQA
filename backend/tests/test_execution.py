@@ -423,6 +423,27 @@ def test_watching_slows_the_browser_down():
     )
 
 
+def test_only_the_plugins_the_suite_needs_are_loaded():
+    """A generated run must not inherit AutoQA's own pytest plugins.
+
+    The tests run in the API's interpreter, so without this they load every
+    `pytest11` entry point in AutoQA's dependency tree. One of those raising on
+    import kills the run before collection - no report, every test blocked, and
+    a traceback into a library that has nothing to do with the application
+    under test. `langchain-core` -> `langsmith` -> `xxhash` did exactly that.
+    """
+    from app.runner.executor import _command, _environment
+
+    assert _environment(None)["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+
+    command = _command(Browser.CHROMIUM, headless=True)
+    loaded = {arg for before, arg in zip(command, command[1:], strict=False) if before == "-p"}
+
+    # Playwright drives the browser; base_url defines a fixture it asks for.
+    assert "pytest_playwright.pytest_playwright" in loaded
+    assert "pytest_base_url.plugin" in loaded
+
+
 def test_the_workspace_is_deleted_afterwards(monkeypatch, tmp_path: Path):
     """Generated code must not accumulate on the user's disk."""
     from app.core.config import settings
@@ -595,3 +616,136 @@ def test_a_result_with_no_siblings_is_valid():
 
     assert detail.siblings == []
     assert detail.artifacts == []
+
+
+# ---------------------------------------------------------------------------
+# Two cases, one identifier
+#
+# Case names are clipped before they become identifiers, so "Agent Registration
+# with Form Field Corrections 1" and "... 2" both came out as
+# `test_agent_registration_with_form_field` — the suffix that told them apart
+# was the part that got cut. Keyed on that, the second silently replaced the
+# first: one file, one test collected, one result, and nothing on screen saying
+# a test had gone missing.
+# ---------------------------------------------------------------------------
+class _Case:
+    def __init__(self, case_id, name, function_name, code):
+        self.id = case_id
+        self.name = name
+        self.function_name = function_name
+        self.file_path = f"tests/{function_name}.py"
+        self.code = code
+        self.is_enabled = True
+
+
+def _module(function_name: str) -> str:
+    return f"def {function_name}(page: Page) -> None:\n    pass\n"
+
+
+def test_two_cases_sharing_a_function_name_are_both_collected():
+    from app.services.execution_service import ExecutionService
+
+    shared = "test_agent_registration_with_form_field"
+    cases = [
+        _Case(1, "Agent Registration ... 1", shared, _module(shared)),
+        _Case(2, "Agent Registration ... 2", shared, _module(shared)),
+    ]
+
+    class Suite:
+        files = []
+
+    Suite.cases = cases
+
+    class Run:
+        id = 1
+        suite = Suite()
+        case_ids = [1, 2]
+
+    bundle, collected = ExecutionService.__new__(ExecutionService)._prepare(Run())
+
+    assert len(collected) == 2, "a case was silently dropped from the run"
+    assert {c.id for c in collected.values()} == {1, 2}
+    # Two files, and each defines the name it is collected under.
+    modules = {p: c for p, c in bundle.items() if p.startswith("tests/")}
+    assert len(modules) == 2
+    for function_name in collected:
+        assert any(f"def {function_name}(" in code for code in modules.values())
+
+
+def test_the_stored_case_is_not_renamed_by_a_run():
+    """The rename belongs to one workspace. What a person opens in the editor,
+    and what regeneration replaces, must not gain a suffix because of how some
+    run happened to be assembled."""
+    from app.services.execution_service import ExecutionService
+
+    shared = "test_thing"
+    cases = [
+        _Case(1, "Thing 1", shared, _module(shared)),
+        _Case(2, "Thing 2", shared, _module(shared)),
+    ]
+
+    class Suite:
+        files = []
+
+    Suite.cases = cases
+
+    class Run:
+        id = 1
+        suite = Suite()
+        case_ids = [1, 2]
+
+    ExecutionService.__new__(ExecutionService)._prepare(Run())
+
+    assert [c.function_name for c in cases] == [shared, shared]
+    assert [c.file_path for c in cases] == [f"tests/{shared}.py"] * 2
+
+
+# ---------------------------------------------------------------------------
+# Network noise that is not evidence
+# ---------------------------------------------------------------------------
+def test_a_cancelled_prefetch_is_not_reported_as_a_failure():
+    """Four of these turned up under a failed text assertion:
+
+        AssertionError: Locator expected to contain text '...'
+        4 network requests failed during this test:
+          GET .../agent/my-listings?_rsc=d5bcf -> net::ERR_ABORTED
+
+    Next.js fetches the page behind every link that comes into view and cancels
+    it the moment you navigate. Nothing was wrong with any of them, and they
+    were the loudest thing in the message — so the reader, and the model that
+    writes the explanation, both start at the network while the real failure is
+    a page showing different text.
+    """
+    from app.runner.network import _is_cancelled_prefetch
+
+    assert _is_cancelled_prefetch(
+        "https://x.test/agent/my-listings?_rsc=d5bcf", {}, "net::ERR_ABORTED"
+    )
+    assert _is_cancelled_prefetch(
+        "https://x.test/next",
+        {"headers": [{"name": "Sec-Purpose", "value": "prefetch"}]},
+        "net::ERR_ABORTED",
+    )
+
+
+def test_an_aborted_request_that_was_not_a_prefetch_is_still_reported():
+    """A case that navigates while its own sign-in is in flight cancels it
+    exactly this way, and that one line is the whole diagnosis:
+
+        Locator.fill: Timeout 30000ms exceeded
+        1 network request failed: POST /users/auth/login -> net::ERR_ABORTED
+    """
+    from app.runner.network import _is_cancelled_prefetch
+
+    assert not _is_cancelled_prefetch(
+        "https://x.test/api/v1/users/auth/login", {}, "net::ERR_ABORTED"
+    )
+
+
+def test_a_prefetch_that_could_not_connect_is_still_reported():
+    """That is the site being unreachable, not a guess being dropped."""
+    from app.runner.network import _is_cancelled_prefetch
+
+    assert not _is_cancelled_prefetch(
+        "https://x.test/page?_rsc=abc", {}, "net::ERR_CONNECTION_REFUSED"
+    )

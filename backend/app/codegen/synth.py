@@ -166,6 +166,19 @@ _ASSERTIONS = {
 #: Verbs whose value is a URL fragment that gets wrapped in `re.compile`.
 _URL_ASSERTIONS = {"expect_url", "expect_not_url"}
 
+#: Assertions that say an element *is* there. A case making one about a page
+#: behind a login has to be signed in for it - see `_restore_sign_in`.
+#:
+#: `expect_hidden` is deliberately absent, and that absence is the whole point:
+#: "the add-property form is not there when I am signed out" is a real test, and
+#: signing it in first would destroy it.
+_EXPECTS_PRESENCE = {
+    "expect_visible",
+    "expect_text",
+    "expect_masked",
+    "expect_not_masked",
+}
+
 #: Values that must differ on every run, and the expression each becomes.
 #:
 #: A registration test written with a fixed address passes the first time and
@@ -257,6 +270,7 @@ def synthesise(
     module_name: str,
     function_name: str,
     recorded_steps: list[StepSpec] | None = None,
+    unique_values: list[tuple[str, str, str]] | None = None,
 ) -> TestIR:
     """Turn one described case into a TestIR reusing `pages`.
 
@@ -267,6 +281,20 @@ def synthesise(
     `recorded_steps` is the happy path: the one sequence known to work against
     this application. It is used to put back setup the case dropped — see
     `_restore_setup`.
+
+    `unique_values` is what the converter already decided cannot be replayed as
+    recorded — see `_fresh_value`. A described case is shown the recorded steps
+    and copies the literals out of them, so a value the recording was careful to
+    freshen comes straight back:
+
+        national_id_number_passport_number_input.fill('KRA/980/61')
+
+    Eleven generated cases and the recorded one all submitted that, in one run,
+    against a form that checks it for duplicates. Whichever ran first registered
+    it and the rest were refused — so a case passed or failed on its position in
+    the alphabet, and the verdicts moved every run. Doing this here rather than
+    asking the model for a placeholder is the difference between a rule and a
+    request.
     """
     steps_in = list(getattr(case, "steps", []) or [])
     if not steps_in:
@@ -288,6 +316,7 @@ def synthesise(
     used_pages: set[str] = set()
     needs_regex = False
     needs_uuid = False
+    freshened = _freshened(unique_values)
 
     for index, raw in enumerate(steps_in):
         action = str(getattr(raw, "action", "")).strip().lower()
@@ -351,6 +380,26 @@ def synthesise(
         # A unique value renders as the expression that produces one, so it is
         # evaluated per run rather than baked in as a literal.
         unique = unique_expression(value) if value is not None else None
+
+        # ...and so does a literal the converter already freshened for the
+        # recorded test. The model copied it out of the steps it was shown; it
+        # is the same value, in the same field, on the same form, and it stops
+        # working for the same reason.
+        if unique is None and value is not None:
+            unique = freshened.get(str(value))
+            if unique is not None:
+                # And the comment above the line has to stop naming the value
+                # too. `readable` is what the step description and the
+                # test-case sheet print, so leaving it alone produced
+                #
+                #     # Type into national id number: 'KRA/980/61'
+                #     ...fill('KRA/' + f'{uuid4().int % 1000:03d}' + ...)
+                #
+                # a comment describing something the code deliberately does
+                # not do. Placeholders have always been described by what they
+                # produce rather than by their token; this is the same rule.
+                readable = "a fresh value, different every run"
+
         if unique is not None:
             needs_uuid = True
 
@@ -447,6 +496,24 @@ def synthesise(
     return ir
 
 
+def _freshened(
+    unique_values: list[tuple[str, str, str]] | None,
+) -> dict[str, str]:
+    """Recorded literal -> the expression that produces a fresh one per run.
+
+    Keyed on the value rather than on the field, because that is what a
+    described case carries. The model is shown "typed: 'KRA/980/61'" and writes
+    that string back; which element it puts it in is its own business, and a
+    value that must be unique on one field is not suddenly replayable on
+    another.
+    """
+    return {
+        recorded: expression
+        for _name, expression, recorded in (unique_values or [])
+        if recorded
+    }
+
+
 def page_variables_for(pages: list[PageSpec]) -> list[tuple[str, str]]:
     """(variable, ClassName) for a bare page list, mirroring page_variables()."""
     return page_variables(TestIR(suite_name="", function_name="", module_name="", start_url="", pages=pages))
@@ -500,6 +567,17 @@ def elements(pages: list[PageSpec]) -> list[dict[str, object]]:
 
     Returned in the `page_var.locator_name` form steps are stored in, so what
     the editor sends back is what comes out of the database next time.
+
+    One kind is deliberately absent. A state-dependent element registers a
+    second locator matching everything of its shape, for `one_of` to reach for
+    after the application refuses the recorded one. Nobody clicked it, no step
+    targets it, and it names a *set* rather than a thing - so offering it as
+    somewhere a step could point produced exactly what you would expect:
+
+        step 2: CatalogPage.product_add_to_cart_5_button_alternatives is on
+        /catalog, but the case is still on / …
+
+    an invented case aiming at internal machinery. See `LocatorSpec.alternatives_for`.
     """
     variable_of = {class_name: var for var, class_name in page_variables_for(pages)}
     out: list[dict[str, object]] = []
@@ -509,6 +587,8 @@ def elements(pages: list[PageSpec]) -> list[dict[str, object]]:
         if variable is None:
             continue
         for locator in page.locators:
+            if locator.alternatives_for is not None:
+                continue
             out.append(
                 {
                     "target": f"{variable}.{locator.name}",
@@ -938,7 +1018,33 @@ def sign_in_sequence(recorded: list[StepSpec]) -> tuple[list[StepSpec], set[str]
         for step in recorded[submitted + 1 :]
         if step.page_var and step.page_var != page
     }
-    return recorded[start : submitted + 1], behind, page
+
+    # Everything on that page is in the run, and not all of it signed anybody
+    # in. One real recording held:
+    #
+    #     click Email · fill Email · click Login · click Login · click Login
+    #     · fill Password · click Login
+    #
+    # somebody pressing Login three times before noticing the password box.
+    # Replayed, those three submit an empty form before the real attempt, and
+    # what they cost is out of all proportion to what they are: `probe.py`
+    # replays this sequence to get onto the pages behind the login, was refused,
+    # and marked all three protected pages "unusable" - which means *every*
+    # element on them is offered to the model as reachable cold. The model then
+    # wrote cases that jump straight into the middle of a multi-step wizard, and
+    # every one of them timed out on a field that was two clicks away.
+    #
+    # A click before the password was typed cannot have signed anybody in. Fills
+    # are all kept - an address typed early is still the address - and
+    # everything from the password onward is untouched.
+    run = recorded[start : submitted + 1]
+    signing_in = [
+        step
+        for index, step in enumerate(run)
+        if index >= (at - start)
+        or step.action not in (ActionType.CLICK, ActionType.KEY_PRESS)
+    ]
+    return signing_in, behind, page
 
 
 def _restore_sign_in(
@@ -1002,9 +1108,26 @@ def _restore_sign_in(
     ):
         return steps
 
+    # Driving a protected page needs an account. So does *claiming something is
+    # on one*, and leaving that out produced this, which could only ever be red:
+    #
+    #     Next step button is present on add property page
+    #       0. goto            /agent/add-property
+    #       1. expect_visible  next_step_button
+    #
+    # Two steps, no sign-in, against a page that redirects anyone anonymous
+    # straight to the login form. The rule was "a case that only looks at a
+    # protected page is left signed out", and it is right about exactly one
+    # shape: "opening add-property signed out sends me to the login form" is a
+    # real test and has to stay signed out to be one. That case asserts an
+    # absence. This one asserts a presence, and a presence on a page you were
+    # never let into is not a claim that can hold.
+    #
+    # So the split is on what the assertion says rather than on whether the case
+    # does anything: expecting something to be there needs to be there.
     needs_it = any(
         step.page_var in behind
-        and step.action is not ActionType.ASSERT
+        and (step.action is not ActionType.ASSERT or step.verb in _EXPECTS_PRESENCE)
         for step in steps
     )
     if not needs_it:

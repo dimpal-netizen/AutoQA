@@ -117,7 +117,7 @@ def run_suite(
         outcome.exit_code, output, timed_out = _stream(
             _command(browser, headless=headless, slow_mo_ms=slow_mo_ms),
             cwd=workspace,
-            env=_environment(base_url),
+            env=_environment(base_url, slow_mo_ms=slow_mo_ms),
             timeout_s=timeout_s,
             run_id=run_id,
             on_progress=on_progress,
@@ -346,6 +346,16 @@ def _stream(
     return process.returncode, "".join(collected), timed_out
 
 
+#: The only third-party pytest plugins a generated suite needs. Everything the
+#: run relies on beyond these - junitxml, tmp_path, capture - is built into
+#: pytest itself and loads whatever `PYTEST_DISABLE_PLUGIN_AUTOLOAD` says.
+#:
+#: `pytest_base_url` is not optional despite nothing here passing `--base-url`:
+#: pytest-playwright asks for a `base_url` fixture, and without the plugin that
+#: defines it every test errors on an unknown fixture.
+_PLUGINS = ("pytest_playwright.pytest_playwright", "pytest_base_url.plugin")
+
+
 def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[str]:
     """The pytest invocation.
 
@@ -366,6 +376,9 @@ def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[s
         "no:cacheprovider",
         "--tb=short",
     ]
+    # Load exactly the plugins above and nothing else - see _environment.
+    for plugin in _PLUGINS:
+        command += ["-p", plugin]
     if not headless:
         command.append("--headed")
     if slow_mo_ms > 0:
@@ -375,14 +388,37 @@ def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[s
     return command
 
 
-def _environment(base_url: str | None) -> dict[str, str]:
+def _environment(base_url: str | None, *, slow_mo_ms: int = 0) -> dict[str, str]:
     env = os.environ.copy()
+    if slow_mo_ms > 0:
+        # Somebody is watching this one. The generated helpers read it to glide
+        # the page instead of jumping it - see `_glide` in healing.py.
+        env["AUTOQA_WATCH"] = "1"
     if base_url:
         # The generated conftest reads this, so the same suite can be pointed
         # at staging without regenerating anything.
         env["BASE_URL"] = base_url
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    # Run the generated suite with only the plugins in `_PLUGINS`.
+    #
+    # pytest loads every installed `pytest11` entry point by default, and the
+    # generated tests run in the API's own interpreter - so they inherit
+    # AutoQA's whole dependency tree, pytest plugins and all. Most of that tree
+    # is there for the API and has no business in a browser test.
+    #
+    # This is not tidiness. A plugin that raises while *importing* takes the
+    # entire run down before collection, so pytest writes no report at all and
+    # every test in the suite is reported blocked - with a traceback pointing
+    # into a library the user has never heard of. It happened: `langchain-core`
+    # pulls in `langsmith`, whose plugin imports `xxhash`, whose native DLL some
+    # Windows machines refuse to load. Nothing there is ours, and none of it is
+    # about the application under test.
+    #
+    # The allowlist is what makes the run depend on the suite instead of on
+    # whatever else happens to be installed next to it.
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     return env
 
 

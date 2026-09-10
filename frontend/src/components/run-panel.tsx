@@ -39,6 +39,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ResultMatrix } from "@/components/result-matrix";
+import { useConfirm } from "@/components/ui/confirm";
 
 const ALL_BROWSERS: Browser[] = ["chromium", "firefox", "webkit"];
 const POLL_MS = 2000;
@@ -83,6 +84,7 @@ export function RunPanel({
   const [stopping, setStopping] = useState(false);
   const [building, setBuilding] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const { confirm, dialog } = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TestRun[]>([]);
 
@@ -195,16 +197,14 @@ export function RunPanel({
   async function removeRun() {
     if (!runId) return;
 
-    const confirmed = window.confirm(
-      `Delete run #${runId}?
-
-` +
+    const confirmed = await confirm({
+      title: `Delete run #${runId}?`,
+      body:
         `Its results and any screenshots, video and traces it produced are ` +
-        `removed from disk. This cannot be undone.
-
-` +
+        `removed from disk. This cannot be undone.\n\n` +
         `The tests themselves are not touched.`,
-    );
+      confirmLabel: "Delete run",
+    });
     if (!confirmed) return;
 
     setRemoving(true);
@@ -259,6 +259,7 @@ export function RunPanel({
 
   return (
     <Card>
+      {dialog}
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Play className="size-4" />
@@ -345,14 +346,18 @@ export function RunPanel({
                 Run Recorded Test Cases
               </Button>
             )}
+            {/* "AI" is gone from this label because it was never true of the
+                whole set: it runs the recording, anything written by hand, and
+                whatever was generated around them — by a model or, with no key
+                configured, from the recording itself. */}
             <Button
               size="sm"
               onClick={() => void start()}
               disabled={starting || active || browsers.length === 0 || caseCount === 0}
               title={
                 `Runs all ${caseCount} case${caseCount === 1 ? "" : "s"} — the ` +
-                "recording, anything written by hand, and every case the model " +
-                "generated around them."
+                "recording, anything written by hand, and every case generated " +
+                "around them."
               }
             >
               {active ? (
@@ -364,7 +369,7 @@ export function RunPanel({
                 ? "Running…"
                 : starting
                   ? "Starting…"
-                  : "Run All AI Test Cases"}
+                  : "Run all Test cases"}
             </Button>
           </div>
         </div>

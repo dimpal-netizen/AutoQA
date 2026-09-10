@@ -187,6 +187,61 @@ def test_selector_text_matching_is_exact():
 # ---------------------------------------------------------------------------
 # 3. Steps that cannot fail, because they should never have been recorded
 # ---------------------------------------------------------------------------
+def test_noise_an_advertising_pixel_navigation_is_dropped():
+    """From a real recorded case, red on a site that was working:
+
+        Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE
+          at https://googleads.g.doubleclick.net/xbbe/pixel
+
+    The browser navigated there on its own — an ad pixel — and the recorder
+    wrote it down like any other navigation. Replayed, the test leaves the
+    application entirely and everything after it runs on an ad network.
+    """
+    cleaned = normalise(
+        [
+            action(ActionType.NAVIGATE, payload={"url": "https://app.test/"}),
+            action(
+                ActionType.NAVIGATE,
+                payload={"url": "https://googleads.g.doubleclick.net/xbbe/pixel"},
+            ),
+            action(ActionType.NAVIGATE, payload={"url": "https://app.test/cart"}),
+        ],
+        host="app.test",
+    )
+    urls = [a["payload"]["url"] for a in cleaned]
+
+    assert "https://googleads.g.doubleclick.net/xbbe/pixel" not in urls
+    assert "https://app.test/cart" in urls
+
+
+def test_noise_a_sibling_subdomain_is_not_dropped():
+    """An application that spans subdomains is still one journey. Dropping the
+    navigation between them would strand the test on the page before it."""
+    cleaned = normalise(
+        [
+            action(ActionType.NAVIGATE, payload={"url": "https://app.example.com/"}),
+            action(
+                ActionType.NAVIGATE,
+                payload={"url": "https://account.example.com/profile"},
+            ),
+        ],
+        host="app.example.com",
+    )
+
+    assert len(cleaned) == 2
+
+
+def test_noise_nothing_is_dropped_when_the_host_is_unknown():
+    """This decides what to throw away, so every uncertain case keeps the step.
+    A navigation wrongly dropped breaks a recording that worked."""
+    same = [
+        action(ActionType.NAVIGATE, payload={"url": "https://anywhere.test/"}),
+        action(ActionType.NAVIGATE, payload={"url": "https://elsewhere.test/x"}),
+    ]
+
+    assert len(normalise(same)) == 2
+
+
 def test_noise_the_blank_page_navigation_is_dropped():
     """The launched browser starts blank, and that got recorded.
 
@@ -582,7 +637,7 @@ asking can - "the phone number rules", "the discount code field" - and without
 somewhere to put it they got twelve cases spread evenly over things they already
 trusted."""
 
-from app.ai.case_generator import _asked_for  # noqa: E402
+from app.ai.case_generator import _asked_for, _last_word  # noqa: E402
 
 
 def test_nothing_asked_for_adds_nothing_to_the_prompt() -> None:
@@ -596,11 +651,34 @@ def test_nothing_asked_for_adds_nothing_to_the_prompt() -> None:
 def test_a_brief_is_the_batch_not_a_footnote() -> None:
     """Somebody typing "the phone number rules" wants a batch about phone
     numbers, not one case about phone numbers and eleven about whatever the
-    model would have chosen anyway."""
+    model would have chosen anyway.
+
+    It used to say "spend most of 12 on it", which left the other line - "Write
+    12 cases covering these categories" - reading as four quotas to be filled
+    alongside the brief. All twelve should be about it, and where the recording
+    cannot support twelve the answer is fewer, not padding.
+    """
     block = " ".join(_asked_for("the phone number rules", 12).split())
 
     assert "This is the brief" in block
-    assert "spend most of 12 on it" in block
+    assert "Every one of the 12 cases should be about it" in block
+    assert "not four quotas to satisfy alongside it" in block
+
+
+def test_the_brief_is_said_again_at_the_end() -> None:
+    """The prompt is 232 lines and the brief was on line 27, with nothing but
+    generic rules after it. Whatever is said last is what a model is holding
+    when it starts writing."""
+    tail = " ".join(_last_word("the phone number rules", 12).split())
+
+    assert "the phone number rules" in tail
+    assert "BEFORE YOU ANSWER" in tail
+
+
+def test_no_brief_means_no_reminder() -> None:
+    """An empty heading reads as a requirement to be satisfied somehow."""
+    assert _last_word(None) == ""
+    assert _last_word("   ") == ""
 
 
 def test_what_was_asked_for_is_quoted_back() -> None:
@@ -634,3 +712,55 @@ def test_an_essay_is_trimmed_rather_than_sent_whole() -> None:
 
     # 999 rather than 1000: the cut lands on a space, which is then stripped.
     assert 900 < len(quoted.strip()) <= 1000
+
+
+# ---------------------------------------------------------------------------
+# 5. Clicking the control, not the picture drawn on it
+# ---------------------------------------------------------------------------
+from app.codegen.selectors import actionable_ancestor  # noqa: E402
+
+ICON = "//body/main[1]/div[1]/div[1]/button[3]/span[1]/svg[1]/g[1]/path[1]"
+
+
+def test_icon_a_glyph_inside_a_button_resolves_to_the_button():
+    """From a real recording, thirty seconds then red on a working button.
+
+    Somebody clicked the button; the recorder captured the `<path>` drawn on
+    top of it, because that is the element under the pointer. Replayed,
+    Playwright clicks the glyph — and sites routinely set `pointer-events:
+    none` inside an icon, so the button never fires and nothing navigates.
+    """
+    assert actionable_ancestor(ICON) == "//body/main[1]/div[1]/div[1]/button[3]"
+
+
+def test_icon_a_link_wrapping_an_icon_resolves_to_the_link():
+    assert actionable_ancestor("//body/header[1]/a[2]/span[1]/svg[1]") == (
+        "//body/header[1]/a[2]"
+    )
+
+
+@pytest.mark.parametrize(
+    "xpath",
+    [
+        "//body/main[1]/button[1]",              # already the control
+        "//body/main[1]/button[1]/input[1]",     # a real control inside one
+        "//body/main[1]/section[1]/form[1]",     # no control anywhere
+        "//body/div[1]/a[1]/div[1]/h3[1]",       # a card, not decoration
+    ],
+)
+def test_icon_anything_else_is_left_exactly_as_it_was(xpath):
+    """A link wrapping a card full of text is not this shape. Somebody meant a
+    specific part of it, and moving the click would change what is tested."""
+    assert actionable_ancestor(xpath) is None
+
+
+def test_icon_an_element_with_a_name_of_its_own_is_not_moved():
+    """Only when the element has nothing else going for it. A named element
+    means the recording knows what was clicked."""
+    from app.codegen.converter import _aim_at_the_control
+
+    named = Selector(SelectorStrategy.ROLE_NAME, "button|Register", unique=True)
+    assert _aim_at_the_control(named, {"tag": "span"}) is named
+
+    positional = Selector(SelectorStrategy.XPATH, ICON, unique=True)
+    assert _aim_at_the_control(positional, {"tag": "button"}) is positional

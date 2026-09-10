@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { MousePointerClick, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import type { TestSuiteDetail } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -100,37 +100,6 @@ export function GenerateCases({
     </>
   );
 }
-
-
-/** The brief behind "From what I did".
- *
- *  A sentence rather than a flag, because that is genuinely all the difference
- *  is. Both buttons run the same generation against the same elements — the
- *  recording only ever captured the ones somebody touched — so what separates
- *  them is which cases may be written, and that is a thing you say.
- *
- *  This one is a fence, not a hint. Every clause below closes a door the model
- *  would otherwise walk through: it may not add a step, may not touch an
- *  element the recording did not, may not think of a scenario of its own. What
- *  is left is the recorded journey with different values in it — which is
- *  exactly what somebody means by "test what I did", and nothing else.
- *
- *  The other button is where the model's own judgement belongs. Wanting both
- *  from one press is how you get a batch that claims to be your flow and is
- *  half invented.
- */
-const FROM_MY_ACTIONS = [
-  "HARD LIMIT: build every case only out of the steps in the recorded flow above.",
-  "",
-  "You may: reuse those steps, in the order they were recorded; stop the flow",
-  "early; leave a field empty that was filled; and change the value typed into a",
-  "field to one the application should refuse.",
-  "",
-  "You may NOT: add a step that is not in the recording; use an element the",
-  "recorded steps did not use; reorder the steps; or invent a scenario of your",
-  "own, however worthwhile it looks. Do not test anything the recording did not",
-  "do. If that leaves fewer cases than asked for, write fewer.",
-].join("\n");
 
 
 /** Ask what this batch should be about, before spending a request on it.
@@ -240,7 +209,7 @@ function AskWhatToCoverOn({
           )}
         </div>
 
-        {/* Just the two buttons. The caveat that used to sit here - "steers
+        {/* Cancel and Generate. The caveat that used to sit here - "steers
             which tests get written, not what they may do" - is reassurance
             nobody needs while deciding what to type, and it made a four-line
             dialog into a six-line one. */}
@@ -248,30 +217,16 @@ function AskWhatToCoverOn({
           <Button variant="ghost" size="sm" onClick={onCancel}>
             Cancel
           </Button>
-          {/* Two ways to generate, and the difference is the brief. This one
-              fences the model into the recorded steps; the other lets it use
-              its own judgement about what is worth testing.
+          {/* One way to generate. There used to be a second button beside this
+              one, "From what I did", which sent a paragraph forbidding the
+              model to add a step or use an element the recording did not — the
+              recorded flow with different values in it.
 
-              Always offered, including once something has been typed. What you
-              wrote is added to the fence rather than replacing it, because
-              "the phone rules, but only with what I recorded" is a sensible
-              thing to want and hiding the button made it impossible to ask
-              for. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onGenerate(
-                text.trim()
-                  ? `${FROM_MY_ACTIONS}\n\nWithin that, concentrate on: ${text.trim()}`
-                  : FROM_MY_ACTIONS,
-              )
-            }
-            title="Only the steps you recorded — reused, stopped early, or with values the application should refuse. Nothing added, nothing invented."
-          >
-            <MousePointerClick />
-            From what I did
-          </Button>
+              It asked you to pick between two kinds of test case before you
+              had seen either, and the cases it produced were already covered:
+              the recording becomes cases of its own the moment it stops, under
+              Recorded. Two buttons, one of which had nothing to add for a
+              recording that stayed on one page. */}
           <Button size="sm" onClick={() => onGenerate(text)}>
             <Sparkles />
             Generate

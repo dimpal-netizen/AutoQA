@@ -15,13 +15,17 @@ The pipeline is:
 
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
 from app.codegen.selectors import (
+    _DECORATION,
     Selector,
+    actionable_ancestor,
     best_selector,
     conflicting,
     distinguisher,
@@ -33,6 +37,14 @@ from app.codegen.selectors import (
     scoped_root,
     snake_case,
     usable_selectors,
+)
+from app.codegen.dataroles import (
+    SUBSTITUTE_ABOVE,
+    DataRole,
+    Decision,
+    classify_targets,
+    classify_values,
+    identity_kind,
 )
 from app.models.enums import ActionType, SelectorStrategy
 
@@ -46,7 +58,14 @@ _NAME_BASED = {
     SelectorStrategy.PLACEHOLDER,
 }
 
+logger = logging.getLogger(__name__)
+
 MAX_IDENT = 60
+
+#: The helpers a generated test may call from pages/_state.py. Named here
+#: because both the import line and the decision to ship the file are worked out
+#: from the code that was emitted - see `TestIR.state_helpers`.
+STATE_HELPERS = ("one_of", "submit")
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +115,31 @@ class LocatorSpec:
     # field on the second step of a wizard. True when nothing was measured, so a
     # suite generated without a probe behaves exactly as it did. See probe.py.
     reachable: bool = True
+    # The role this element plays in the test's data - see `dataroles.py`. Only
+    # STATE_DEPENDENT means anything here, and it means "if the application
+    # refuses this, a comparable element may be tried instead". Never "start
+    # somewhere else": the recorded element is what runs first, every time.
+    role: str = DataRole.STATIC.value
+    # The locator matching everything of the same shape as this one, when the
+    # recording holds a way of finding them. Read only after a refusal.
+    among: str | None = None
+    # What the recorder saw the element *be*, as opposed to how it found it:
+    # role, accessible name, label, placeholder, test id, text. Every recorded
+    # selector can break at once - a redesign renames one class and takes the
+    # css, the xpath and the nth-child with it - and then the only thing left
+    # that still describes the element is this. See `_describe_element` and
+    # `_derived` in the healing template.
+    describes: dict[str, str] = field(default_factory=dict)
+    # The frame the element was recorded inside, as the expression that reaches
+    # it - empty for the page itself, which is almost every element. Healing
+    # searches here and nowhere else: a payment frame and the page around it
+    # both have a Submit button, and finding the wrong one passes.
+    inside: str = ""
+    # Set on that second locator, naming the one it serves. It is not an element
+    # the recording ever touched - no step targets it, and nothing but a refused
+    # step ever reads it - so anything counting the elements a recording used
+    # should skip it.
+    alternatives_for: str | None = None
 
 
 @dataclass
@@ -114,8 +158,10 @@ class PageSpec:
         comes first. See `identity`.
         """
         for existing in self.locators:
-            if existing.expression == locator.expression and not conflicting(
-                existing.identity, locator.identity
+            if (
+                existing.expression == locator.expression
+                and existing.role == locator.role
+                and not conflicting(existing.identity, locator.identity)
             ):
                 # Reached without opening anything even once, anywhere in the
                 # recording, and it is reachable. The question is only ever
@@ -147,9 +193,27 @@ class PageSpec:
                 revealed=locator.revealed,
                 tag=locator.tag,
                 reachable=locator.reachable,
+                role=locator.role,
+                among=locator.among,
+                alternatives_for=locator.alternatives_for,
+                describes=locator.describes,
+                inside=locator.inside,
             )
         )
         return name
+
+    def remember_alternatives(self, name: str, among: str | None) -> None:
+        """Note which locator holds the comparable elements for another.
+
+        Carried on the IR for anything that reads it - a report, the editor -
+        rather than for the generated code, which is handed the name directly.
+        """
+        if among is None:
+            return
+        for locator in self.locators:
+            if locator.name == name:
+                locator.among = among
+                return
 
     def collides(self, base: str, identity: tuple[str, ...]) -> bool:
         """Would this expression find an element already registered as another?"""
@@ -169,6 +233,9 @@ class StepSpec:
     code: list[str]
     description: str
     page_var: str | None = None
+    #: The address this step happened at. Only read to work out where a
+    #: workflow has to go back to - see `TestIR.restart_url`.
+    page_url: str = ""
     locator_name: str | None = None
     input_data: str | None = None
     expected_result: str | None = None
@@ -190,6 +257,20 @@ class StepSpec:
     # split survives normalisation, which drops and merges actions and would
     # otherwise leave nothing to line the two up by.
     segment: int = 0
+
+
+def _acts(step: StepSpec) -> bool:
+    """Does this step ask the application for something it could refuse?
+
+    Clicking and submitting do. Hovering, scrolling, reading and asserting do
+    not - they observe a page that is already there. The distinction is what
+    tells a choice the workflow depends on from one made on the way out; see
+    `TestIR.selection_point`.
+    """
+    return any(
+        "one_of(" in line or "submit(" in line or ".click(" in line
+        for line in step.code
+    )
 
 
 @dataclass
@@ -223,11 +304,177 @@ class TestIR:
     # recording names is on somebody else's machine; this one is built at run
     # time. See pages/_files.py.
     needs_sample_file: bool = False
+    # UNIQUE fields filled in but not yet submitted, as (page variable, locator
+    # name, the expression that makes a fresh value). Accumulated by the fills
+    # and claimed by the click that sends them - see `_renewals_for`.
+    pending_renew: list[tuple[str, str, str]] = field(default_factory=list)
     # (variable, expression, the value that was recorded) for each input the
     # application would refuse a second time. Assigned once at the top of the
     # test so two fields that were given the same address still get the same
     # one. See `_fresh_value`.
     unique_values: list[tuple[str, str, str]] = field(default_factory=list)
+
+    @property
+    def selection_point(self) -> int | None:
+        """The step where the workflow chooses the thing it is about.
+
+        Some applications will not say a thing is unavailable until you have
+        tried to take it: nothing on the listing, nothing on the item, nothing
+        in the basket, and then a refusal at the last step after four perfectly
+        successful ones. Retrying that step asks the same question about the
+        same thing for ever. The only recovery is to go back to where the choice
+        was made and choose something else - so the generated test has to know
+        where that was.
+
+        It is the *last* step that selects one of a set - the one closest to the
+        action that gets refused. A journey passes through several such steps on
+        its way: a modal dismissed, a section opened, a page of results turned.
+        Rewinding to the first of them would replay the whole journey to change
+        a choice made near the end of it, and would offer to dismiss a different
+        modal rather than to take a different thing.
+
+        The latest one is both the cheapest to replay and the right place: it is
+        where the thing the workflow is about was actually settled on.
+
+        With one qualification, and it is the whole of the difficulty. A choice
+        has to have a workflow *after* it, or choosing again changes nothing -
+        and recordings end the way sessions end, with a click on My Account and
+        a click on Sign Out. Those are choices by every local test: one of
+        several links, named, clicked once. Taken as the selection point, the
+        replayable part of the test began *after* the step that gets refused,
+        so the refusal had nothing to rewind to and the run stopped with a
+        listing full of untried alternatives sitting two pages behind it.
+
+        What separates the choice from the coda is where the test goes next. A
+        choice that matters is followed by pages the recording had not reached
+        yet - a basket, a form, a confirmation. A sign-out is followed by pages
+        it has already been to, or by nothing at all. So: the last choice the
+        journey goes somewhere *new* after.
+
+        Falling back, when no choice leads anywhere new, to the last one
+        followed by something that acts on the application at all. A single-page
+        application never changes address, and it would otherwise be left with
+        no recovery whatever.
+
+        None when the recording chose nothing, which is most recordings.
+        """
+        choices = [
+            index
+            for index, step in enumerate(self.steps)
+            if any(
+                line.lstrip().startswith("one_of(") and "entity=" in line
+                for line in step.code
+            )
+        ]
+
+        for index in reversed(choices):
+            been = {step.page_url for step in self.steps[: index + 1] if step.page_url}
+            if any(
+                step.page_url and step.page_url not in been
+                for step in self.steps[index + 1:]
+            ):
+                return index
+
+        for index in reversed(choices):
+            if any(_acts(step) for step in self.steps[index + 1:]):
+                return index
+        return None
+
+    @property
+    def restart_url(self) -> str:
+        """The address the choice is made at, for getting back to it."""
+        chosen = self.selection_point
+        if chosen is None:
+            return ""
+        for step in reversed(self.steps[: chosen + 1]):
+            if step.page_url:
+                return step.page_url
+        return self.start_url
+
+    @property
+    def needs_instead(self) -> bool:
+        """True when any step translates a recorded name through the mapping."""
+        return any(
+            "instead(" in line for step in self.steps for line in step.code
+        )
+
+    @property
+    def state_helpers(self) -> list[str]:
+        """Which pages/_state.py helpers this module's steps actually call.
+
+        Read off the steps rather than carried as a flag, and that is the whole
+        point of it. Every other `needs_*` on this class is a flag somebody has
+        to remember to copy, and a TestIR is derived in three other places - a
+        recording is sliced into one test per journey, invented cases are built
+        from a vocabulary, cases are rebuilt from recorded steps. Two of those
+        copied the steps and forgot the flag, so a generated module called
+        `one_of` without importing it and the whole batch of cases was rejected:
+
+            tests/test_product_add_to_cart_alternative_button.py
+            uses one_of without importing it
+
+        A step that calls the helper is the only thing that can possibly decide
+        this, so it is the thing asked.
+        """
+        return sorted(
+            {
+                helper
+                for step in self.steps
+                for line in step.code
+                for helper in STATE_HELPERS
+                if line.lstrip().startswith(f"{helper}(")
+            }
+        )
+
+    @property
+    def needs_state(self) -> bool:
+        """True when anything in this module needs pages/_state.py."""
+        return bool(self.state_helpers)
+
+    #: What the recording called each thing a STATE_DEPENDENT step selects.
+    #:
+    #: Collected so that every *later* literal naming one of them can be
+    #: translated at run time. Substituting at the step that failed and nowhere
+    #: else is the bug this exists to prevent: a workflow picks an item, adds
+    #: it, checks out with it and confirms it by name, and a test that swaps the
+    #: first of those and replays the recorded name in the other three is no
+    #: longer testing a workflow.
+    entity_names: set = field(default_factory=set)
+    #: Names that label a clickable thing on more than one page, and so name a
+    #: control rather than the thing the workflow is about. See
+    #: `_repeated_controls`.
+    controls: set = field(default_factory=set)
+
+    @property
+    def needs_sync(self) -> bool:
+        """True when any step waits for what its action was observed to do.
+
+        Read off the steps for the same reason `state_helpers` is: a TestIR is
+        derived in three other places and a flag is a thing somebody has to
+        remember to copy.
+        """
+        return any(
+            line.lstrip().startswith("after(")
+            for step in self.steps
+            for line in step.code
+        )
+
+    @needs_sync.setter
+    def needs_sync(self, _value: bool) -> None:
+        """Accepted and ignored: the steps are the only thing that decides."""
+
+    def renewal_for(self, name: str) -> str:
+        """The expression that made a hoisted value, so it can make another.
+
+        The variable at the top of the test holds one value for the whole run,
+        which is what two fields that must match need. Retrying a refused
+        submission needs a *new* one, and that means the expression rather than
+        the variable.
+        """
+        for existing, expression, _recorded in self.unique_values:
+            if existing == name:
+                return expression
+        return "''"
 
     @property
     def file_path(self) -> str:
@@ -237,12 +484,17 @@ class TestIR:
 # ---------------------------------------------------------------------------
 # Normalisation
 # ---------------------------------------------------------------------------
-def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalise(
+    actions: list[dict[str, Any]], *, host: str | None = None
+) -> list[dict[str, Any]]:
     """Drop noise and collapse repeats before any code is generated.
 
     A raw recording contains things nobody wants in a test: a scroll for every
     gesture, the same field typed into twice, a navigation the click already
     implies. Cleaning here means every downstream stage sees tidy input.
+
+    `host` is the application under test. Without it nothing is dropped for
+    being somewhere else, which is what every existing caller and test expects.
     """
     live = [a for a in actions if not a.get("is_ignored")]
     result: list[dict[str, Any]] = []
@@ -255,6 +507,22 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # navigates away from the application it just opened and every step
         # after it fails on an empty document.
         if kind is ActionType.NAVIGATE and _is_blank(action):
+            continue
+
+        # An advertising pixel, an analytics beacon, a payment iframe: the
+        # browser navigates to these on its own and the recorder writes them
+        # down like any other navigation. Replayed, the test leaves the
+        # application entirely, and one recorded journey died on
+        #
+        #     Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE
+        #       at https://googleads.g.doubleclick.net/xbbe/pixel
+        #
+        # which is a recorded test failing on an ad network. `synth.py` has
+        # refused these on the generated-case path since a made-up subdomain
+        # errored a test the same way; the recorded path never had the rule.
+        if kind is ActionType.NAVIGATE and not _same_site(
+            host, urlparse(str((action.get("payload") or {}).get("url") or "")).hostname
+        ):
             continue
 
         # A wheel event with no distance. Harmless but meaningless, and it is
@@ -411,6 +679,65 @@ def normalise(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 #: Pages a browser shows when it has nothing to show. None of them are the
 #: application under test, so none of them belong in a generated test.
 _BLANK_URLS = ("about:blank", "about://blank", "chrome://newtab", "edge://newtab")
+
+
+def _aim_at_the_control(
+    selector: Selector | None, element: dict[str, Any] | None
+) -> Selector | None:
+    """Point a click at the button rather than at the icon drawn on it.
+
+    Only when the element has nothing else going for it. A `<path>` inside an
+    `<svg>` inside a `<button>` has no role, no name, no label and no test id,
+    so the best way of finding it is a path through the DOM - and that is
+    precisely the case where what somebody meant is the control it sits in. An
+    element with a name of its own is left alone, because then the recording
+    knows what was clicked.
+
+    See `actionable_ancestor` for the failure this comes from.
+    """
+    if selector is None or selector.strategy is not SelectorStrategy.XPATH:
+        return selector
+
+    tag = str((element or {}).get("tag") or "").lower()
+    if tag not in _DECORATION:
+        return selector
+
+    ancestor = actionable_ancestor(selector.value)
+    if ancestor is None:
+        return selector
+
+    return Selector(
+        strategy=SelectorStrategy.XPATH,
+        value=ancestor,
+        # A control is a bigger, better-defined target than the glyph inside it,
+        # but nothing here has counted how many match - keep what was measured.
+        unique=selector.unique,
+        score=selector.score,
+    )
+
+
+def _same_site(host: str | None, target: str | None) -> bool:
+    """Is `target` the same site as the application under test?
+
+    Compared on the last two labels rather than the whole hostname, so an
+    application that spans subdomains keeps working: `app.example.com` to
+    `account.example.com` is one journey, and dropping the navigation between
+    them would strand the test on the page before it. `doubleclick.net` against
+    `betaeserver.com` is not.
+
+    Unknown counts as the same. This decides what to *throw away*, so every
+    uncertain case - no host configured, a relative URL, a hostname this cannot
+    parse - has to keep the step. A navigation wrongly dropped breaks a
+    recording that worked; one wrongly kept is the behaviour we already had.
+    """
+    if not host or not target:
+        return True
+
+    def site(name: str) -> str:
+        labels = name.lower().strip(".").split(".")
+        return ".".join(labels[-2:]) if len(labels) > 1 else name.lower()
+
+    return site(host) == site(target)
 
 
 def _is_blank(action: dict[str, Any]) -> bool:
@@ -711,8 +1038,17 @@ def build_ir(
     *,
     suite_name: str,
     start_url: str,
+    refine_roles: Callable[..., dict[int, Decision]] | None = None,
 ) -> TestIR:
-    """Turn normalised actions into everything the templates need."""
+    """Turn normalised actions into everything the templates need.
+
+    `refine_roles` is the one door through which a model may influence this
+    file, and it opens onto a corridor rather than a room: it is handed the
+    decisions the rules already reached and may only revise the ones they were
+    unsure about. Left out - which is the default, and what every test here
+    does - the generation is deterministic from end to end, exactly as it has
+    always been. See `app/ai/dataroles_ai.py`.
+    """
     function_name = snake_case(suite_name, fallback="recorded_flow")
     if not function_name.startswith("test_"):
         function_name = f"test_{function_name}"
@@ -739,12 +1075,28 @@ def build_ir(
     # are already on.
     current_url = ir.start_url
 
-    for action in normalise(actions):
+    # Held in a list rather than streamed, because a role is decided by looking
+    # at the whole recording - what else was on the page, what the application
+    # said back - and not at one action in isolation. See `dataroles.py`.
+    recorded = list(normalise(actions, host=urlparse(start_url).hostname))
+    roles = {**classify_values(recorded), **classify_targets(recorded)}
+    # Which names are controls rather than the subject of the workflow. Only
+    # answerable across the whole recording - see `_repeated_controls`.
+    ir.controls = _repeated_controls(recorded)
+    if refine_roles is not None:
+        try:
+            roles = refine_roles(recorded, roles, start_url=start_url)
+        except Exception:  # noqa: BLE001 - the deterministic answer still ships
+            logger.warning("Data-role refinement failed; using the rules alone")
+
+    for index, action in enumerate(recorded):
         if ActionType(action["action_type"]) is ActionType.NAVIGATE:
             if _clean_url(str(action["payload"].get("url", ""))) == current_url:
                 continue
 
-        step = _build_step(ir, action, sequence=len(ir.steps))
+        step = _build_step(
+            ir, action, sequence=len(ir.steps), decision=roles.get(index)
+        )
         if step is None:
             continue
 
@@ -781,7 +1133,13 @@ def uses_unhealed(steps: list[StepSpec]) -> bool:
     )
 
 
-def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpec | None:
+def _build_step(
+    ir: TestIR,
+    action: dict[str, Any],
+    *,
+    sequence: int,
+    decision: Decision | None = None,
+) -> StepSpec | None:
     kind = ActionType(action["action_type"])
     segment = int(action.get("segment") or 0)
     payload = action.get("payload") or {}
@@ -791,6 +1149,8 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
     # healing would reach for it the moment the page shifted.
     usable = usable_selectors(action.get("selectors") or [], element)
     selector = best_selector(usable, element)
+    selector = _aim_at_the_control(selector, element)
+
 
     # Page-level actions need no locator.
     if kind is ActionType.NAVIGATE:
@@ -904,8 +1264,31 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             base_expression=base,
             revealed=_was_revealed(element),
             tag=str((element or {}).get("tag") or "").lower(),
+            describes=_describe_element(element),
+            # `root` is the page unless the recording put the element in a
+            # frame, in which case it is the chain of frame_locator calls that
+            # reaches it - see `frame_root`.
+            inside=root if root != "self.page" else "",
+            # Only a *target* role. A value's role describes the step, and
+            # putting it here split one field into two locators: the click that
+            # focused it and the fill that followed disagreed about the role,
+            # so `add` refused to merge them and every step after the first
+            # drove `email_input_2`.
+            role=(
+                DataRole.STATE_DEPENDENT.value
+                if decision is not None and decision.role is DataRole.STATE_DEPENDENT
+                else DataRole.STATIC.value
+            ),
         )
     )
+
+    # A STATE_DEPENDENT element gets a second locator alongside its own: the
+    # recorded selector that everything of the same shape answers to. Registered
+    # after it, so it can be named for it. The step never touches it unless the
+    # application refuses the recorded element, and a recording that offers no
+    # such selector simply has none - see `dataroles.classify_targets`.
+    among = _register_shape(page_spec, decision, root, element, name)
+    page_spec.remember_alternatives(name, among)
 
     target = f"{page_var}.{name}"
     label = _readable_target(selector, element, usable)
@@ -913,11 +1296,41 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
     description = ""
     input_data: str | None = None
     expected: str | None = None
+    # The names known *before* this step. A step that selects a thing must not
+    # translate its own name - it is the step that decides what the name maps
+    # to, so wrapping it would key the mapping on its own output.
+    named_already = set(ir.entity_names)
+
+    # A state-aware step does its own waiting, because the address the recording
+    # arrived at belongs to the recorded data. Waiting for it outside the helper
+    # would fail on exactly the runs this exists to save.
+    waits_for_itself = False
 
     match kind:
         case ActionType.CLICK:
-            code = [f"{target}.click()"]
-            description = f"Click {label}"
+            renew = _renewals_for(ir, page_var, element)
+            state_dependent = (
+                decision is not None
+                and decision.role is DataRole.STATE_DEPENDENT
+            )
+            if state_dependent or renew:
+                code = [
+                    _state_call(
+                        ir,
+                        action,
+                        page_var=page_var,
+                        name=name,
+                        label=label,
+                        sequence=sequence,
+                        among=among,
+                        renew=renew,
+                    )
+                ]
+                description = f"Click {label}"
+                waits_for_itself = True
+            else:
+                code = [f"{target}.click()"]
+                description = f"Click {label}"
         case ActionType.DOUBLE_CLICK:
             code = [f"{target}.dblclick()"]
             description = f"Double-click {label}"
@@ -929,11 +1342,26 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
             description = f"Hover over {label}"
         case ActionType.INPUT:
             value = str(payload.get("value", ""))
-            # A sign-up form creates a record, and the recorded address is in it
-            # from the first run onwards. Replaying the same one asks the
-            # application to create the same account twice, which it is right to
-            # refuse — so the test passes once and is red for ever after.
-            fresh = _fresh_value(ir, value, element, str(action.get("url") or ""))
+            # A form that creates a record puts the recorded value into it from
+            # the first run onwards. Replaying the same one asks the application
+            # to create the same record twice, which it is right to refuse — so
+            # the test passes once and is red for ever after. Which values those
+            # are is `dataroles.classify_values`' answer, not this file's.
+            fresh = None
+            if decision is not None and decision.role is DataRole.UNIQUE:
+                shape = _fresh_expression(value, element)
+                if shape is not None:
+                    # Above the line the recording itself shows the value being
+                    # consumed, so replaying it would fail every run for a
+                    # reason already known here. Below it, the recorded value
+                    # still runs and a new one is generated only if the
+                    # application refuses it - see `SUBSTITUTE_ABOVE`.
+                    if decision.confidence >= SUBSTITUTE_ABOVE:
+                        fresh = _fresh_value(ir, value, shape)
+                    # Whether or not the value is replaced now, the retry can
+                    # replace it later - and that expression calls uuid4 too.
+                    ir.needs_uuid = True
+                    ir.pending_renew.append((page_var, name, shape[1]))
             code = [f"{target}.fill({fresh or py_str(value)})"]
             description = f"Type into {label}"
             input_data = value
@@ -1008,19 +1436,38 @@ def _build_step(ir: TestIR, action: dict[str, Any], *, sequence: int) -> StepSpe
 
     # A click that caused a navigation waits for it, rather than asserting the
     # URL immediately — an instant assert is a classic source of flakiness.
-    if action.get("_navigates_to"):
-        destination = _clean_url(action["_navigates_to"])
-        ir.needs_regex = True
-        code.append(f"page.wait_for_url(re.compile({py_str(_arrives_at(destination))}))")
-        expected = f"Navigates to {destination}"
+    #
+    # `domcontentloaded` rather than the default `load`, and that one word is
+    # the difference between a recorded journey passing and failing. From a real
+    # run, thirty seconds then red on a navigation that had already happened:
+    #
+    #     TimeoutError: Timeout 30000ms exceeded.
+    #     waiting for navigation to ".../property-owner/add-property" until 'load'
+    #
+    # `load` waits for every subresource on the new page - images, fonts, and
+    # the advertising and analytics scripts that a real site is full of. The
+    # same suite had a doubleclick pixel in it. None of that has anything to do
+    # with the claim being made, which is that the click went to the right
+    # address; the DOM being parsed is the point at which that is knowable, and
+    # every action after this waits for its own element anyway.
+    #
+    # Never after a state-aware step: that one waits for the recorded address
+    # itself and knows what to make of not arriving, so a second wait out here
+    # would only fail on the runs it exists to save.
+    if not waits_for_itself:
+        waiting = _sync_call(ir, action, kind)
+        if waiting:
+            code.append(waiting)
+            expected = expected or _describes(waiting, action)
 
     return StepSpec(
         sequence=sequence,
         segment=segment,
         action=kind,
-        code=code,
+        code=_through_the_mapping(code, named_already),
         description=description,
         page_var=page_var,
+        page_url=_clean_url(str(action.get("url") or "")),
         locator_name=name,
         input_data=input_data,
         expected_result=expected,
@@ -1093,47 +1540,125 @@ def _field_words(element: dict[str, Any] | None) -> str:
     return " ".join(str(part) for part in parts if part).lower()
 
 
-def _fresh_expression(value: str, element: dict[str, Any] | None) -> str | None:
-    """A per-run replacement for one recorded value, or None to keep it.
+#: Fields holding a document or account number that identifies one person: a
+#: national id, a passport, a tax pin, a licence. A sign-up form checks these
+#: for duplicates exactly as it checks an email address, and the recorded one is
+#: in the database from the first run onwards.
+#:
+#: Every token is long enough to mean something on its own. "id" is not here and
+#: cannot be: `_field_words` includes the element's own `id` attribute, so a bare
+#: substring test matches almost every field on the page.
+_DOCUMENT = (
+    "national",
+    "passport",
+    "nid",
+    "identity",
+    "id number",
+    "id_number",
+    "idnumber",
+    "licence",
+    "license",
+    "kra",
+    "aadhaar",
+    "aadhar",
+)
 
-    Only the fields that have to be unique for a record to exist at all. A
-    password is typed into a sign-up form too and must stay exactly as recorded:
-    it is not an identity, and changing it would lock the test out of the
-    account it just made.
+#: Runs of digits inside a document number, replaced one at a time so the shape
+#: the application accepted survives.
+_DIGIT_RUN = re.compile(r"\d+")
+
+
+def _fresh_document(value: str) -> str | None:
+    """`KRA/980/61` -> the same shape with different digits, or None.
+
+    Every run of digits is replaced with a fresh run of the same length and
+    everything else is kept, because the punctuation and the letters are the
+    format the application validates against. Inventing a number from nothing
+    is how a fix for one form breaks the next one along.
+
+    None when there is nothing to vary. A document number with no digits in it
+    at all is not something this can make unique, and returning the recorded
+    value unchanged is better than returning something the form will reject.
     """
-    words = _field_words(element)
-
-    if any(secret in words for secret in _SECRET):
+    if not _DIGIT_RUN.search(value):
         return None
 
-    if "email" in words or _LOOKS_LIKE_EMAIL.match(value.strip()):
+    parts: list[str] = []
+    position = 0
+    for match in _DIGIT_RUN.finditer(value):
+        if match.start() > position:
+            parts.append(py_str(value[position : match.start()]))
+        width = len(match.group())
+        parts.append(f"f'{{uuid4().int % {10 ** width}:0{width}d}}'")
+        position = match.end()
+
+    if position < len(value):
+        parts.append(py_str(value[position:]))
+
+    return parts[0] if len(parts) == 1 else " + ".join(parts)
+
+
+def _fresh_expression(
+    value: str, element: dict[str, Any] | None
+) -> tuple[str, str] | None:
+    """A per-run replacement for one recorded value as (kind, expression).
+
+    *Which* values need replacing is `dataroles.identity_kind`'s answer, and it
+    is asked here rather than answered again. The two used to keep separate
+    vocabularies and they drifted apart exactly as you would expect: a field
+    called "Account Number" was classified as an identity that must be unique,
+    and then handed to a generator that had never heard of it, so the role was
+    right and the test replayed the recorded value anyway.
+
+    What is left here is the *shape*. The recorded value's own form is kept
+    wherever it carries a constraint - a domain the application accepted, a
+    number of the length and leading digit its country expects - because
+    inventing those from nothing is how a fix for one form breaks the next.
+
+    `kind` names the variable the value is hoisted into, and is returned rather
+    than guessed from the expression: a mobile number and a document number are
+    both built out of `uuid4().int`, and guessing called one of them the other.
+    """
+    kind = identity_kind(value, element)
+    if kind is None:
+        return None
+
+    if kind == "email":
         domain = value.rpartition("@")[2].strip()
         if not domain or not _DOMAIN_OK.match(domain):
             # example.test is reserved and cannot receive mail, so it is only
             # right when the recording gives us nothing better to copy.
             domain = "example.test"
-        return _EMAIL % domain
+        return "email", _EMAIL % domain
 
-    digits = value.strip()
-    if digits.isdigit() and (
-        "tel" in words or "phone" in words or "mobile" in words or "contact" in words
-    ):
+    if kind == "mobile":
         # Same length and same leading digit as the number that was accepted.
         # A hard-coded shape is how a generated Indian number ends up in a form
         # defaulting to Kenya, where it is not a valid number at all.
+        digits = value.strip()
         rest = len(digits) - 1
-        if rest < 1:
+        if not digits.isdigit() or rest < 1:
             return None
-        return _PHONE % (digits[0], 10**rest, rest)
+        return "mobile", _PHONE % (digits[0], 10**rest, rest)
 
-    if "username" in words or "user_name" in words:
-        return _TEXT
+    if kind == "username":
+        return "username", _TEXT
 
-    return None
+    # A national id, a passport, a tax pin, a customer reference. From a real
+    # recorded registration that passed once and was red on every run after it:
+    #
+    #     national_id_number_passport_number_input.fill('KRA/980/61')
+    #
+    # The email and the mobile beside it were already being replaced per run,
+    # so the account got as far as being refused on the one field nobody had
+    # thought of. The form was right and the test was red, which is the most
+    # expensive way for a test to be wrong.
+    document = _fresh_document(value.strip())
+    return ("id", document) if document is not None else None
 
 
 def _fresh_value(
-    ir: TestIR, value: str, element: dict[str, Any] | None, url: str
+    ir: TestIR, value: str, fresh: tuple[str, str]
 ) -> str | None:
     """The variable holding a per-run value for `value`, or None to keep it.
 
@@ -1142,18 +1667,12 @@ def _fresh_value(
     `uuid4()` would put two different addresses in fields the form requires to
     match. One name, assigned once, read wherever it was recorded.
     """
-    if not value.strip() or not _SIGNUP_PATH.search(urlparse(url).path or ""):
-        return None
+    kind, expression = fresh
 
-    expression = _fresh_expression(value, element)
-    if expression is None:
-        return None
-
-    for name, existing, recorded in ir.unique_values:
+    for name, _existing, recorded in ir.unique_values:
         if recorded == value:
             return name
 
-    kind = "email" if "@" in expression else "mobile" if "uuid4().int" in expression else "id"
     name = f"fresh_{kind}"
     taken = {existing_name for existing_name, _, _ in ir.unique_values}
     suffix = 2
@@ -1164,6 +1683,388 @@ def _fresh_value(
     ir.unique_values.append((name, expression, value))
     ir.needs_uuid = True
     return name
+
+
+# ---------------------------------------------------------------------------
+# Waiting for what the action actually does
+# ---------------------------------------------------------------------------
+#: Actions that make the application do something, and so are worth waiting on.
+#: A hover asserts nothing and a scroll moves the viewport; neither has an
+#: outcome, and emitting a wait after one only slows the test down.
+_HAS_AN_OUTCOME = {
+    ActionType.CLICK,
+    ActionType.DOUBLE_CLICK,
+    ActionType.CHECK,
+    ActionType.UNCHECK,
+    ActionType.SELECT,
+    ActionType.KEY_PRESS,
+    ActionType.UPLOAD,
+    ActionType.DRAG_DROP,
+}
+
+#: Outcomes `pages/_sync.py` knows how to wait for. Anything else the recorder
+#: learns to report later falls through to watching the DOM settle, which is
+#: never wrong - only sometimes slower than a better answer would have been.
+_OUTCOMES = {
+    "navigated", "dialog_opened", "dialog_closed", "messages", "dom_changed", "quiet",
+}
+
+
+def _through_the_mapping(code: list[str], entities: set) -> list[str]:
+    """Wrap literals naming a substitutable thing, so later steps follow it.
+
+    Only literals that are *exactly* a recorded entity name, and only in steps
+    generated after the step that selects it - the set is empty until then, so
+    the step doing the selecting is never rewritten to translate its own name.
+
+    `instead` returns the recorded value unchanged when nothing was substituted,
+    which is almost always. A run where everything worked reads exactly as it
+    was recorded, and only a run that had to adapt reads differently.
+    """
+    if not entities:
+        return code
+
+    rewritten = []
+    for line in code:
+        for entity in entities:
+            literal = py_str(entity)
+            if literal in line and "instead(" not in line:
+                line = line.replace(literal, f"instead({literal})")
+        rewritten.append(line)
+    return rewritten
+
+
+def _describes(waiting: str, action: dict[str, Any]) -> str:
+    """What the wait is waiting for, in the words a test-case sheet prints."""
+    if "'navigated'" in waiting:
+        destination = action.get("_navigates_to") or (action.get("response") or {}).get("url")
+        return f"Navigates to {_clean_url(str(destination))}" if destination else "Navigates"
+    if "'messages'" in waiting:
+        return "The application answers on screen"
+    if "dialog_opened" in waiting:
+        return "A dialog opens"
+    if "dialog_closed" in waiting:
+        return "The dialog closes"
+    return "The page finishes updating"
+
+
+# ---------------------------------------------------------------------------
+# What the element was, as opposed to how it was found
+# ---------------------------------------------------------------------------
+#: Attributes an application chooses on purpose and a redesign rarely touches.
+#: A `name` is what a form field is called on the wire, a `type` is what it is,
+#: an `href` is where a link goes. Classes are absent on purpose: they are the
+#: one thing a redesign always changes, and they are already carried by the
+#: recorded css selector.
+_STABLE_ATTRIBUTES = (
+    "data-testid", "data-test-id", "data-test", "data-cy",
+    "name", "type", "href", "placeholder", "aria-label",
+)
+
+
+def _describe_element(element: dict[str, Any] | None) -> dict[str, str]:
+    """What the recorder saw the element *be*, for finding it again later.
+
+    Every recorded selector can break at once, and routinely does: a redesign
+    renames one class and takes the css path, the xpath and the nth-child with
+    it in a single commit. Healing then holds four ways of finding an element
+    and no working way at all, which reads in the report as the element having
+    been removed - a far more alarming thing than a stylesheet edit.
+
+    This is what is left when that happens. Not a way of *finding* the element,
+    a description of it: what it is called, what kind of thing it is, what it
+    says. From that a new locator can be built against the page as it stands -
+    and, the part that matters, then checked, because the description also says
+    what a right answer would look like. See `_derived` in the healing template.
+
+    Deliberately small. Everything in it is something a person would use to
+    point the element out across the room, and nothing in it is a position.
+    """
+    element = element or {}
+    attributes = element.get("attributes") or {}
+
+    # `label` rather than `name` for the accessible name, because `name` is also
+    # an HTML attribute and a form field routinely has both. Sharing one key,
+    # the attribute overwrote the accessible name - so a Save button described
+    # itself as "save" and every later comparison was against the wrong fact.
+    described = {
+        "tag": str(element.get("tag") or "").lower(),
+        "role": str(element.get("role") or ""),
+        "label": str(element.get("accessible_name") or "")[:120],
+        "text": str(element.get("text") or "")[:120],
+    }
+    for key in _STABLE_ATTRIBUTES:
+        value = attributes.get(key)
+        if value:
+            described[key] = str(value)[:200]
+
+    return {key: value for key, value in described.items() if value}
+
+
+def _sync_call(ir: TestIR, action: dict[str, Any], kind: ActionType) -> str | None:
+    """The line that waits for what this action was observed to do, if any.
+
+    This replaces the single assumption the generator used to make - that a
+    click either navigates or needs no wait at all - and it replaces it with an
+    observation. The recorder watched what happened: the page went somewhere, a
+    dialog opened, a sentence appeared, the DOM changed, or nothing did. That
+    answer is turned into one call here.
+
+    None means no wait is emitted, and there are two quite different reasons for
+    it. The action was seen to change nothing observable, so there is nothing to
+    wait for and inventing something to wait for would hang. Or the recording
+    predates outcome capture and says nothing either way, in which case the old
+    adjacency rule still applies and the generated test behaves exactly as it
+    always did - a recording made last year must not start waiting on things
+    nobody watched.
+    """
+    if kind not in _HAS_AN_OUTCOME:
+        return None
+
+    observed = str((action.get("response") or {}).get("kind") or "")
+    if observed not in _OUTCOMES:
+        # No observation. Fall back to what the recording *arrangement* implies,
+        # which is all the generator ever had before.
+        observed = "navigated" if action.get("_navigates_to") else ""
+    if not observed or observed == "quiet":
+        return None
+
+    ir.needs_sync = True
+
+    if observed == "navigated":
+        destination = action.get("_navigates_to") or (action.get("response") or {}).get("url")
+        if destination:
+            ir.needs_regex = True
+            arrives = _arrives_at(_clean_url(str(destination)))
+            return f"after(page, 'navigated', url=re.compile({py_str(arrives)}))"
+        # Seen to navigate, nowhere recorded to. An SPA route that leaves no
+        # address behind. "Somewhere other than here" is weaker but still an
+        # observation rather than a guess.
+        return "after(page, 'navigated')"
+
+    if observed == "messages":
+        said = [str(m) for m in (action.get("response") or {}).get("messages") or []]
+        first = next((m.strip() for m in said if m.strip()), "")
+        if first:
+            return f"after(page, 'messages', text={py_str(first[:120])})"
+        return "after(page, 'dom_changed')"
+
+    return f"after(page, {py_str(observed)})"
+
+
+# ---------------------------------------------------------------------------
+# Steps that depend on data or state
+# ---------------------------------------------------------------------------
+def _register_shape(
+    page_spec: PageSpec,
+    decision: Decision | None,
+    root: str,
+    element: dict[str, Any] | None,
+    name: str,
+) -> str | None:
+    """A second locator matching everything of the same shape as this element.
+
+    Only for STATE_DEPENDENT, and only when the recording holds a selector that
+    other elements answered to as well. It is never what the step runs first -
+    the recorded element is - and exists purely so that a refusal has somewhere
+    to go next.
+
+    Returns the property name to read after a refusal, or None when there is
+    nothing comparable and the step therefore has no alternative to offer.
+    """
+    if decision is None or decision.shape is None:
+        return None
+
+    strategy, value = decision.shape
+    try:
+        shape = Selector(strategy=SelectorStrategy(strategy), value=value, unique=False)
+    except ValueError:
+        return None
+
+    tag = str((element or {}).get("tag") or "").lower()
+    expression = locator_expression(shape, root)
+    # `.first` would defeat the whole purpose: this locator exists to be counted
+    # and indexed into, and one element is not a set.
+    expression = expression.removesuffix(".first")
+
+    return page_spec.add(
+        LocatorSpec(
+            name=f"{name}_alternatives"[:MAX_IDENT],
+            expression=expression,
+            strategy=strategy,
+            fragile=True,
+            candidates=[(strategy, expression)],
+            ambiguous=True,
+            tag=tag,
+            role=DataRole.STATE_DEPENDENT.value,
+            alternatives_for=name,
+        )
+    )
+
+
+#: Clicks that could be submitting a form. A click on a text field is somebody
+#: putting the cursor in it, and consuming the renewals there would leave the
+#: actual submission with nothing to retry.
+_SUBMITTING = {"button", "a"}
+_SUBMIT_INPUTS = {"submit", "button", "image"}
+
+
+def _renewals_for(
+    ir: TestIR, page_var: str, element: dict[str, Any] | None
+) -> list[tuple[str, list[tuple[str, str]]]]:
+    """The UNIQUE fields this click is about to submit, grouped by their value.
+
+    Grouped because an address and its confirmation have to keep matching, and
+    two calls to a generator would put two different addresses in fields the
+    form requires to be the same.
+
+    Consumed rather than copied: once a submission has claimed them the next one
+    starts empty, so a two-page wizard does not retry the first page's fields
+    from the second.
+    """
+    element = element or {}
+    tag = str(element.get("tag") or "").lower()
+    input_type = str(element.get("input_type") or "").lower()
+    if tag not in _SUBMITTING and not (tag == "input" and input_type in _SUBMIT_INPUTS):
+        return []
+
+    mine = [entry for entry in ir.pending_renew if entry[0] == page_var]
+    if not mine:
+        return []
+    ir.pending_renew = [entry for entry in ir.pending_renew if entry[0] != page_var]
+
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for _page, locator_name, expression in mine:
+        grouped.setdefault(expression, []).append((_page, locator_name))
+    return list(grouped.items())
+
+
+def _state_call(
+    ir: TestIR,
+    action: dict[str, Any],
+    *,
+    page_var: str,
+    name: str,
+    label: str,
+    sequence: int,
+    among: str | None,
+    renew: list[tuple[str, list[tuple[str, str]]]],
+) -> str:
+    """The generated line for a step whose data or state may have moved on.
+
+    Two shapes, and which one is used says what the step is allowed to vary.
+    `submit` may enter new values into fields the application keeps unique;
+    `one_of` may act on a comparable element instead. Neither may do anything at
+    all unless the application refuses the recorded step first - see
+    pages/_state.py, where every one of those words is enforced.
+    """
+    described = py_str(f"Click {label}"[:80])
+    arrives = ""
+    if action.get("_navigates_to"):
+        ir.needs_regex = True
+        destination = _arrives_at(_clean_url(action["_navigates_to"]))
+        arrives = f", navigates=re.compile({py_str(destination)})"
+
+    if renew:
+        groups = ", ".join(
+            "(lambda: {}, [{}])".format(
+                expression,
+                ", ".join(f"({page}, {py_str(field)})" for page, field in fields),
+            )
+            for expression, fields in renew
+        )
+        return (
+            f"submit({page_var}, {py_str(name)}, step={sequence}, "
+            f"described={described}, renew=[{groups}]{arrives})"
+        )
+
+    among_arg = f", among={py_str(among)}" if among else ""
+
+    # What the recording called the thing this step selects. Handed to `one_of`
+    # so that if a substitute is used, the pair goes into the runtime mapping
+    # and every later step naming the recorded thing names the replacement.
+    entity = _entity_name(action, ir.controls)
+    entity_arg = ""
+    if entity and among:
+        ir.entity_names.add(entity)
+        entity_arg = f", entity={py_str(entity)}"
+
+    return (
+        f"one_of({page_var}, {py_str(name)}, step={sequence}, "
+        f"described={described}{among_arg}{entity_arg}{arrives})"
+    )
+
+
+def _entity_name(action: dict[str, Any], controls: set) -> str:
+    """What the recording called the thing a step selects, if it selects a thing.
+
+    Its accessible name, or its visible text - whichever the recorder captured.
+    That is what an application prints back at you further down a workflow, in a
+    basket line, a confirmation heading, a summary row, so it is the string a
+    later step will be carrying.
+
+    Empty when the element is a *control* rather than the subject of the
+    workflow, and telling those apart matters more than anything else here. A
+    Checkout link sits on the listing, on the basket and on the billing page,
+    and it is repeated in the markup on each - which is exactly the shape of a
+    list of items, and it was being read as one. The generated test then called
+    Checkout the thing it was about, mapped the word "Checkout" through the
+    substitution table, and offered to press a *different* Checkout when the
+    application refused. None of which is what a person means by "try another
+    course".
+
+    The signal is `controls`, worked out across the whole recording: a name that
+    labels clicked elements on more than one page is a control. The thing a
+    workflow is about is chosen once and then referred to; the buttons that move
+    it along recur, and recur under the same name.
+
+    Empty, too, for anything you *type into*. A field is not a choice - there is
+    nothing to choose between, and offering to fill a different one is not a
+    thing anybody means. That was not hypothetical either: on a checkout form
+    the card-holder name box was read as the thing the workflow was about, so
+    the workflow rewound to it, wrote down that "Name on card" had been refused,
+    and replayed the whole purchase to try a different box to type a name into.
+    """
+    element = action.get("element") or {}
+    if str(element.get("tag") or "").lower() in _FIELDS:
+        return ""
+    for key in ("accessible_name", "text"):
+        value = str(element.get(key) or "").strip()
+        if value:
+            return "" if value[:120] in controls else value[:120]
+    return ""
+
+
+#: Elements that hold a value rather than name a thing. A `select` is here with
+#: the rest of them: what a workflow might reasonably vary is which *option* is
+#: picked, never which dropdown is used.
+_FIELDS = frozenset({"input", "textarea", "select"})
+
+
+def _repeated_controls(actions: list[dict[str, Any]]) -> set:
+    """Names that label something clickable on more than one page.
+
+    Checkout, Continue, Next, Submit, Back - whatever this particular
+    application happens to call them, and nothing is assumed about that. The
+    test is only that the same name turned up on more than one address, which a
+    thing being chosen does not do and a control that carries you through a
+    journey always does.
+    """
+    pages_by_name: dict[str, set] = {}
+
+    for action in actions:
+        if ActionType(action["action_type"]) is not ActionType.CLICK:
+            continue
+        element = action.get("element") or {}
+        for key in ("accessible_name", "text"):
+            value = str(element.get(key) or "").strip()[:120]
+            if value:
+                pages_by_name.setdefault(value, set()).add(
+                    _clean_url(str(action.get("url") or ""))
+                )
+                break
+
+    return {name for name, pages in pages_by_name.items() if len(pages) > 1}
 
 
 # Selectors whose value is text a human would recognise, most natural first.

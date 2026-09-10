@@ -362,82 +362,66 @@ def test_an_unknown_provider_names_the_valid_ones(monkeypatch):
 
 def test_a_provider_without_a_key_refuses_to_build(monkeypatch):
     """Better to fail loudly here than to send an unauthenticated request."""
-    from app.ai.gemini import GeminiClient
+    from app.ai.langchain_client import LangChainClient
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
     with pytest.raises(LLMError, match="GEMINI_API_KEY"):
-        GeminiClient()
+        LangChainClient("gemini")
 
 
 # ---------------------------------------------------------------------------
-# Gemini specifics — the parts a fake client cannot cover
+# Provider specifics — the parts a fake client cannot cover
 # ---------------------------------------------------------------------------
-def _gemini_response(**kwargs):
-    """A GenerateContentResponse built from the real SDK types."""
-    from google.genai import types
+def _client(provider: str):
+    from app.ai.langchain_client import LangChainClient
 
-    return types.GenerateContentResponse(**kwargs)
+    return LangChainClient(provider, api_key="test-key")
+
+
+def _reply(**metadata):
+    """A provider's reply, as the message LangChain hands back."""
+    from langchain_core.messages import AIMessage
+
+    return AIMessage(content="", response_metadata=metadata)
 
 
 def test_a_blocked_prompt_is_a_refusal_not_a_crash():
     """Gemini returns HTTP 200 for a safety block, with no text to read."""
-    from google.genai import types
-
-    from app.ai.gemini import _guard_refusal
-
-    response = _gemini_response(
-        prompt_feedback=types.GenerateContentResponsePromptFeedback(
-            block_reason=types.BlockedReason.SAFETY
-        )
-    )
+    reply = _reply(prompt_feedback={"block_reason": "SAFETY"})
 
     with pytest.raises(LLMRefusal, match="declined"):
-        _guard_refusal(response)
+        _client("gemini")._guard_refusal(reply)
 
 
 def test_a_safety_stop_mid_answer_is_a_refusal():
-    from google.genai import types
-
-    from app.ai.gemini import _guard_refusal
-
-    response = _gemini_response(
-        candidates=[types.Candidate(finish_reason=types.FinishReason.SAFETY)]
-    )
-
     with pytest.raises(LLMRefusal):
-        _guard_refusal(response)
+        _client("gemini")._guard_refusal(_reply(finish_reason="SAFETY"))
 
 
 def test_a_normal_stop_is_not_a_refusal():
-    from google.genai import types
-
-    from app.ai.gemini import _guard_refusal
-
-    response = _gemini_response(
-        candidates=[types.Candidate(finish_reason=types.FinishReason.STOP)]
-    )
-
-    _guard_refusal(response)  # must not raise
+    _client("gemini")._guard_refusal(_reply(finish_reason="STOP"))  # must not raise
 
 
 def test_thinking_tokens_are_counted_as_output():
-    """Gemini reports them separately, but they are billed as output."""
-    from google.genai import types
+    """Reported separately by the provider, billed as output, so the ledger
+    prices the total rather than the answer alone."""
+    from langchain_core.messages import AIMessage
 
-    from app.ai.gemini import GeminiClient
-
-    client = GeminiClient(api_key="test-key")
-    response = _gemini_response(
-        usage_metadata=types.GenerateContentResponseUsageMetadata(
-            prompt_token_count=1000, candidates_token_count=200, thoughts_token_count=800
-        )
+    message = AIMessage(
+        content="hi",
+        usage_metadata={
+            "input_tokens": 1000,
+            "output_tokens": 1000,  # 200 answer + 800 thinking
+            "total_tokens": 2000,
+            "output_token_details": {"reasoning": 800},
+        },
     )
 
-    result = client._to_response(response, text="hi", started=0.0)
+    result = _client("gemini")._to_response(message, text="hi", started=0.0)
 
     assert result.input_tokens == 1000
-    assert result.output_tokens == 1000  # 200 answer + 800 thinking
+    assert result.output_tokens == 1000
     assert result.cost_usd > 0
     assert result.provider == "gemini"
 

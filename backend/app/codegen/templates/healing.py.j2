@@ -19,6 +19,7 @@ Healing applies to *driving* the page, never to *observing* it. `unhealed`
 below is how an assertion opts out, and why it has to.
 """
 
+import os
 import warnings
 
 from playwright.sync_api import Locator
@@ -26,7 +27,13 @@ from playwright.sync_api import Locator
 # The first candidate is the one that should work, so it gets a real wait -
 # long enough that a slow page is not mistaken for a broken selector, which
 # would heal to a different element and make things worse rather than better.
-PRIMARY_TIMEOUT_MS = 10_000
+#
+# Kept in step with the action timeout in conftest, and raised with it. At ten
+# seconds against a sixty-second action budget this was the number that decided
+# everything: a page taking twelve seconds to render had its primary selector
+# declared missing and a spare tried instead, so the one guard against healing
+# to the wrong element was spending fifty of its sixty seconds switched off.
+PRIMARY_TIMEOUT_MS = int(os.environ.get("AUTOQA_PRIMARY_TIMEOUT_MS", 20_000))
 
 # By the time a spare is tried the element has already failed to appear once,
 # so the page is loaded and the answer is immediate either way.
@@ -36,6 +43,19 @@ SPARE_TIMEOUT_MS = 2_000
 #: need to be: a Playwright sync page is driven by one thread, and pytest-xdist
 #: parallelises across processes.
 _substitutes_allowed = True
+
+#: Cleared while `every` reads a property, for the same reasons and in the same
+#: way. See `every`.
+_narrowing_allowed = True
+
+#: The element most recently handed to a step. Read only when a step has failed,
+#: to ask the page why that element could not be used.
+_last: dict = {}
+
+
+def last_resolved() -> dict:
+    """The element a failing step was most likely reaching for."""
+    return dict(_last)
 
 
 class Healed(UserWarning):
@@ -73,6 +93,28 @@ def unhealed(page_object: object, name: str) -> Locator:
         return getattr(page_object, name)
     finally:
         _substitutes_allowed = True
+
+
+def every(page_object: object, name: str) -> Locator:
+    """All the elements the locator matches, with the choosing switched off.
+
+    Reading a page-object property normally yields one element - `_narrow` takes
+    the first of them - because that is what every step wants: something to
+    click, fill or assert on.
+
+    `pages/_state.py` is the exception, and the only one. A step that was
+    refused needs the list itself, to try the member beside the one the
+    application would not accept. Healing still runs, so a renamed class still
+    falls through to a recorded alternative; it is only the last step, going
+    from "the elements this finds" to "the element to drive", that is left for
+    the caller to do.
+    """
+    global _narrowing_allowed
+    _narrowing_allowed = False
+    try:
+        return getattr(page_object, name)
+    finally:
+        _narrowing_allowed = True
 
 
 #: A hover that opens a menu opens it at once or not at all. Waiting the full
@@ -172,8 +214,81 @@ def _same_kind(locator: Locator, tag: str) -> bool:
     return str(found).lower() == tag.lower()
 
 
-def heal(name: str, candidates: list, *, tag: str = "") -> Locator:
-    """The first candidate that finds the element.
+#: Only while somebody is watching. Set by the runner for a headed run.
+_WATCHING = os.environ.get("AUTOQA_WATCH") == "1"
+
+#: A glide of 4000px takes about a second in Chromium. Past this the scroll is
+#: costing more than the watcher gets back, so it is left to jump.
+GLIDE_TIMEOUT_MS = 1_500
+
+
+def _glide(locator: Locator) -> Locator:
+    """Bring the element into view gradually, for a run someone is watching.
+
+    Playwright scrolls an element into view before acting on it, and that scroll
+    is a jump: the page is simply somewhere else on the next frame. Watching a
+    long form fill in, the page teleports twice a second and there is no way to
+    tell whether it moved a little or a lot, or which of two similar fields is
+    now under the cursor.
+
+    Neither `slow_mo` nor CSS `scroll-behavior: smooth` fixes it. `slow_mo`
+    pauses *between* Playwright calls and does not touch what happens inside
+    one; the CSS is simply not consulted, because the scroll is driven through
+    the debugger protocol rather than by the page. Measured both ways: one
+    scroll event, straight to the target. The only thing that glides is asking
+    the page to scroll itself before Playwright decides it needs to.
+
+    So that is what this does, and then waits for the scroll to stop moving.
+    Playwright's own scroll then finds the element already in view and does
+    nothing, which is what keeps the two from fighting.
+
+    Every part of it is best-effort. A detached element, a cross-origin frame, a
+    scroll still drifting when the timeout runs out - none of that is a reason
+    to fail a test, because nothing here is what the test is about. On any
+    trouble the element is left exactly as it was and Playwright scrolls it the
+    old way. Headless runs skip it entirely: there is nobody to watch, and this
+    would only make them slower.
+    """
+    # Playwright scrolls before it acts, so this is not what makes an offscreen
+    # element reachable. What it does is put the element on screen *before* the
+    # diagnosis reads the page - otherwise every element below the fold is
+    # reported as outside the viewport, which is true and useless.
+    if not _WATCHING:
+        try:
+            locator.first.scroll_into_view_if_needed(timeout=SPARE_TIMEOUT_MS)
+        except Exception:  # noqa: BLE001 - unreachable is the next step's news
+            pass
+        return locator
+
+    try:
+        locator.first.evaluate(
+            "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})",
+            timeout=GLIDE_TIMEOUT_MS,
+        )
+        # Settled = two polls at the same offset. Waiting on a fixed duration
+        # instead would either cut a long scroll short or idle after a short one.
+        locator.page.wait_for_function(
+            "() => { const y = Math.round(window.scrollY);"
+            "  if (window.__autoqa_y === y) return true;"
+            "  window.__autoqa_y = y; return false; }",
+            polling=120,
+            timeout=GLIDE_TIMEOUT_MS,
+        )
+    except Exception:
+        pass  # Not being able to scroll nicely is never a test result.
+
+    return locator
+
+
+def heal(
+    name: str,
+    candidates: list,
+    *,
+    tag: str = "",
+    describes: dict | None = None,
+    inside=None,
+) -> Locator:
+    """The first candidate that finds the element, brought into view.
 
     `candidates` is [(strategy, () -> Locator), ...], best first. The callables
     are not evaluated until they are needed, so the common case - the first one
@@ -199,13 +314,54 @@ def heal(name: str, candidates: list, *, tag: str = "") -> Locator:
     The primary is exempt: it is what the recording chose, and if it matches
     something unexpected there is nothing better to fall back on. Only the
     guesses are held to this.
+
+    A candidate that is on the page but cannot be seen is kept only as a
+    fallback: where a site ships a desktop and a mobile copy of the same link,
+    the recorded way often matches the hidden one, and another recorded way
+    matches the one on screen.
+
+    Whichever candidate wins is then glided into view, so a watched run scrolls
+    rather than teleports. Finding the element and showing it are separate jobs
+    and `_glide` cannot change which element was found - it only moves the page.
     """
+    found = _glide(
+        _find(name, candidates, tag=tag, describes=describes or {}, inside=inside)
+    )
+
+    # Remembered so that if the step now fails, the page can be asked why *this*
+    # element could not be used - see `diagnose`, and `_state_awareness` in
+    # conftest, which is where the answer is read.
+    #
+    # It is kept here rather than attached to the exception because Playwright
+    # raises its own errors and nothing may be added to them: an earlier attempt
+    # read an attribute off the exception that nothing ever set, so the whole
+    # diagnosis never ran and every failure reported "not visible" as before.
+    _last.update(name=name, locator=found, describes=describes or {}, inside=inside)
+    return found
+
+
+def _find(
+    name: str,
+    candidates: list,
+    *,
+    tag: str = "",
+    describes: dict | None = None,
+    inside=None,
+) -> Locator:
+    """Which element `heal` settled on. See its docstring."""
     if not _substitutes_allowed:
         # Reached through `unhealed`. No spares, and no wait either: the
         # `expect` around this does its own waiting and retrying, and waiting
         # here for an element the test expects to be *gone* would spend
         # PRIMARY_TIMEOUT_MS on every run to learn what it already knew.
-        return candidates[0][1]()
+        # `.first` because a locator left matching a whole set - see
+        # `pages/_state.py` - would make `expect` raise on the count rather than
+        # answer the question, which was about the element and not about which
+        # of them.
+        return candidates[0][1]().first
+
+    on_page: Locator | None = None
+    on_page_was = (0, "", False)
 
     for index, (strategy, find) in enumerate(candidates):
         locator = find()
@@ -220,16 +376,544 @@ def heal(name: str, candidates: list, *, tag: str = "") -> Locator:
         if index and tag and not _same_kind(locator, tag):
             continue
 
-        if index:
-            warnings.warn(
-                f"{name}: could not be found by {candidates[0][0]} - used "
-                f"{strategy} instead. The page has changed.",
-                Healed,
-                stacklevel=2,
-            )
-        return locator
+        if not _narrowing_allowed:
+            # Reached through `every`. The caller wants the list, not a member
+            # of it, and will choose for itself.
+            found, ambiguous = locator, False
+        else:
+            found, ambiguous = _narrow(locator)
 
-    # Nothing matched. Return the primary rather than raising here, so the
-    # failure comes from the action the test was actually performing and names
-    # the selector you would expect to see.
+        # Being in the page is not the same as being on it. Sites carry a
+        # desktop and a mobile navigation at once and hide one of them, so a
+        # recorded way of finding a link matches the copy nobody can click.
+        # Sixty seconds spent on a site that was working perfectly:
+        #
+        #     waiting for get_by_text("Online Courses", exact=True).first
+        #       - locator resolved to <a href="/online-cle">
+        #       - element is not visible          (117 times, then red)
+        #
+        # The other recorded ways pointed at the copy on screen the whole time.
+        # So the first candidate that is on the page is kept as a fallback, and
+        # the search goes on for one that can actually be seen.
+        if on_page is None:
+            on_page, on_page_was = found, (index, strategy, ambiguous)
+
+        if not _can_be_seen(found):
+            continue
+
+        _announce(
+            name,
+            candidates,
+            index,
+            strategy,
+            ambiguous,
+            hidden=found is not on_page,
+        )
+        return found
+
+    # Nothing visible. The element that is there is still the best answer: it
+    # may be mid-animation, or genuinely invisible by design - a styled
+    # checkbox is 0x0 and every recorded way of finding it says so.
+    if on_page is not None:
+        _announce(name, candidates, *on_page_was, hidden=False)
+        return on_page
+
+    # Every recorded way of finding it has failed. Before giving up, ask whether
+    # the element is still *there* under a description rather than a selector -
+    # a redesign renames one class and takes the css, the xpath and the
+    # nth-child with it in a single commit, and the element itself never moved.
+    derived = _derived(candidates[0][1](), describes or {}, tag, inside)
+    if derived is not None:
+        found, how, confidence = derived
+        warnings.warn(
+            f"{name}: no recorded way of finding it matches any more. Found it "
+            f"by {how} instead, at {confidence:.0%} confidence. The page has "
+            "changed and this locator should be re-recorded.",
+            Healed,
+            stacklevel=3,
+        )
+        return found
+
+    # Nothing matched at all. Return the primary rather than raising here, so
+    # the failure comes from the action the test was actually performing and
+    # names the selector you would expect to see.
     return candidates[0][1]()
+
+
+#: How sure the description has to be before the test drives what it found.
+#:
+#: Below this nothing is touched and the step fails with the evidence, because
+#: the failure mode of guessing is not a red test - it is a green one that drove
+#: the wrong control. Every point is earned by agreement between independent
+#: facts about the element, never by similarity of appearance.
+CONFIDENT = 0.95
+
+
+def _derived(anchor: Locator, describes: dict, tag: str, inside=None):
+    """Find the element again from what it *is*, when every selector has failed.
+
+    `inside` is the frame the element was recorded in, when it was recorded in
+    one. Everything below then searches that frame and nothing else, which is
+    not a refinement - it is the difference between healing and driving the
+    wrong control. A payment frame and the page around it both have a Submit
+    button; a search that widened to the page whenever the frame stopped
+    matching would find the page's one and press it, and the report would say
+    the test passed.
+
+    The rule runs both ways. An element recorded on the page is searched for on
+    the page, and a frame's copy of it is never a candidate.
+
+    The last resort, and the only part of healing that invents a way of looking
+    rather than replaying one the recorder captured - so it is held to the
+    strictest standard in the file. A candidate is built from one fact about the
+    element and then scored on how many *other* recorded facts it also
+    satisfies. One match is a coincidence; a button with the same role, the same
+    accessible name and the same test id is the button.
+
+    Returns (locator, how it was found, confidence), or None - which is a
+    perfectly good answer and the common one. The element really has gone, and
+    saying so plainly is the whole job.
+
+    Ordered by what a fact is worth. A test id is chosen by a developer to
+    survive redesigns and means nothing else on the page. A role and an
+    accessible name are what the element is to anybody using it, including
+    somebody using a screen reader. Text comes last of the useful ones, because
+    text is translated, truncated and rewritten. Nothing positional appears at
+    all: a path through the tree is the thing that just broke.
+    """
+    if not describes:
+        return None
+
+    # The frame, if the element was recorded in one; otherwise the page.
+    root = inside() if inside is not None else anchor.page
+    for how, build in _ways_to_look(root, describes):
+        try:
+            candidate = build()
+            if not candidate.count():
+                continue
+        except Exception:  # noqa: BLE001 - a selector the page dislikes
+            continue
+
+        confidence = _agrees(candidate.first, describes, tag)
+        if confidence >= CONFIDENT:
+            return candidate.first, how, confidence
+    return None
+
+
+#: Attributes a developer sets on purpose for exactly this.
+_TEST_IDS = ("data-testid", "data-test-id", "data-test", "data-cy")
+
+#: Elements whose `name` attribute identifies them rather than describing them.
+_FORM_CONTROLS = ("input", "select", "textarea")
+
+
+def _ways_to_look(root, describes: dict) -> list:
+    """(how, () -> Locator) for each fact worth searching on, best first.
+
+    `root` is a page or a frame locator. Both answer the same handful of
+    methods, so nothing below needs to know which it has - and nothing below
+    can accidentally reach outside it.
+    """
+    ways = []
+
+    for key in _TEST_IDS:
+        value = describes.get(key)
+        if value:
+            ways.append((f"its {key}", lambda v=value, k=key: root.locator(f"[{k}={v!r}]")))
+
+    role, label = describes.get("role"), describes.get("label")
+    if role and label:
+        ways.append((
+            "its role and accessible name",
+            lambda r=role, n=label: root.get_by_role(r, name=n, exact=True),
+        ))
+    if label:
+        ways.append(("its label", lambda n=label: root.get_by_label(n, exact=True)))
+
+    placeholder = describes.get("placeholder")
+    if placeholder:
+        ways.append((
+            "its placeholder",
+            lambda v=placeholder: root.get_by_placeholder(v, exact=True),
+        ))
+
+    field = describes.get("name")
+    if field and describes.get("tag") in _FORM_CONTROLS:
+        ways.append(("its form name", lambda v=field: root.locator(f"[name={v!r}]")))
+
+    href = describes.get("href")
+    if href:
+        ways.append(("where it links to", lambda v=href: root.locator(f"[href={v!r}]")))
+
+    text = describes.get("text")
+    if text:
+        ways.append(("its text", lambda v=text: root.get_by_text(v, exact=True)))
+
+    return ways
+
+
+def _agrees(candidate: Locator, describes: dict, tag: str) -> float:
+    """How much of the recorded description this element still satisfies.
+
+    Read in one round trip, because the alternative is a dozen and this runs on
+    a page that has already gone wrong.
+
+    Scored as a share of the facts that were *checkable*, so an element the
+    recorder knew three things about is not marked down against one it knew six
+    about. The tag is a gate rather than a fact: a different kind of element is
+    not the same element however much else agrees, which is the rule
+    `_same_kind` already applies to recorded spares.
+    """
+    try:
+        actual = candidate.evaluate(
+            """(el) => ({
+                tag: el.tagName.toLowerCase(),
+                role: el.getAttribute('role') || '',
+                name: (el.getAttribute('aria-label') || el.innerText || '').trim(),
+                text: (el.innerText || '').trim(),
+                testid: el.getAttribute('data-testid') || el.getAttribute('data-test-id')
+                        || el.getAttribute('data-test') || el.getAttribute('data-cy') || '',
+                nameAttr: el.getAttribute('name') || '',
+                type: el.getAttribute('type') || '',
+                href: el.getAttribute('href') || '',
+                placeholder: el.getAttribute('placeholder') || '',
+            })""",
+            timeout=SPARE_TIMEOUT_MS,
+        )
+    except Exception:  # noqa: BLE001 - unreadable is not agreement
+        return 0.0
+
+    if tag and str(actual.get("tag") or "").lower() != tag.lower():
+        return 0.0
+
+    facts = [
+        ("label", actual.get("name")),
+        ("text", actual.get("text")),
+        ("type", actual.get("type")),
+        ("href", actual.get("href")),
+        ("placeholder", actual.get("placeholder")),
+    ]
+    for key in _TEST_IDS:
+        facts.append((key, actual.get("testid")))
+    if describes.get("tag") in _FORM_CONTROLS:
+        facts.append(("name", actual.get("nameAttr")))
+
+    checkable = agreed = 0
+    for key, found in facts:
+        wanted = describes.get(key)
+        if not wanted:
+            continue
+        checkable += 1
+        agreed += 1 if str(found or "").strip()[:120] == str(wanted).strip()[:120] else 0
+
+    # An implicit role - a <button> is a button without saying so - is agreement
+    # the attribute read above cannot see, so it is counted separately and only
+    # when the recording knew a role to compare against.
+    wanted_role = describes.get("role")
+    if wanted_role:
+        checkable += 1
+        found_role = str(actual.get("role") or "")
+        agreed += 1 if found_role in ("", wanted_role) else 0
+
+    return (agreed / checkable) if checkable else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Why the element could not be reached
+# ---------------------------------------------------------------------------
+#: The answers this can give, and the only ones. Reported verbatim so the
+#: backend can classify a run without re-reading a traceback, and so a person
+#: opening the failure is told what happened rather than that something did.
+#:
+#: "Not visible" was the whole vocabulary before this. It covered an element
+#: still loading, one scrolled off the screen, one under a cookie banner and one
+#: that had genuinely been deleted - four different problems, three of them
+#: nobody's fault, reported identically and all of them as the test's fault.
+ELEMENT_REMOVED = "ELEMENT_REMOVED"
+ELEMENT_HIDDEN = "ELEMENT_HIDDEN"
+ELEMENT_OUTSIDE_VIEWPORT = "ELEMENT_OUTSIDE_VIEWPORT"
+ELEMENT_BLOCKED = "ELEMENT_BLOCKED"
+ELEMENT_DISABLED = "ELEMENT_DISABLED"
+ELEMENT_NOT_READY = "ELEMENT_NOT_READY"
+PAGE_NOT_READY = "PAGE_NOT_READY"
+ELEMENT_IN_IFRAME = "ELEMENT_IN_IFRAME"
+FRAME_NOT_FOUND = "FRAME_NOT_FOUND"
+FRAME_NOT_READY = "FRAME_NOT_READY"
+TARGET_NOT_FOUND_IN_FRAME = "TARGET_NOT_FOUND_IN_FRAME"
+TARGET_FOUND_IN_WRONG_FRAME = "TARGET_FOUND_IN_WRONG_FRAME"
+CROSS_ORIGIN_FRAME_UNAVAILABLE = "CROSS_ORIGIN_FRAME_UNAVAILABLE"
+
+
+def diagnose(page, locator: Locator, describes: dict | None = None, inside=None) -> tuple:
+    """Why this element cannot be used, and the evidence for saying so.
+
+    Returns (code, sentence). Asked only once a step has already failed, so it
+    can afford to look properly - and it is worth looking, because the four most
+    common answers call for four different things from whoever reads the report:
+    wait longer, scroll, dismiss the thing on top, or fix the application.
+
+    Ordered from the cheapest question to the most specific, and every one of
+    them is asked of the browser rather than of a list of sites. Nothing here
+    knows what a cookie banner is; it knows that something is on top of the
+    element the test wanted, and it says which something.
+    """
+    try:
+        if page.evaluate("() => document.readyState") != "complete":
+            return PAGE_NOT_READY, "the page had not finished loading"
+    except Exception:  # noqa: BLE001 - mid-navigation is its own answer
+        return PAGE_NOT_READY, "the page was still navigating"
+
+    # An element recorded inside a frame has two ways to go missing, and they
+    # call for completely different fixes: the frame is not there, or the frame
+    # is there and the element is not. Reporting both as "element not visible"
+    # sends somebody looking in the wrong document.
+    if inside is not None:
+        frame = _frame_state(page, inside)
+        if frame is not None:
+            return frame
+
+    try:
+        count = locator.count()
+    except Exception:  # noqa: BLE001 - see above
+        return PAGE_NOT_READY, "the page changed while the element was being looked for"
+
+    if not count:
+        if inside is not None:
+            elsewhere = _in_a_frame(page, describes or {}, skip=inside)
+            if elsewhere:
+                return TARGET_FOUND_IN_WRONG_FRAME, (
+                    f"it was not in the frame it was recorded in, but {elsewhere}"
+                )
+            return TARGET_NOT_FOUND_IN_FRAME, (
+                "the frame is there, but nothing in it matches the element any more"
+            )
+
+        found_in = _in_a_frame(page, describes or {})
+        if found_in:
+            return ELEMENT_IN_IFRAME, f"it was not on the page, but {found_in}"
+        return ELEMENT_REMOVED, "nothing on the page matches it any more"
+
+    return _why_unusable(locator.first)
+
+
+def _why_unusable(element: Locator) -> tuple:
+    """The element is there. Read the page to find out why it cannot be used.
+
+    One round trip, because this runs on a page that has already gone wrong and
+    a dozen would be slower than the failure it is explaining.
+
+    `elementFromPoint` is the part worth knowing about: it asks the browser what
+    a person clicking at the element's own centre would actually hit. If the
+    answer is something that is not the element and does not contain it, then
+    something is on top - and the browser will name it, which is a far better
+    report than "not visible" and needs no list of consent-banner vendors to
+    produce.
+    """
+    try:
+        seen = element.evaluate(
+            """(el) => {
+                const box = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                const centre = {
+                    x: box.left + box.width / 2,
+                    y: box.top + box.height / 2,
+                };
+                const onTop = (box.width && box.height
+                               && centre.x >= 0 && centre.y >= 0
+                               && centre.x <= innerWidth && centre.y <= innerHeight)
+                    ? document.elementFromPoint(centre.x, centre.y) : null;
+                const covering = onTop && onTop !== el && !el.contains(onTop)
+                                 && !onTop.contains(el) ? onTop : null;
+                return {
+                    width: box.width,
+                    height: box.height,
+                    display: style.display,
+                    visibility: style.visibility,
+                    opacity: style.opacity,
+                    above: box.bottom < 0,
+                    below: box.top > innerHeight,
+                    aside: box.right < 0 || box.left > innerWidth,
+                    disabled: !!(el.disabled || el.getAttribute('aria-disabled') === 'true'),
+                    covering: covering ? {
+                        tag: covering.tagName.toLowerCase(),
+                        id: covering.id || '',
+                        cls: (covering.className || '').toString().slice(0, 60),
+                        role: covering.getAttribute('role') || '',
+                        text: (covering.innerText || '').trim().slice(0, 60),
+                    } : null,
+                };
+            }""",
+            timeout=SPARE_TIMEOUT_MS,
+        )
+    except Exception:  # noqa: BLE001 - it went while being asked about
+        return ELEMENT_REMOVED, "it disappeared while the page was being read"
+
+    if seen.get("covering"):
+        return ELEMENT_BLOCKED, f"{_name_of(seen['covering'])} was on top of it"
+
+    if seen.get("above") or seen.get("below") or seen.get("aside"):
+        return ELEMENT_OUTSIDE_VIEWPORT, "it was outside the visible part of the page"
+
+    if not seen.get("width") or not seen.get("height"):
+        return ELEMENT_HIDDEN, "it takes up no space on the page"
+
+    if seen.get("display") == "none" or seen.get("visibility") == "hidden":
+        return ELEMENT_HIDDEN, f"it is {seen.get('display')}/{seen.get('visibility')}"
+
+    if str(seen.get("opacity") or "1") == "0":
+        return ELEMENT_HIDDEN, "it is fully transparent"
+
+    if seen.get("disabled"):
+        return ELEMENT_DISABLED, "the application has it disabled"
+
+    return ELEMENT_NOT_READY, "it is on the page but was not usable in time"
+
+
+def _name_of(covering: dict) -> str:
+    """Whatever the thing on top calls itself, in as few words as identify it."""
+    for key, prefix in (("id", "#"), ("role", "role="), ("cls", ".")):
+        value = str(covering.get(key) or "").strip()
+        if value:
+            first = value.split()[0] if key == "cls" else value
+            described = f"<{covering.get('tag')} {prefix}{first}>"
+            break
+    else:
+        described = f"<{covering.get('tag')}>"
+
+    text = str(covering.get("text") or "").strip()
+    return f"{described} {text!r}" if text else described
+
+
+def _frame_state(page, inside) -> tuple | None:
+    """Whether the recorded frame is there and usable, or None if it is fine.
+
+    Asked before anything about the element, because an element inside a frame
+    that never loaded is not missing - it is unreachable, and those want
+    different fixes from whoever reads the report.
+
+    A frame that exists but answers nothing is the cross-origin case, and it is
+    reported as exactly that rather than as an empty frame. Playwright drives
+    across an origin boundary perfectly well; it is *reading* across one that
+    browsers forbid, and a report that says so saves somebody an afternoon.
+    """
+    try:
+        frame = inside()
+    except Exception:  # noqa: BLE001 - the expression itself could not be built
+        return FRAME_NOT_FOUND, "the frame it was recorded in could not be addressed"
+
+    try:
+        frame.owner.wait_for(state="attached", timeout=SPARE_TIMEOUT_MS)
+    except Exception:  # noqa: BLE001 - not there, or not there yet
+        return FRAME_NOT_FOUND, "the frame it was recorded in is not on the page"
+
+    try:
+        if not frame.owner.is_visible():
+            return FRAME_NOT_READY, "the frame it was recorded in is on the page but hidden"
+    except Exception:  # noqa: BLE001 - detached between the two questions
+        return FRAME_NOT_READY, "the frame it was recorded in went away while being read"
+
+    try:
+        frame.locator("body, html").first.wait_for(
+            state="attached", timeout=SPARE_TIMEOUT_MS
+        )
+    except Exception:  # noqa: BLE001 - present, unreadable
+        return CROSS_ORIGIN_FRAME_UNAVAILABLE, (
+            "the frame is on the page but its contents could not be read, which "
+            "is what a cross-origin frame that has not finished loading looks like"
+        )
+
+    return None
+
+
+def _in_a_frame(page, describes: dict, skip=None) -> str:
+    """Is the element in some *other* frame than the one expected?
+
+    Reports only, and never reaches in and drives it. Acting on an element in a
+    frame the recording never mentioned would be the test rewriting itself - and
+    a page that shows the same control inside a widget and again on the page is
+    exactly the shape where guessing goes wrong quietly.
+
+    `skip` is the frame the element was supposed to be in, so a search for
+    somewhere *else* does not keep finding home.
+    """
+    text = (describes.get("label") or describes.get("text") or "").strip()
+    if not text:
+        return ""
+
+    expected = ""
+    if skip is not None:
+        try:
+            expected = skip().owner.get_attribute("src") or ""
+        except Exception:  # noqa: BLE001 - unknown, so nothing is skipped
+            expected = ""
+
+    for frame in page.frames:
+        if frame == page.main_frame:
+            continue
+        if expected and expected.split("?")[0] in (frame.url or ""):
+            continue
+        try:
+            if frame.get_by_text(text, exact=True).count():
+                return f"an element with that name is inside the frame at {frame.url[:120]!r}"
+        except Exception:  # noqa: BLE001 - a frame that will not answer
+            continue
+    return ""
+
+
+def _narrow(locator: Locator) -> tuple[Locator, bool]:
+    """One element, and whether choosing between several was necessary.
+
+    Narrowing is not optional - the very next call raises without it:
+
+        Locator.click: Error: strict mode violation:
+        get_by_role("link", name="Home", exact=True) resolved to 2 elements
+
+    The recorder saw one match and said so, and the generator only adds
+    `.first` to locators it was told were ambiguous. Pages gain elements - a
+    footer nav, a second "Home" in a breadcrumb - and a selector that was
+    unique on the day is not any more.
+    """
+    if locator.count() > 1:
+        return locator.first, True
+    return locator, False
+
+
+def _can_be_seen(locator: Locator) -> bool:
+    """Could a person act on this right now? Asked immediately, never waited on.
+
+    An element on its way in is left to the action that follows, which waits
+    for visibility itself. This only decides whether some *other* recorded way
+    of finding it is worth preferring.
+    """
+    try:
+        return locator.first.is_visible()
+    except Exception:  # noqa: BLE001 - gone between the wait and the question
+        return False
+
+
+def _announce(
+    name: str,
+    candidates: list,
+    index: int,
+    strategy: str,
+    ambiguous: bool,
+    *,
+    hidden: bool,
+) -> None:
+    """Say what was driven, whenever it was not simply the recorded way."""
+    if index:
+        because = "was on the page but not visible" if hidden else "stopped matching"
+        warnings.warn(
+            f"{name}: {candidates[0][0]} {because} - used {strategy} instead. "
+            "The page has changed.",
+            Healed,
+            stacklevel=3,
+        )
+
+    if ambiguous:
+        warnings.warn(
+            f"{name}: matches more than one element now - drove the first. "
+            "Give it an id or a data-testid to be sure of which.",
+            Healed,
+            stacklevel=3,
+        )

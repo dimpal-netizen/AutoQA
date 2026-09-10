@@ -32,9 +32,14 @@ backend/allure-results/
 backend/*.log
 
 # ---- Environment ----
+# Every .env except the checked-in templates. The narrower ".env.*.local" that
+# used to be here left ".env.production" tracked, so the file holding the
+# database password, the signing key and the key that decrypts stored Jira
+# credentials would have gone up with the first `git add -A`.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.production.example
 
 # ---- Node / Next.js (Phase 8) ----
 node_modules/

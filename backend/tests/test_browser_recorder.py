@@ -154,7 +154,13 @@ async def test_interaction_in_the_launched_browser_is_recorded(recording_session
         assert password["selectors"][0]["strategy"] in {"role_name", "label"}
 
         assert by_type[ActionType.SELECT]["payload"] == {"values": ["GB"]}
-        assert [a["sequence"] for a in actions] == list(range(len(actions)))
+        # Unique and ascending, not contiguous. Every document the recorder is
+        # injected into - `about:blank` included - is given its own block of
+        # numbers, so two live pages cannot be handed the same one. See
+        # `_claim_block`; putting the actions in order is the clock's job.
+        sequences = [a["sequence"] for a in actions]
+        assert len(sequences) == len(set(sequences)), "sequences collided"
+        assert sequences == sorted(sequences), "sequences went backwards"
     finally:
         await browser_recorder.close(session_id)
 
@@ -301,3 +307,74 @@ async def test_launching_twice_is_rejected(recording_session) -> None:
             await launch(session_id, project_id)
     finally:
         await browser_recorder.close(session_id)
+
+
+# ---------------------------------------------------------------------------
+# Numbering across pages
+#
+# Sequence is an idempotency key before it is an ordering. Working it out per
+# page from what had been *stored* is right only while one page is live: open a
+# link in a new tab and the new page asks where to continue while the first
+# page's actions are still in its own queue, is told zero, and every action it
+# uploads collides with one already there. `ON CONFLICT DO NOTHING` drops them
+# in silence and the tab contributes nothing to the recording.
+#
+# Observed exactly that way - a new tab uploaded 0, 1, 2 and all three vanished.
+# ---------------------------------------------------------------------------
+def test_the_first_page_of_a_recording_numbers_from_zero(recording_session) -> None:
+    """The common case, and the one worth keeping readable."""
+    session_id, _ = recording_session
+
+    from app.services.browser_recorder import _session_progress
+
+    assert _session_progress(session_id)["nextSequence"] == 0
+
+
+def test_a_second_page_is_given_numbers_the_first_cannot_reach(
+    recording_session,
+) -> None:
+    """Even though the first page has stored nothing yet, which is precisely
+    the moment a new tab asks."""
+    session_id, _ = recording_session
+
+    from app.services.browser_recorder import SEQUENCE_BLOCK, _session_progress
+
+    first = _session_progress(session_id)["nextSequence"]
+    second = _session_progress(session_id)["nextSequence"]
+
+    assert first == 0
+    assert second >= first + SEQUENCE_BLOCK
+
+
+def test_a_backend_restarted_mid_recording_does_not_reissue_numbers(
+    recording_session,
+) -> None:
+    """Whatever is already stored is accounted for before a block is handed
+    out, so the in-process reservation is an optimisation and not the only
+    thing keeping numbers apart."""
+    session_id, _ = recording_session
+
+    from app.services import browser_recorder
+
+    browser_recorder._store_actions(session_id, [{
+        "sequence": 40, "action_type": "click", "timestamp_ms": 10,
+        "url": "https://x.test/", "frame_path": [],
+        "selectors": [{"strategy": "text", "value": "Go"}],
+        "element": {"tag": "button", "attributes": {}}, "payload": {},
+    }])
+    browser_recorder._high_water.clear()          # as if the process restarted
+
+    assert browser_recorder._session_progress(session_id)["nextSequence"] > 40
+
+
+def test_a_finished_recording_releases_its_reservation(recording_session) -> None:
+    session_id, _ = recording_session
+
+    from app.services import browser_recorder
+
+    browser_recorder._session_progress(session_id)
+    assert session_id in browser_recorder._block_start
+
+    browser_recorder._finalise(session_id, None)
+    assert session_id not in browser_recorder._block_start
+    assert session_id not in browser_recorder._high_water

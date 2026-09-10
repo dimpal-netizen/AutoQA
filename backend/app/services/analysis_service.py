@@ -91,6 +91,34 @@ class AnalysisService:
                 f"This test {result.status.value}. Only failures can be analysed."
             )
 
+        screenshot = self._screenshot_for(result)
+
+        # Nothing to reason from. A result can arrive like this when the run
+        # never finished: the rows written while pytest streams carry a status
+        # and nothing else, and it is the JUnit report at the end that fills in
+        # the duration, the traceback and the screenshot. Kill the run - a
+        # timeout, a Stop, a restart - and those rows stay as they were.
+        #
+        # Asked to explain one anyway, the model did the only thing it could and
+        # described the absence:
+        #
+        #     "The test failed with no recorded error message or traceback
+        #      information, and no screenshot was provided to show the page
+        #      state at the moment of failure."
+        #
+        # - laid out as Expected versus Actual, filed under "Environment", at
+        # 30% confidence. It reads like a diagnosis and contains none, and it
+        # cost a request to produce. Refusing says the same thing honestly and
+        # names the one action that helps.
+        if not (result.error_message or result.stack_trace or screenshot):
+            raise ValidationError(
+                "There is nothing to explain this failure with: no error, no "
+                "traceback and no screenshot were recorded for it. That usually "
+                "means the run did not finish - it timed out, was stopped, or "
+                "the server restarted while it was going. Run the test again "
+                "and analyse the result of that."
+            )
+
         self._locate_failure(result)
 
         outcome = analyse(
@@ -101,7 +129,7 @@ class AnalysisService:
             siblings=self.results.list_for_run(result.run_id),
             steps=self._steps_for(result),
             base_url=run.project.base_url if run.project else None,
-            screenshot=self._screenshot_for(result),
+            screenshot=screenshot,
         )
         if outcome.skipped:
             raise ValidationError(outcome.skipped)
