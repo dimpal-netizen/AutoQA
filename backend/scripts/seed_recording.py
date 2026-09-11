@@ -6,7 +6,7 @@ it drives exactly the same endpoints, in the same order, with the same payloads.
     python scripts/seed_recording.py
 
 Optional:
-    --api      http://localhost:4000/api/v1
+    --api      http://localhost:5022/api/v1
     --email / --password    reuse an existing account instead of creating one
 """
 
@@ -46,7 +46,7 @@ def call(url: str, payload: dict | None = None, token: str | None = None) -> dic
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--api", default="http://localhost:4000/api/v1")
+    parser.add_argument("--api", default="http://localhost:5022/api/v1")
     parser.add_argument("--email")
     parser.add_argument("--password", default="supersecret123")
     args = parser.parse_args()
