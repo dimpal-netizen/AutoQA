@@ -47,6 +47,29 @@ ARTIFACT_TYPES: dict[str, ArtifactType] = {
 }
 
 
+def has_display() -> bool:
+    """Is there a screen a headed browser could open a window on?
+
+    The web app asks for every run to be watched, which is right on a laptop
+    and impossible on a server: there, a headed browser dies at once with
+    "Missing X server or $DISPLAY", and the run fails before its first test.
+
+    On Linux the answer is not just whether DISPLAY is set - the image sets it
+    to :99 unconditionally and only starts an Xvfb there when asked to. So the
+    X socket for that display is what is checked, the same file the entrypoint
+    waits for. Windows and macOS always have a screen.
+    """
+    if sys.platform != "linux":
+        return True
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return True
+    display = os.environ.get("DISPLAY", "")
+    match = re.match(r"^:(\d+)", display)
+    if not match:
+        return False
+    return Path(f"/tmp/.X11-unix/X{match.group(1)}").exists()
+
+
 @dataclass
 class CollectedArtifact:
     type: ArtifactType

@@ -14,6 +14,7 @@ from app.schemas.recording import (
     RecordedActionRead,
     RecordedActionUpdate,
     RecordingLaunch,
+    RecordingProgress,
     RecordingSessionCreate,
     RecordingSessionDetail,
     RecordingSessionLive,
@@ -110,6 +111,19 @@ def upload_actions(
     extension can safely retry a batch after a dropped connection.
     """
     return RecordingService(db).add_actions(session_id, batch, user)
+
+
+@router.get("/recordings/{session_id}/progress", response_model=RecordingProgress)
+def recording_progress(
+    session_id: int, db: DbSession, user: CurrentUser
+) -> RecordingProgress:
+    """Where the recording is up to.
+
+    The extension asks this whenever a page it is recording (re)loads, so a
+    new document continues the sequence numbers instead of starting again at
+    zero and colliding with what is already stored.
+    """
+    return RecordingService(db).progress(session_id, user)
 
 
 @router.post("/recordings/{session_id}/stop", response_model=RecordingSessionRead)

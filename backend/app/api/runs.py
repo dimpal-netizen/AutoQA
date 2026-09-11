@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import mimetypes
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DbSession, require_role
 from app.core.config import settings
 from app.models.enums import UserRole
 from app.repositories.test_run_repo import ArtifactRepository, TestResultRepository
+from app.runner.executor import has_display
 from app.schemas.test_run import (
     ResultDetail,
     ResultRead,
@@ -24,6 +27,39 @@ from app.services.exceptions import NotFound
 from app.services.execution_service import ExecutionService
 
 router = APIRouter(tags=["runs"])
+
+
+class RunCapabilities(BaseModel):
+    #: Can a run be watched live here? True on a desktop, false on a server
+    #: with no screen - where every run goes headless and is watched
+    #: afterwards through its video and trace instead.
+    can_watch: bool
+    #: Where the web app can show the browser while it runs: the server's
+    #: screen, streamed by noVNC. None on a desktop - the window is right
+    #: there - and on a server without the virtual display.
+    watch_url: str | None = None
+
+
+#: The noVNC page, as nginx serves it. Relative, so it lands on whatever
+#: host the web app is on. `view_only` because tests are automated and a
+#: stray click would only interfere; `resize=scale` fits the 1920x1080
+#: virtual screen into the panel.
+NOVNC_PATH = "/record/vnc.html?autoconnect=true&resize=scale&view_only=true"
+
+
+def watch_url() -> str | None:
+    if settings.WATCH_URL:
+        return settings.WATCH_URL
+    # The virtual display exists only in the container, which is Linux; a
+    # developer's own screen has no noVNC in front of it and needs none.
+    if sys.platform == "linux" and has_display():
+        return NOVNC_PATH
+    return None
+
+
+@router.get("/runs/capabilities", response_model=RunCapabilities)
+def run_capabilities(user: CurrentUser) -> RunCapabilities:  # noqa: ARG001 - signed in only
+    return RunCapabilities(can_watch=has_display(), watch_url=watch_url())
 
 
 @router.post(

@@ -749,3 +749,53 @@ def test_a_prefetch_that_could_not_connect_is_still_reported():
     assert not _is_cancelled_prefetch(
         "https://x.test/page?_rsc=abc", {}, "net::ERR_CONNECTION_REFUSED"
     )
+
+
+# ---------------------------------------------------------------------------
+# Watching needs a screen
+# ---------------------------------------------------------------------------
+def test_a_desktop_always_has_a_display(monkeypatch):
+    from app.runner import executor
+
+    monkeypatch.setattr(executor.sys, "platform", "win32")
+    assert executor.has_display() is True
+
+
+def test_a_server_without_an_x_socket_has_no_display(monkeypatch, tmp_path: Path):
+    """The image sets DISPLAY=:99 whether or not Xvfb was started, so the
+    variable alone proves nothing - the socket is what is checked."""
+    from app.runner import executor
+
+    monkeypatch.setattr(executor.sys, "platform", "linux")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setattr(executor.Path, "exists", lambda self: False)
+    assert executor.has_display() is False
+
+    monkeypatch.setattr(executor.Path, "exists", lambda self: str(self).endswith("X99"))
+    assert executor.has_display() is True
+
+    monkeypatch.delenv("DISPLAY")
+    assert executor.has_display() is False
+
+
+def test_watch_url_is_the_novnc_page_only_where_a_virtual_screen_runs(monkeypatch):
+    """A desktop shows nothing - the window is right there. A Linux server with
+    Xvfb up shows noVNC, relative to the site. WATCH_URL overrides both."""
+    from app.api import runs
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "WATCH_URL", "")
+    monkeypatch.setattr(runs.sys, "platform", "win32")
+    assert runs.watch_url() is None
+
+    monkeypatch.setattr(runs.sys, "platform", "linux")
+    monkeypatch.setattr(runs, "has_display", lambda: False)
+    assert runs.watch_url() is None
+
+    monkeypatch.setattr(runs, "has_display", lambda: True)
+    assert runs.watch_url() == runs.NOVNC_PATH
+    assert runs.NOVNC_PATH.startswith("/record/vnc.html")
+
+    monkeypatch.setattr(settings, "WATCH_URL", "https://screens.example.com/vnc.html")
+    assert runs.watch_url() == "https://screens.example.com/vnc.html"

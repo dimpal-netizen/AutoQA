@@ -16,6 +16,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Video,
 } from "lucide-react";
 import { api, downloadReport } from "@/lib/api";
 import {
@@ -87,6 +88,31 @@ export function RunPanel({
   const { confirm, dialog } = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TestRun[]>([]);
+  // Whether a window can open where the tests run. On a server there is no
+  // screen: the run goes headless and is watched afterwards through its
+  // video and trace, and the label should not promise otherwise. Assumed
+  // true until the server says - the common case, and the label it had.
+  const [canWatch, setCanWatch] = useState(true);
+  // On a server the window opens on a virtual screen, and this is where the
+  // web app can show that screen - noVNC, served by nginx. Null where there
+  // is nothing to show: a desktop, where the window is right there.
+  const [watchUrl, setWatchUrl] = useState<string | null>(null);
+  const [watching, setWatching] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.runs
+      .capabilities()
+      .then((caps) => {
+        if (cancelled) return;
+        setCanWatch(caps.can_watch);
+        setWatchUrl(caps.watch_url);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Held in a ref so the polling effect doesn't restart on every tick.
   const runId = run?.id ?? null;
@@ -298,13 +324,30 @@ export function RunPanel({
 
           <span
             className="ml-1 flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground"
-            title="A real browser opens and steps through one action at a time"
+            title={
+              canWatch
+                ? "A real browser opens and steps through one action at a time"
+                : "Runs on the server in the background. Every test keeps a video, screenshots and a trace to review afterwards."
+            }
           >
-            <Eye className="size-4" />
-            Watch it run
+            {canWatch ? <Eye className="size-4" /> : <Video className="size-4" />}
+            {canWatch ? "Watch it run" : "Recorded on video"}
           </span>
 
           <div className="ml-auto flex items-center gap-2">
+            {/* The server's screen, shown here. Only while something is
+                running on it - an idle screen is a grey rectangle. */}
+            {active && watchUrl && (
+              <Button
+                variant={watching ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => setWatching((v) => !v)}
+                title="See the browser running the tests on the server, live"
+              >
+                <Eye />
+                {watching ? "Hide live view" : "Watch live"}
+              </Button>
+            )}
             {run && !active && (
               <Button
                 variant="outline"
@@ -385,6 +428,8 @@ export function RunPanel({
         )}
         {error && <Alert>{error}</Alert>}
 
+        {active && watching && watchUrl && <LiveView url={watchUrl} />}
+
         {run && (
           <div className="flex flex-wrap items-center gap-2">
             <div className="min-w-0 flex-1">
@@ -452,6 +497,47 @@ export function RunPanel({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** The server's screen while a run executes on it.
+ *
+ *  A run on a server opens its browser on a virtual display nobody is in
+ *  front of. noVNC streams that display over a WebSocket and draws it on a
+ *  canvas; this is that page, in a frame, on the same origin as the app so
+ *  nginx's password for it is asked once and remembered.
+ *
+ *  It is the same thing every cloud testing service shows: the browser runs
+ *  over there, and you watch it here. View only - the tests are automated,
+ *  and a click into the picture would only get in their way. */
+function LiveView({ url }: { url: string }) {
+  const src = url.startsWith("/") ? `${window.location.origin}${url}` : url;
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-black shadow-md">
+      <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
+        <LiveDot className="text-destructive" />
+        Live — the browser running on the server
+        <a
+          href={src}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="ml-auto text-primary underline-offset-4 hover:underline"
+        >
+          Open in a new tab
+        </a>
+      </div>
+      <iframe
+        src={src}
+        title="Live view of the test run"
+        className="block w-full"
+        style={{ aspectRatio: "16 / 9", minHeight: 320 }}
+        allow="fullscreen"
+      />
+      <p className="border-t border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
+        If it asks for a password, it is the one set for the recording screen on
+        the server. A grey screen means nothing is open on it yet.
+      </p>
+    </div>
   );
 }
 

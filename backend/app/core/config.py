@@ -133,6 +133,20 @@ class Settings(BaseSettings):
     # pydantic-settings tries to JSON-parse list-typed fields, which chokes on "a,b".
     DEFAULT_BROWSERS: str = "chromium,firefox,webkit"
 
+    # --- Watching runs ---
+    # Where the web app shows the server's screen while a run executes. Empty
+    # means: work it out. On a server with the virtual display running
+    # (AUTOQA_VIRTUAL_DISPLAY=1) it is the noVNC page nginx serves under
+    # /record/, relative to the site; anywhere else there is nothing to show
+    # and the button stays hidden. Set it to override - an absolute URL when
+    # the screen is served from another host.
+    WATCH_URL: str = ""
+
+    # --- Browser extension ---
+    # Source of the Chrome extension the API packages for download. Relative
+    # to backend/, like the other paths; in the image it is /app/extension.
+    EXTENSION_PATH: str = "../extension"
+
     # --- CORS (Phase 8) ---
     CORS_ORIGINS: str = "http://localhost:5021"
 
@@ -191,6 +205,11 @@ class Settings(BaseSettings):
     def generated_dir(self) -> Path:
         """Absolute path where generated scripts land for editing in VS Code."""
         return self._resolve(self.GENERATED_PATH)
+
+    @property
+    def extension_dir(self) -> Path:
+        """Absolute path of the extension source the API zips up on request."""
+        return self._resolve(self.EXTENSION_PATH)
 
     @property
     def is_production(self) -> bool:

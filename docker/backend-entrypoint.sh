@@ -16,8 +16,11 @@ log() { echo "[autoqa] $*"; }
 # no screen for it to open on. Xvfb provides one, x11vnc publishes it, and
 # noVNC serves it to a browser tab.
 #
-# Set AUTOQA_VIRTUAL_DISPLAY=0 on a deployment that only ever runs suites that
-# were recorded somewhere else.
+# Recording happens in the tester's own Chrome through the AutoQA Recorder
+# extension and needs none of this. Test runs do: with a screen here they open
+# a real browser window on it, and the web app shows that screen live behind
+# "Watch live" on a run. Set AUTOQA_VIRTUAL_DISPLAY=0 to run tests headless
+# instead - every test still keeps its video, screenshots and trace.
 # ---------------------------------------------------------------------------
 if [ "${AUTOQA_VIRTUAL_DISPLAY:-1}" = "1" ]; then
     screen="${AUTOQA_SCREEN:-1920x1080x24}"

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Circle, ExternalLink, Loader2, Square } from "lucide-react";
 import { api } from "@/lib/api";
+import { extension } from "@/lib/extension";
 import type { Project, RecordingSession } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { LiveDot } from "@/components/ui/badge";
@@ -15,11 +16,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ExtensionSetup, useExtension } from "@/components/extension-setup";
 
 /** Enter a URL, get a browser window with the recorder already running.
  *
- *  The recorder cannot be injected across origins from this page, so the
- *  backend launches Chromium with Playwright and injects it from outside. */
+ *  The recorder cannot be injected across origins from this page, so
+ *  something outside the page has to do it. Two things can:
+ *
+ *  - The AutoQA Recorder extension, in the tester's own Chrome. This is how a
+ *    deployed AutoQA records: the tab opens on the tester's machine, and the
+ *    server runs nothing but the API.
+ *  - The backend, launching Chromium with Playwright. The window opens
+ *    wherever the backend runs - fine on a developer's laptop, invisible on a
+ *    server - so it is offered only in development, and only when the
+ *    extension is not installed.
+ */
 export function LaunchRecording({
   onChanged,
   onFinished,
@@ -39,8 +50,17 @@ export function LaunchRecording({
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [live, setLive] = useState<RecordingSession | null>(null);
+  const [liveVia, setLiveVia] = useState<"extension" | "server">("extension");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { installed, recheck } = useExtension();
+  // The server-side browser is a development convenience: it opens on the
+  // machine running the backend, which in development is this one.
+  const serverAvailable = process.env.NODE_ENV !== "production";
+  const [preferServer, setPreferServer] = useState(false);
+  const via: "extension" | "server" =
+    installed && !preferServer ? "extension" : "server";
 
   useEffect(() => {
     let cancelled = false;
@@ -85,29 +105,56 @@ export function LaunchRecording({
         const sessions = await api.recordings.list();
         const current = sessions.find((s) => s.id === live.id);
         onChanged();
-        if (!current?.browser_open) {
+
+        let open: boolean;
+        if (liveVia === "extension") {
+          // The server cannot see a tab in somebody's Chrome; the extension
+          // can. Either one saying it is over is enough.
+          const status = await extension.status().catch(() => null);
+          const mine = status?.sessions.find((s) => s.id === live.id);
+          open = Boolean(mine?.open) && current?.status === "recording";
+        } else {
+          open = Boolean(current?.browser_open);
+        }
+
+        if (!open) {
           setLive(null);
           // Closing the window is how most recordings end — the Stop button is
           // the other one, and both mean the same thing to whoever is watching.
           notifyFinished.current?.();
-        } else setLive(current);
+        } else if (current) setLive(current);
       } catch {
         /* transient — keep polling */
       }
     }, 1500);
     return () => clearInterval(timer);
-  }, [live, onChanged]);
+  }, [live, liveVia, onChanged]);
 
   async function start() {
     if (!projectId) return;
     setBusy(true);
     setError(null);
     try {
-      const session = await api.recordings.launch(projectId, {
-        url: url.trim(),
-        name: name.trim() || undefined,
-      });
-      setLive(session);
+      const target = url.trim();
+      const label = name.trim() || undefined;
+
+      if (via === "extension") {
+        const started = await extension.start({ projectId, url: target, name: label });
+        if (!started) {
+          throw new Error(
+            "The extension did not answer. Check it is enabled in chrome://extensions, then try again.",
+          );
+        }
+        const sessions = await api.recordings.list(projectId);
+        const session = sessions.find((s) => s.id === started.sessionId);
+        if (!session) throw new Error("The recording started but could not be found");
+        setLiveVia("extension");
+        setLive(session);
+      } else {
+        const session = await api.recordings.launch(projectId, { url: target, name: label });
+        setLiveVia("server");
+        setLive(session);
+      }
       setName("");
       onChanged();
     } catch (err) {
@@ -121,7 +168,8 @@ export function LaunchRecording({
     if (!live) return;
     setBusy(true);
     try {
-      await api.recordings.close(live.id);
+      if (liveVia === "extension") await extension.stop(live.id);
+      else await api.recordings.close(live.id);
       setLive(null);
       onChanged();
       onFinished?.();
@@ -150,18 +198,52 @@ export function LaunchRecording({
             <b className="text-foreground">{live.action_count}</b> actions
           </span>
 
+          {liveVia === "extension" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void extension.focus(live.id)}
+            >
+              <ExternalLink />
+              Show tab
+            </Button>
+          )}
+
           <Button variant="destructive" size="sm" disabled={busy} onClick={stop}>
-            <Square className="size-4 fill-current" />
-            Stop
+            {busy ? <Loader2 className="animate-spin" /> : <Square className="fill-current" />}
+            {busy ? "Stopping…" : "Stop"}
           </Button>
         </CardContent>
 
         <CardContent className="pt-3 text-xs leading-relaxed text-muted-foreground">
-          A browser window is open — switch to it and use the site normally.
-          Everything you do is captured. You can also press Stop in the panel
-          inside that window, or just close it.
+          {liveVia === "extension"
+            ? "A Chrome tab is open with the recorder — switch to it and use the site normally. Everything you do is captured, including in tabs it opens. You can also press Stop in the panel inside that tab, or just close it."
+            : "A browser window is open — switch to it and use the site normally. Everything you do is captured. You can also press Stop in the panel inside that window, or just close it."}
         </CardContent>
       </Card>
+    );
+  }
+
+  // Nothing in this browser can open a recording tab. Say how to fix that -
+  // and in development, offer the backend's own browser as a way round it.
+  if (installed === null && !preferServer) {
+    return (
+      <>
+        <ExtensionSetup installed={installed} onRecheck={recheck} />
+        {serverAvailable && (
+          <p className="-mt-3 mb-6 text-xs text-muted-foreground">
+            Developing locally?{" "}
+            <button
+              type="button"
+              className="text-primary underline-offset-4 hover:underline"
+              onClick={() => setPreferServer(true)}
+            >
+              Open the browser from the backend instead
+            </button>
+            .
+          </p>
+        )}
+      </>
     );
   }
 
@@ -228,7 +310,7 @@ export function LaunchRecording({
 
           <Button
             type="submit"
-            disabled={busy || !projectId || !url.trim()}
+            disabled={busy || !projectId || !url.trim() || installed === undefined}
             className="bg-destructive text-destructive-foreground"
           >
             {busy ? (
@@ -242,7 +324,29 @@ export function LaunchRecording({
 
         <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
           <ExternalLink className="size-3" />
-          The browser opens on this machine, where the backend runs.
+          {via === "extension" ? (
+            <>
+              Opens in a new Chrome tab on this computer, through the AutoQA
+              Recorder extension (v{installed?.version}).
+            </>
+          ) : (
+            <>
+              The browser opens on the machine where the backend runs.
+              {installed && (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="text-primary underline-offset-4 hover:underline"
+                    onClick={() => setPreferServer(false)}
+                  >
+                    Use the extension instead
+                  </button>
+                  .
+                </>
+              )}
+            </>
+          )}
         </p>
       </CardContent>
     </Card>

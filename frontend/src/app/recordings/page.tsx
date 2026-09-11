@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FlaskConical, FolderKanban, Trash2, Video } from "lucide-react";
+import { FlaskConical, FolderKanban, Puzzle, Trash2, Video } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RecordingSession } from "@/lib/types";
 import { AppShell } from "@/components/app-shell";
@@ -69,7 +69,14 @@ function Recordings() {
       <PageHeader
         title="Recordings"
         description="Every browser session you have captured, across all projects. Each one becomes a runnable test the moment you stop recording."
-      />
+      >
+        <Link href="/extension">
+          <Button variant="outline">
+            <Puzzle />
+            Chrome extension
+          </Button>
+        </Link>
+      </PageHeader>
 
       {error && <Alert className="mb-4">{error}</Alert>}
 
@@ -79,7 +86,7 @@ function Recordings() {
         <EmptyState
           icon={<Video />}
           title="No recordings yet"
-          description="Recording starts inside a project. Open one and press Record a session — a browser opens, you use the site normally, and every interaction is captured."
+          description="Recording starts inside a project. Open one and press Record a session — a Chrome tab opens on this computer, you use the site normally, and every interaction is captured."
           action={
             <Link href="/projects">
               <Button>

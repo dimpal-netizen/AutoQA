@@ -42,7 +42,7 @@ from app.repositories.test_run_repo import (
     TestRunRepository,
 )
 from app.runner import registry
-from app.runner.executor import ExecutionOutcome, run_suite
+from app.runner.executor import ExecutionOutcome, has_display, run_suite
 from app.runner.parser import step_from_traceback
 from app.services.codegen_service import CodegenService
 from app.services.exceptions import NotFound, ValidationError
@@ -112,6 +112,14 @@ class ExecutionService:
             raise ValidationError("This suite has no enabled test cases to run.")
 
         chosen = self._validate_browsers(browsers)
+
+        # Watching is only possible where there is a screen. On a server there
+        # is none, and a headed browser fails before the first test - so the
+        # run goes headless at full speed, and the video, screenshots and
+        # trace it keeps are how it gets watched afterwards.
+        if not headless and not has_display():
+            logger.info("No display available; running suite %s headless", suite_id)
+            headless = True
 
         run = self.runs.create(
             project_id=suite.project_id,
