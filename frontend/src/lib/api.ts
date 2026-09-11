@@ -39,7 +39,7 @@ import type {
 // ~2 second TCP timeout on IPv6 before falling back. It looks exactly like a
 // slow server and is not one.
 const BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000/api/v1";
 
 export class ApiError extends Error {
   constructor(
