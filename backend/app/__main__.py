@@ -1,6 +1,6 @@
 """Development launcher: `poetry run python -m app` from backend/.
 
-Exists so the port lives in settings (API_PORT, default 4000) rather than in
+Exists so the port lives in settings (API_PORT, default 5022) rather than in
 whoever remembered to type `--port`. Plain `uvicorn app.main:app` does not
 read .env and falls back to uvicorn's own 8000, which the web app is not
 pointed at.

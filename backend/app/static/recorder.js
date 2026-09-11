@@ -22,7 +22,7 @@
   const bridge = window.__autoqaBridge || null;
   const injected = window.__autoqaConfig || null;
 
-  const API = window.__AUTOQA_API__ || "http://localhost:4000/api/v1";
+  const API = window.__AUTOQA_API__ || "http://localhost:5022/api/v1";
   const AUTH_KEY = "autoqa-auth";
   const BATCH_MS = 2000;
   const HOVER_DWELL_MS = 700;
@@ -1200,7 +1200,7 @@
       state.token = options.token || window.__AUTOQA_TOKEN__ || readToken();
       if (!state.token) {
         state = null;
-        throw new Error("Not signed in — open http://localhost:4041 and log in first");
+        throw new Error("Not signed in — open http://localhost:5021 and log in first");
       }
 
       const projects = await api("/projects", undefined, "GET");

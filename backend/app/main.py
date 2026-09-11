@@ -2,7 +2,7 @@
 
 Run it with (from backend/):
     poetry run python -m app
-Then open http://localhost:4000/docs
+Then open http://localhost:5022/docs
 """
 
 import logging

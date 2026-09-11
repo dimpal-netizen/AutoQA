@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # Where `python -m app` listens in development. Production ignores these:
     # docker/backend-entrypoint.sh passes its own port to uvicorn directly.
     API_HOST: str = "0.0.0.0"
-    API_PORT: int = 4000
+    API_PORT: int = 5022
 
     # --- Database ---
     POSTGRES_USER: str = "autoqa"
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     DEFAULT_BROWSERS: str = "chromium,firefox,webkit"
 
     # --- CORS (Phase 8) ---
-    CORS_ORIGINS: str = "http://localhost:4041"
+    CORS_ORIGINS: str = "http://localhost:5021"
 
     # ----------------------------------------------------------------
     # Derived values
@@ -160,7 +160,7 @@ class Settings(BaseSettings):
         """In development, accept the app on any local address and port.
 
         CORS matches the Origin header as an exact string, so a list containing
-        only "http://localhost:4041" rejects the very same app opened at
+        only "http://localhost:5021" rejects the very same app opened at
         127.0.0.1, [::1], or a LAN IP — which surfaces in the browser as an
         unhelpful "Failed to fetch". Production still uses the explicit list.
         """
