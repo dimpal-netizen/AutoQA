@@ -16,7 +16,7 @@ from app.core.security import (
 from app.models.enums import UserRole
 from app.models.user import User
 from app.repositories.user_repo import UserRepository
-from app.schemas.user import UserCreate, UserUpdate
+from app.schemas.user import RegisterRequest, UserCreate, UserUpdate
 from app.services.exceptions import AlreadyExists, Forbidden, NotFound, Unauthorized
 
 
@@ -28,19 +28,19 @@ class AuthService:
     # ------------------------------------------------------------------
     # Registration & login
     # ------------------------------------------------------------------
-    def register(self, data: UserCreate) -> User:
+    def register(self, data: RegisterRequest) -> User:
         if self.users.email_exists(data.email):
             raise AlreadyExists("That email is already registered")
 
-        # Bootstrap: whoever registers first owns the instance. Otherwise a brand
-        # new install would have nobody able to manage users.
-        role = UserRole.ADMIN if self.users.is_first_user() else data.role
-
+        # Everyone who signs up gets full access. This is a tool for one QA
+        # team, and nobody should have to wait for a promotion before they can
+        # create a project and test it. The role column and the checks on it
+        # stay, so a tiered model can come back by changing this one line.
         user = self.users.create(
             email=data.email,
             hashed_password=hash_password(data.password),
             full_name=data.full_name,
-            role=role,
+            role=UserRole.ADMIN,
             is_active=True,
         )
         self.db.commit()

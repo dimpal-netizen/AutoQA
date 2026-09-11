@@ -16,7 +16,15 @@ class UserBase(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
 
 
+class RegisterRequest(UserBase):
+    """Self-service sign-up. No role field: everyone gets full access."""
+
+    password: str = Field(min_length=8, max_length=PASSWORD_MAX)
+
+
 class UserCreate(UserBase):
+    """An admin creating an account, role included."""
+
     password: str = Field(min_length=8, max_length=PASSWORD_MAX)
     role: UserRole = UserRole.MANUAL_QA
 

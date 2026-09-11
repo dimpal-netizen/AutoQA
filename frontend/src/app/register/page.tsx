@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
-import { ROLE_LABEL, type UserRole } from "@/lib/types";
 import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -18,12 +17,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-const SELECTABLE_ROLES: UserRole[] = [
-  "manual_qa",
-  "qa_engineer",
-  "test_manager",
-];
-
 export default function RegisterPage() {
   const router = useRouter();
   const setSession = useAuthStore((s) => s.setSession);
@@ -31,7 +24,6 @@ export default function RegisterPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<UserRole>("qa_engineer");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +38,6 @@ export default function RegisterPage() {
           email,
           password,
           full_name: fullName || undefined,
-          role,
         }),
       );
       router.replace("/dashboard");
@@ -65,7 +56,7 @@ export default function RegisterPage() {
         <CardHeader>
           <CardTitle>Create your account</CardTitle>
           <CardDescription>
-            The first account created becomes the admin.
+            You can create projects and run tests straight away.
           </CardDescription>
         </CardHeader>
 
@@ -109,22 +100,6 @@ export default function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="At least 8 characters"
               />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="role">Role</Label>
-              <select
-                id="role"
-                value={role}
-                onChange={(e) => setRole(e.target.value as UserRole)}
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {SELECTABLE_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {ROLE_LABEL[r]}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <Button type="submit" disabled={busy}>
