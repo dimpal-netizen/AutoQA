@@ -56,10 +56,19 @@ async function saveState() {
   if (stateCache) await chrome.storage.session.set(stateCache);
 }
 
+const SIGN_IN_KEYS = ["apiUrl", "signedInFor", "accessToken", "refreshToken", "user", "appOrigin"];
+
+/* The server address is the one this copy was downloaded with, unless the
+ * tester typed a different one on the sign-in form. Either way a sign-in
+ * belongs to the download it was made with: replace the folder with a
+ * download from another server and that server wins, and the old sign-in -
+ * tokens, typed address, all of it - is dropped rather than sent there. */
 async function getLocal() {
-  const stored = await chrome.storage.local.get([
-    "apiUrl", "accessToken", "refreshToken", "user", "appOrigin",
-  ]);
+  const stored = await chrome.storage.local.get(SIGN_IN_KEYS);
+  if (stored.signedInFor && stored.signedInFor !== CONFIG.apiUrl) {
+    await chrome.storage.local.remove(SIGN_IN_KEYS);
+    return { apiUrl: CONFIG.apiUrl };
+  }
   return { ...stored, apiUrl: stored.apiUrl || CONFIG.apiUrl };
 }
 
@@ -421,6 +430,7 @@ async function handleApp(request, sender) {
 
     const user = await rawRequest(apiUrl, "/auth/me", { token: request.accessToken });
     await setLocal({
+      signedInFor: CONFIG.apiUrl,
       accessToken: request.accessToken,
       refreshToken: request.refreshToken || null,
       user,
@@ -509,7 +519,9 @@ async function handlePopup(request) {
       body: { email: request.email, password: request.password },
     });
     await setLocal({
-      apiUrl,
+      // Only a typed address is remembered - see getLocal.
+      apiUrl: apiUrl === CONFIG.apiUrl ? null : apiUrl,
+      signedInFor: CONFIG.apiUrl,
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       user: tokens.user,
@@ -518,7 +530,7 @@ async function handlePopup(request) {
   }
 
   if (type === "sign-out") {
-    await setLocal({ accessToken: null, refreshToken: null, user: null });
+    await chrome.storage.local.remove(SIGN_IN_KEYS);
     return { ok: true };
   }
 
