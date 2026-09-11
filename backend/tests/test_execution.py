@@ -777,3 +777,25 @@ def test_a_server_without_an_x_socket_has_no_display(monkeypatch, tmp_path: Path
 
     monkeypatch.delenv("DISPLAY")
     assert executor.has_display() is False
+
+
+def test_watch_url_is_the_novnc_page_only_where_a_virtual_screen_runs(monkeypatch):
+    """A desktop shows nothing - the window is right there. A Linux server with
+    Xvfb up shows noVNC, relative to the site. WATCH_URL overrides both."""
+    from app.api import runs
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "WATCH_URL", "")
+    monkeypatch.setattr(runs.sys, "platform", "win32")
+    assert runs.watch_url() is None
+
+    monkeypatch.setattr(runs.sys, "platform", "linux")
+    monkeypatch.setattr(runs, "has_display", lambda: False)
+    assert runs.watch_url() is None
+
+    monkeypatch.setattr(runs, "has_display", lambda: True)
+    assert runs.watch_url() == runs.NOVNC_PATH
+    assert runs.NOVNC_PATH.startswith("/record/vnc.html")
+
+    monkeypatch.setattr(settings, "WATCH_URL", "https://screens.example.com/vnc.html")
+    assert runs.watch_url() == "https://screens.example.com/vnc.html"

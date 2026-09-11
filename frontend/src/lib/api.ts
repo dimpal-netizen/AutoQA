@@ -305,7 +305,8 @@ export const api = {
   runs: {
     /** Can a run be watched live on this server? False on a headless server,
      *  where runs are reviewed afterwards through their video and trace. */
-    capabilities: () => request<{ can_watch: boolean }>("/runs/capabilities"),
+    capabilities: () =>
+      request<{ can_watch: boolean; watch_url: string | null }>("/runs/capabilities"),
 
     /** Starts a run and returns immediately — the run is queued, not finished. */
     start: (

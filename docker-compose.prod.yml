@@ -75,7 +75,12 @@ services:
       RUN_TIMEOUT_SECONDS: ${RUN_TIMEOUT_SECONDS:-900}
       DEFAULT_BROWSERS: ${DEFAULT_BROWSERS:-chromium,firefox,webkit}
 
-      AUTOQA_VIRTUAL_DISPLAY: ${AUTOQA_VIRTUAL_DISPLAY:-0}
+      AUTOQA_VIRTUAL_DISPLAY: ${AUTOQA_VIRTUAL_DISPLAY:-1}
+      # Where the web app shows that screen. Empty means /record/ on the
+      # site, which is what nginx serves. Set it when the screen is reached
+      # some other way - e.g. straight at port 29383 when testing without
+      # nginx.
+      WATCH_URL: ${WATCH_URL:-}
     volumes:
       - storage_data:/data/storage
       - workspace_data:/data/workspaces
@@ -98,10 +103,10 @@ services:
       # The containers listen on these too, so there is one number per service
       # rather than a mapping to read backwards.
       #
-      # 29383 is the server-side recording screen, only served with
-      # AUTOQA_VIRTUAL_DISPLAY=1, and has no password on it - see
-      # docker/backend-entrypoint.sh. Recording normally goes through the
-      # Chrome extension and never touches it.
+      # 29383 is the server's screen (noVNC), served with
+      # AUTOQA_VIRTUAL_DISPLAY=1 so a run can be watched live from the web
+      # app. It has no password of its own - nginx adds one. See
+      # docker/backend-entrypoint.sh.
       - "127.0.0.1:29381:29381"
       - "127.0.0.1:29383:29383"
 

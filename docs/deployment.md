@@ -55,16 +55,24 @@ When you change the extension or `recorder.js`, bump `version` in
 installed and offers the download. Most deploys change neither, and testers
 notice nothing.
 
-### The server-side browser, which you no longer need
+### Watching a test run
 
-Before the extension, the API launched Chromium on the server with Playwright
-and the image carried a virtual screen for it: Xvfb, x11vnc, and noVNC on port
-29383. That still works, gated on `AUTOQA_VIRTUAL_DISPLAY=1`, but the web app
-no longer offers it in production and there is no reason to run it.
+Running a test is the other place a browser opens, and on a server it opens
+on a virtual screen: Xvfb provides it, x11vnc publishes it, and noVNC serves
+it as a web page on port 29383, which nginx exposes under `/record/` with a
+password. With `AUTOQA_VIRTUAL_DISPLAY=1` (the default) a run opens a real,
+headed browser on that screen, stepping through at the readable pace, and the
+web app shows the screen live behind **Watch live** on the run - the same
+thing you see on a laptop, watched through the page.
 
-**Set `AUTOQA_VIRTUAL_DISPLAY=0`.** It saves about 80 MB and closes a
-screen-sharing port that has no password of its own. Delete the `/record/`
-block from the nginx config as well.
+Two things to know. It is **one screen for the server**: two runs at the same
+time both appear on it. And the `/record/` password is nginx's, separate from
+the AutoQA login; the browser asks for it once, inside the panel.
+
+`AUTOQA_VIRTUAL_DISPLAY=0` turns all of this off. Runs then go headless at
+full speed, the button is hidden, and every test still keeps its video,
+screenshots and trace - which is how a run is reviewed afterwards either way.
+Delete the `/record/` block from nginx as well.
 
 ---
 
@@ -147,7 +155,7 @@ What the config handles, and why each part is there:
 | `/api/` | `:29381` | `proxy_buffering off` — artifacts are streamed by `FileResponse` and a trace runs to tens of megabytes. With buffering on, nginx spools the whole file before sending a byte and a download looks like a hang. 300s timeouts, because generating a suite calls an AI provider. |
 | `/health` | `:29381` | Kept off the API prefix so uptime checks do not depend on the version. |
 | `/static/` | `:29381` | `recorder.js`, injected into recorded pages. |
-| `/record/` | `:29383` | Only with `AUTOQA_VIRTUAL_DISPLAY=1` (see section 2) — otherwise delete it. Basic auth, plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. |
+| `/record/` | `:29383` | The server's screen for **Watch live** (section 2). Basic auth, plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. `frame-ancestors 'self'` so the web app may embed it and nothing else may. Delete it with `AUTOQA_VIRTUAL_DISPLAY=0`. |
 | `/` | `:29382` | The web app. |
 
 Also set: `client_max_body_size 64m`. nginx defaults to 1 MB, and test-case
@@ -155,8 +163,8 @@ spreadsheets are uploaded through the API — over the limit, nginx returns 413
 without the request ever reaching the application, so the UI reports a failure
 the API logs know nothing about.
 
-With `AUTOQA_VIRTUAL_DISPLAY=0` — the recommended setting — delete the
-`/record/` block and skip the `htpasswd` step.
+With `AUTOQA_VIRTUAL_DISPLAY=0`, delete the `/record/` block and skip the
+`htpasswd` step.
 
 <details>
 <summary>Caddy instead</summary>
@@ -265,10 +273,15 @@ It was downloaded from another AutoQA instance, or the API address changed.
 Download it again from this one and replace the files in the folder, or set the
 address under *Server* on the extension's sign-in form.
 
-**Recording opens nothing (server-side browser, `AUTOQA_VIRTUAL_DISPLAY=1`).**
-Check `docker compose logs api` for the Xvfb lines.
-`warning: /tmp/.X11-unix/X99 never appeared` means the virtual screen failed to
-start and no window can open. The extension does not need any of this.
+**There is no Watch live button on a run.**
+The API found no screen: `AUTOQA_VIRTUAL_DISPLAY` is 0, or Xvfb failed to
+start - check `docker compose logs api` for
+`warning: /tmp/.X11-unix/X99 never appeared`. Runs still work, headless.
+
+**Watch live shows a grey screen, or asks for a password and then stays blank.**
+Grey with nothing on it means no browser is open on the screen yet - wait for
+the run to start its first test. Blank after the password means the WebSocket
+upgrade is not getting through nginx; see the `/record/` notes in section 4.
 
 **The noVNC page connects and stays black.**
 Nothing has opened a window yet. The screen exists from container start; it
