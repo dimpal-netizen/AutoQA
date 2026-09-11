@@ -32,7 +32,6 @@ services:
     ports:
       # 80 inside the container; 5050 on your machine, because 80 is usually
       # spoken for.
-      - "${PGADMIN_PORT:-5050}:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@autoqa.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-autoqa}
