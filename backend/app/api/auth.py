@@ -11,6 +11,7 @@ from app.models.enums import UserRole
 from app.schemas.user import (
     LoginRequest,
     RefreshRequest,
+    RegisterRequest,
     TokenPair,
     UserCreate,
     UserRead,
@@ -25,8 +26,8 @@ users_router = APIRouter(prefix="/users", tags=["users"])
 
 
 @auth_router.post("/register", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
-def register(data: UserCreate, db: DbSession) -> TokenPair:
-    """Create an account. The very first user to register becomes admin."""
+def register(data: RegisterRequest, db: DbSession) -> TokenPair:
+    """Create an account. Everyone who signs up gets full access."""
     service = AuthService(db)
     user = service.register(data)
     access, refresh = service.issue_tokens(user)

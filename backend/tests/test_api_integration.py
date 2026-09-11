@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from tests.conftest import register_user
 
 pytestmark = pytest.mark.integration
 
@@ -22,17 +23,7 @@ def unique_email() -> str:
 
 def register(client: TestClient, role: str = "qa_engineer") -> dict:
     """Create a user and return its token payload."""
-    response = client.post(
-        f"{API}/auth/register",
-        json={
-            "email": unique_email(),
-            "password": "supersecret123",
-            "full_name": "Test User",
-            "role": role,
-        },
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    return register_user(client, role, email=unique_email())
 
 
 def auth_header(tokens: dict) -> dict[str, str]:
@@ -52,6 +43,28 @@ def test_register_login_and_me(client: TestClient) -> None:
     me = client.get(f"{API}/auth/me", headers=auth_header(login.json()))
     assert me.status_code == 200
     assert me.json()["email"] == email
+
+
+def test_register_gives_full_access(client: TestClient) -> None:
+    register(client)  # so this is not the first account
+
+    response = client.post(
+        f"{API}/auth/register",
+        json={"email": unique_email(), "password": "supersecret123", "role": "manual_qa"},
+    )
+    assert response.status_code == 201, response.text
+    # The role field is not part of sign-up; whatever is sent, the account can
+    # do everything.
+    assert response.json()["user"]["role"] == "admin"
+
+    headers = auth_header(response.json())
+    assert client.get(f"{API}/users", headers=headers).status_code == 200
+    created = client.post(
+        f"{API}/projects",
+        headers=headers,
+        json={"name": f"Own {uuid.uuid4().hex[:6]}", "base_url": "https://example.com"},
+    )
+    assert created.status_code == 201, created.text
 
 
 def test_duplicate_email_is_rejected(client: TestClient) -> None:

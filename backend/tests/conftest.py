@@ -1,6 +1,7 @@
 """Shared pytest fixtures."""
 
 import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,8 @@ from sqlalchemy.orm import sessionmaker
 from app.core import database
 from app.core.config import settings
 from app.main import app
+from app.models.enums import UserRole
+from app.models.user import User
 
 TEST_DB_SUFFIX = "_test"
 
@@ -98,3 +101,29 @@ def client() -> TestClient:
     """HTTP client for the API. Does not require Postgres or Redis."""
     with TestClient(app) as test_client:
         yield test_client
+
+
+def register_user(client: TestClient, role: str = "qa_engineer", **fields) -> dict:
+    """Sign up through the API and return the token payload, as `role`.
+
+    Sign-up gives everyone full access, so a test that needs a lesser role
+    (to check it is refused something) sets it afterwards straight in the
+    database. The returned `user` reflects the role set.
+    """
+    payload = {
+        "email": f"user-{uuid.uuid4().hex[:12]}@example.com",
+        "password": "supersecret123",
+        "full_name": "Test User",
+        **fields,
+    }
+    response = client.post(f"{settings.API_V1_PREFIX}/auth/register", json=payload)
+    assert response.status_code == 201, response.text
+    tokens = response.json()
+
+    if tokens["user"]["role"] != role:
+        with database.SessionLocal() as db:
+            user = db.get(User, tokens["user"]["id"])
+            user.role = UserRole(role)
+            db.commit()
+        tokens["user"]["role"] = role
+    return tokens

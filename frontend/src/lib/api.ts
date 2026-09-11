@@ -138,11 +138,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   auth: {
+    // No role: everyone who signs up gets full access.
     register: (data: {
       email: string;
       password: string;
       full_name?: string;
-      role?: string;
     }) =>
       request<TokenPair>("/auth/register", {
         method: "POST",

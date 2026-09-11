@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from tests.conftest import register_user
 
 pytestmark = pytest.mark.integration
 
@@ -26,16 +27,7 @@ def sample() -> dict:
 
 
 def register(client: TestClient, role: str = "qa_engineer") -> dict:
-    response = client.post(
-        f"{API}/auth/register",
-        json={
-            "email": f"auto-{uuid.uuid4().hex[:12]}@example.com",
-            "password": "supersecret123",
-            "role": role,
-        },
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+    return register_user(client, role, email=f"auto-{uuid.uuid4().hex[:12]}@example.com")
 
 
 @pytest.fixture
