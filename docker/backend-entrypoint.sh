@@ -16,10 +16,12 @@ log() { echo "[autoqa] $*"; }
 # no screen for it to open on. Xvfb provides one, x11vnc publishes it, and
 # noVNC serves it to a browser tab.
 #
-# Set AUTOQA_VIRTUAL_DISPLAY=0 on a deployment that only ever runs suites that
-# were recorded somewhere else.
+# Off by default. Recording now happens in the tester's own Chrome through the
+# AutoQA Recorder extension (extension/, served by the API), which needs none
+# of this. Set AUTOQA_VIRTUAL_DISPLAY=1 only to keep the old server-side
+# browser available.
 # ---------------------------------------------------------------------------
-if [ "${AUTOQA_VIRTUAL_DISPLAY:-1}" = "1" ]; then
+if [ "${AUTOQA_VIRTUAL_DISPLAY:-0}" = "1" ]; then
     screen="${AUTOQA_SCREEN:-1920x1080x24}"
     log "starting Xvfb on ${DISPLAY} at ${screen}"
     Xvfb "${DISPLAY}" -screen 0 "${screen}" -nolisten tcp -noreset &

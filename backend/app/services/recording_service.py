@@ -11,6 +11,7 @@ from app.schemas.recording import (
     ActionBatchIn,
     ActionBatchResult,
     RecordedActionUpdate,
+    RecordingProgress,
     RecordingSessionCreate,
     RecordingSessionStop,
 )
@@ -75,6 +76,15 @@ class RecordingService:
             project_ids = [p.id for p in visible]
 
         return self.recordings.list_for_projects(project_ids, skip=skip, limit=limit)
+
+    def progress(self, session_id: int, user: User) -> RecordingProgress:
+        """What a recorder rejoining an open session needs to continue it."""
+        self.get(session_id, user)
+        return RecordingProgress(
+            action_count=self.recordings.count_actions(session_id),
+            max_sequence=self.recordings.max_sequence(session_id),
+            max_timestamp_ms=self.recordings.max_timestamp_ms(session_id),
+        )
 
     def stop(self, session_id: int, data: RecordingSessionStop, user: User) -> RecordingSession:
         session = self.get(session_id, user)

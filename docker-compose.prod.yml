@@ -75,7 +75,7 @@ services:
       RUN_TIMEOUT_SECONDS: ${RUN_TIMEOUT_SECONDS:-900}
       DEFAULT_BROWSERS: ${DEFAULT_BROWSERS:-chromium,firefox,webkit}
 
-      AUTOQA_VIRTUAL_DISPLAY: ${AUTOQA_VIRTUAL_DISPLAY:-1}
+      AUTOQA_VIRTUAL_DISPLAY: ${AUTOQA_VIRTUAL_DISPLAY:-0}
     volumes:
       - storage_data:/data/storage
       - workspace_data:/data/workspaces
@@ -98,8 +98,10 @@ services:
       # The containers listen on these too, so there is one number per service
       # rather than a mapping to read backwards.
       #
-      # 29383 is the recording screen and has no password on it - see
-      # docker/backend-entrypoint.sh.
+      # 29383 is the server-side recording screen, only served with
+      # AUTOQA_VIRTUAL_DISPLAY=1, and has no password on it - see
+      # docker/backend-entrypoint.sh. Recording normally goes through the
+      # Chrome extension and never touches it.
       - "127.0.0.1:29381:29381"
       - "127.0.0.1:29383:29383"
 

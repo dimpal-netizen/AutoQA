@@ -352,3 +352,19 @@ class RecordingSessionLive(RecordingSessionRead):
     """A session plus whether a browser window is currently open for it."""
 
     browser_open: bool = False
+
+
+class RecordingProgress(BaseModel):
+    """Where an open recording has got to, for a recorder that is picking it up
+    again — a page that reloaded, a tab opened from a recording tab.
+
+    The extension needs exactly what `browser_recorder._session_progress`
+    works out for the Playwright launcher: how many actions are stored, the
+    highest sequence taken, and how far the clock had run. It cannot see the
+    database, so this is that function as a route.
+    """
+
+    action_count: int
+    #: `None` on a recording with nothing stored yet.
+    max_sequence: int | None
+    max_timestamp_ms: int | None

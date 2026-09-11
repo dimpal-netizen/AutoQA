@@ -50,6 +50,10 @@ RUN poetry install --no-root --only main
 RUN playwright install --with-deps chromium firefox webkit
 
 COPY backend/ /app/backend/
+# The Chrome extension source. The API zips it up on request, adding its own
+# recorder.js and the server address, so a download always matches the
+# backend it came from. Resolved through EXTENSION_PATH (../extension).
+COPY extension/ /app/extension/
 COPY docker/backend-entrypoint.sh /usr/local/bin/autoqa-entrypoint
 RUN chmod +x /usr/local/bin/autoqa-entrypoint
 

@@ -258,14 +258,18 @@ token count and dollar cost, so spend is never a mystery.
 
 ## 7. Using it
 
-1. **Projects → New project.** One project is one web application.
-2. Open it and press **Record a session.** A browser opens on your app with the
-   recorder already running — there is nothing to install in your application.
-3. Use the site normally: log in, fill the form, click through the flow.
-4. Close the browser. **The test is already written.**
-5. **Run tests.** Pick your browsers; they run at the same time. Tick
+1. **Recordings → Chrome extension.** Download the AutoQA Recorder and load it
+   into Chrome once (the page walks you through it). Nothing is installed in
+   your application or on the server.
+2. **Projects → New project.** One project is one web application.
+3. Open it and press **Record a session.** A Chrome tab opens on your app with
+   the recorder already running. You can also click the extension's icon on
+   any site and press Start there.
+4. Use the site normally: log in, fill the form, click through the flow.
+5. Close the tab, or press Stop. **The test is already written.**
+6. **Run tests.** Pick your browsers; they run at the same time. Tick
    *Watch it run* to see it drive the browser at a readable speed.
-6. Failures come back with a screenshot, video and stack trace — plus root cause
+7. Failures come back with a screenshot, video and stack trace — plus root cause
    and a drafted bug report if you added an AI key.
 
 Your scripts are written to `generated/`. Open that folder in VS Code and edit
@@ -300,6 +304,7 @@ AutoQA/
 ├── docker-compose.yml        # Postgres + Redis
 ├── .env                      # your settings and API keys (never committed)
 ├── docs/                     # the recording format specification
+├── extension/                # the Chrome extension: the recorder in the tester's own browser
 ├── generated/                # YOUR TEST SCRIPTS land here — open in VS Code
 ├── .autoqa/                  # screenshots, videos, run workspaces (disposable)
 │
@@ -403,11 +408,11 @@ npx eslint src         # lint
 | 9 | Shareable HTML run reports | ✅ |
 | 10 | CSV test-case sheet export | ✅ |
 | 11 | Autonomous agent + Jira / Azure DevOps | ⬜ Next |
-| 12 | Chrome extension (Manifest V3) | ⬜ |
+| 12 | Chrome extension (Manifest V3) | ✅ |
 
-Recording currently works through a browser AutoQA launches for you, with the
-recorder injected — the Chrome extension in phase 12 is an alternative entry
-point, not a prerequisite.
+Recording works through the Chrome extension, in the tester's own browser. In
+development the backend can also launch a browser for you on the same machine
+with the recorder injected — the same `recorder.js` either way.
 
 ### Tech stack
 

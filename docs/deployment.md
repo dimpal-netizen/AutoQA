@@ -34,25 +34,37 @@ takes ten to fifteen minutes the first time and is cached afterwards.
 
 ## 2. The recording problem, and what is done about it
 
-Running a test is headless. **Recording is not.** `launch_recorder` opens a real
-browser window that a person clicks around in, and a server has no screen for
-that window to open on.
+Running a test is headless. **Recording is not.** Somebody has to click around
+in a real browser, and a server has no screen for one.
 
-So the image carries a virtual one. Xvfb provides the screen, x11vnc publishes
-it, and noVNC serves it to a browser tab: the QA engineer presses Record in the
-web app, opens the recording screen, and drives the server's browser from their
-own machine.
+**Recordings are made in the tester's own Chrome, through the AutoQA Recorder
+extension.** The API serves the extension itself, built from `extension/` with
+the server's own `recorder.js` and address inside it, at
+`/api/v1/extension/download`. Testers get it from **Recordings → Chrome
+extension** in the web app, which also has the install steps: unzip, load
+unpacked, pin. Nothing is installed or configured on the server, and any number
+of testers can record at once — the server only ever runs the API.
 
-**The recording screen has no password on it.** Anyone who can reach port 29383
-can drive that browser, and that browser is signed in to whatever the engineer
-signed in to. Compose binds it to `127.0.0.1`, so it is reachable only through
-the reverse proxy — put authentication in front of it, or keep it on a private
-network, or turn it off.
+The extension keeps its own copy of the tester's sign-in and refreshes it the
+way the web app does, so an hour-long recording does not stop when the access
+token expires. Everything it sends goes through the same `/recordings` routes
+with the same permissions as the web app.
 
-To turn it off, set `AUTOQA_VIRTUAL_DISPLAY=0`. Recording then fails on this
-deployment, and everything else — execution, reports, history — still works.
-That is the right setting when recordings are made on laptops and only run on
-the server.
+When you change the extension or `recorder.js`, bump `version` in
+`extension/manifest.json`; the web app compares it with what each tester has
+installed and offers the download. Most deploys change neither, and testers
+notice nothing.
+
+### The server-side browser, which you no longer need
+
+Before the extension, the API launched Chromium on the server with Playwright
+and the image carried a virtual screen for it: Xvfb, x11vnc, and noVNC on port
+29383. That still works, gated on `AUTOQA_VIRTUAL_DISPLAY=1`, but the web app
+no longer offers it in production and there is no reason to run it.
+
+**Set `AUTOQA_VIRTUAL_DISPLAY=0`.** It saves about 80 MB and closes a
+screen-sharing port that has no password of its own. Delete the `/record/`
+block from the nginx config as well.
 
 ---
 
@@ -135,7 +147,7 @@ What the config handles, and why each part is there:
 | `/api/` | `:29381` | `proxy_buffering off` — artifacts are streamed by `FileResponse` and a trace runs to tens of megabytes. With buffering on, nginx spools the whole file before sending a byte and a download looks like a hang. 300s timeouts, because generating a suite calls an AI provider. |
 | `/health` | `:29381` | Kept off the API prefix so uptime checks do not depend on the version. |
 | `/static/` | `:29381` | `recorder.js`, injected into recorded pages. |
-| `/record/` | `:29383` | Basic auth, plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. 1 hour timeouts, because a recording session lasts as long as the person clicking. |
+| `/record/` | `:29383` | Only with `AUTOQA_VIRTUAL_DISPLAY=1` (see section 2) — otherwise delete it. Basic auth, plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. |
 | `/` | `:29382` | The web app. |
 
 Also set: `client_max_body_size 64m`. nginx defaults to 1 MB, and test-case
@@ -143,7 +155,8 @@ spreadsheets are uploaded through the API — over the limit, nginx returns 413
 without the request ever reaching the application, so the UI reports a failure
 the API logs know nothing about.
 
-If you set `AUTOQA_VIRTUAL_DISPLAY=0`, delete the `/record/` block.
+With `AUTOQA_VIRTUAL_DISPLAY=0` — the recommended setting — delete the
+`/record/` block and skip the `htpasswd` step.
 
 <details>
 <summary>Caddy instead</summary>
@@ -242,10 +255,20 @@ compose sets `shm_size: 1gb`. If it persists, check whether the run simply
 exceeded `RUN_TIMEOUT_SECONDS` — the process is killed and the symptom is
 identical.
 
-**Recording opens nothing.**
-Check `AUTOQA_VIRTUAL_DISPLAY=1`, then `docker compose logs api` for the Xvfb
-lines. `warning: /tmp/.X11-unix/X99 never appeared` means the virtual screen
-failed to start and no window can open.
+**Start recording says the extension is not installed, but it is.**
+The extension answers a `postMessage` from the page, so it must be enabled and
+allowed on this site: `chrome://extensions` → AutoQA Recorder → check it is on
+and that "Site access" is *On all sites*. Reload the AutoQA tab afterwards.
+
+**The extension says it is set up for a different server.**
+It was downloaded from another AutoQA instance, or the API address changed.
+Download it again from this one and replace the files in the folder, or set the
+address under *Server* on the extension's sign-in form.
+
+**Recording opens nothing (server-side browser, `AUTOQA_VIRTUAL_DISPLAY=1`).**
+Check `docker compose logs api` for the Xvfb lines.
+`warning: /tmp/.X11-unix/X99 never appeared` means the virtual screen failed to
+start and no window can open. The extension does not need any of this.
 
 **The noVNC page connects and stays black.**
 Nothing has opened a window yet. The screen exists from container start; it

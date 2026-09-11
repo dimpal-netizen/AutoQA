@@ -218,8 +218,11 @@ def _store_actions(
     if frame is not None:
         described = _describe_frames(frame)
         if described:
+            # The recorder sends `frame_path: []` on every action - it cannot
+            # fill it in - so an empty one is stamped, not only a missing one.
             for action in raw_actions:
-                action.setdefault("frame_path", described)
+                if not action.get("frame_path"):
+                    action["frame_path"] = described
 
     # Record what this batch uses before it is written, so a page asking where
     # to continue cannot be told a number this batch is about to take - and so

@@ -217,6 +217,15 @@ export const api = {
       request<void>(`/recordings/${id}`, { method: "DELETE" }),
   },
 
+  /** The Chrome extension this server ships - see lib/extension.ts for
+   *  talking to the installed one. */
+  extension: {
+    info: () =>
+      request<{ version: string; minimum_version: string; download_path: string }>(
+        "/extension",
+      ),
+  },
+
   suites: {
     list: (projectId?: number) =>
       request<TestSuite[]>(
@@ -294,6 +303,10 @@ export const api = {
   },
 
   runs: {
+    /** Can a run be watched live on this server? False on a headless server,
+     *  where runs are reviewed afterwards through their video and trace. */
+    capabilities: () => request<{ can_watch: boolean }>("/runs/capabilities"),
+
     /** Starts a run and returns immediately — the run is queued, not finished. */
     start: (
       suiteId: number,

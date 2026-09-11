@@ -16,6 +16,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Video,
 } from "lucide-react";
 import { api, downloadReport } from "@/lib/api";
 import {
@@ -87,6 +88,22 @@ export function RunPanel({
   const { confirm, dialog } = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TestRun[]>([]);
+  // Whether a window can open where the tests run. On a server there is no
+  // screen: the run goes headless and is watched afterwards through its
+  // video and trace, and the label should not promise otherwise. Assumed
+  // true until the server says - the common case, and the label it had.
+  const [canWatch, setCanWatch] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.runs
+      .capabilities()
+      .then((caps) => !cancelled && setCanWatch(caps.can_watch))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Held in a ref so the polling effect doesn't restart on every tick.
   const runId = run?.id ?? null;
@@ -298,10 +315,14 @@ export function RunPanel({
 
           <span
             className="ml-1 flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground"
-            title="A real browser opens and steps through one action at a time"
+            title={
+              canWatch
+                ? "A real browser opens and steps through one action at a time"
+                : "Runs on the server in the background. Every test keeps a video, screenshots and a trace to review afterwards."
+            }
           >
-            <Eye className="size-4" />
-            Watch it run
+            {canWatch ? <Eye className="size-4" /> : <Video className="size-4" />}
+            {canWatch ? "Watch it run" : "Recorded on video"}
           </span>
 
           <div className="ml-auto flex items-center gap-2">

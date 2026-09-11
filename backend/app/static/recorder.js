@@ -1029,6 +1029,18 @@
         state.error = `Could not join the recording: ${error.message}`;
         return;
       }
+      // Until now this frame had no clock: everything it captured was stamped
+      // against a start of zero, which is an absolute time and not an offset.
+      // `join` has just set the clock, so restate them against it - otherwise
+      // they sort after every action on the page and, worse, a duration read
+      // from them is thirteen digits long.
+      for (const action of state.pending) {
+        if (action._recordedAt) {
+          action.timestamp_ms = Math.max(
+            0, action._recordedAt - state.startedAt - state.pausedMs
+          );
+        }
+      }
     }
 
     const batch = state.pending.splice(0, ready).map(({ _recordedAt, ...action }) => ({

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AutoQA Recorder</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="top">
+      <img src="icons/icon-48.png" alt="" width="20" height="20" />
+      <span class="brand">AutoQA Recorder</span>
+      <span id="version" class="version"></span>
+    </header>
+
+    <main id="view" class="view">
+      <p class="muted">Loading…</p>
+    </main>
+
+    <!-- Sign in -->
+    <template id="tpl-signin">
+      <form id="signin" class="stack">
+        <p class="lead">Sign in with your AutoQA account.</p>
+        <label>Email<input name="email" type="email" required autocomplete="username" /></label>
+        <label>Password<input name="password" type="password" required autocomplete="current-password" /></label>
+        <details>
+          <summary>Server</summary>
+          <label class="mt">API address<input name="apiUrl" type="url" placeholder="https://autoqa.example.com/api/v1" /></label>
+        </details>
+        <p id="signin-error" class="error" hidden></p>
+        <button type="submit" class="primary">Sign in</button>
+      </form>
+    </template>
+
+    <!-- Ready to record -->
+    <template id="tpl-ready">
+      <form id="start" class="stack">
+        <p class="lead">Record what you do on this tab.</p>
+        <p id="tab-url" class="url"></p>
+        <label>Project
+          <select name="projectId" required></select>
+        </label>
+        <label><span>Name <span class="muted">(optional)</span></span>
+          <input name="name" placeholder="Checkout flow" />
+        </label>
+        <p id="start-error" class="error" hidden></p>
+        <button type="submit" class="primary rec">
+          <span class="dot"></span>Start recording
+        </button>
+      </form>
+    </template>
+
+    <!-- Recording this tab -->
+    <template id="tpl-recording">
+      <div class="stack">
+        <p class="live"><span class="dot pulse"></span>Recording</p>
+        <p id="rec-name" class="lead"></p>
+        <p class="muted">
+          <b id="rec-count">0</b> actions captured. Use the site normally; new
+          tabs it opens are recorded too.
+        </p>
+        <p id="stop-error" class="error" hidden></p>
+        <button id="stop" class="primary danger">Stop and generate tests</button>
+      </div>
+    </template>
+
+    <footer class="foot">
+      <span id="user" class="muted"></span>
+      <span class="grow"></span>
+      <a id="open-app" href="#" target="_blank" rel="noopener" hidden>Open AutoQA</a>
+      <button id="signout" class="link" hidden>Sign out</button>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
