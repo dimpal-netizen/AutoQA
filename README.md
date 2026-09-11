@@ -122,22 +122,24 @@ poetry run alembic upgrade head
 
 ```bash
 # still in backend/
-poetry run uvicorn app.main:app --reload --host 0.0.0.0
+poetry run python -m app
 ```
 
-Leave this terminal running. The API is now at <http://localhost:8000>.
+Leave this terminal running. The API is now at <http://localhost:4000>.
 
-> **Always start uvicorn from `backend/`, never from the project root.**
-> `--reload` watches the folder it was started in. Generating a suite and running
-> a test both write `.py` files into `generated/`, which sits *outside*
-> `backend/` for exactly this reason. Start it from the root and every test run
-> restarts the server, killing the run that triggered it — with the unhelpful
-> message *"pytest produced no report"*.
+The port comes from `API_PORT` in `.env` (default 4000) and reload watches only
+`app/`, so a test run writing into `generated/` does not restart the server
+mid-run.
 
-> **Why `--host 0.0.0.0`:** uvicorn defaults to `127.0.0.1`, which works for
-> `localhost` but not for your LAN IP — handy if you want to open the app from a
-> phone. On Windows neither `0.0.0.0` (IPv4-only) nor `::` (IPv6-only) binds both
-> stacks, so pick the one matching how you browse. `localhost` works either way.
+> **Not `uvicorn app.main:app --reload`.** That works, but uvicorn does not read
+> `.env`, so it lands on uvicorn's own default of 8000 — which the web app is not
+> pointed at — and its reloader watches the whole working directory. If you do
+> want the raw command, add `--port 4000` and start it from `backend/`.
+
+> **Why host `0.0.0.0`:** `127.0.0.1` works for `localhost` but not for your LAN
+> IP — handy if you want to open the app from a phone. On Windows neither
+> `0.0.0.0` (IPv4-only) nor `::` (IPv6-only) binds both stacks; set `API_HOST`
+> in `.env` to match how you browse. `localhost` works either way.
 
 ### Step 7 — Start the web app
 
@@ -152,7 +154,7 @@ npm run dev
 
 ### Step 8 — Create your account
 
-Open <http://localhost:3000> and register.
+Open <http://localhost:4041> and register.
 
 **The first account created becomes the admin.** Make it yours.
 
@@ -161,15 +163,15 @@ Open <http://localhost:3000> and register.
 ## 4. Check it actually works
 
 ```bash
-curl http://localhost:8000/health          # is the API alive?
-curl http://localhost:8000/health/ready    # are Postgres and Redis reachable?
+curl http://localhost:4000/health          # is the API alive?
+curl http://localhost:4000/health/ready    # are Postgres and Redis reachable?
 ```
 
 `/health/ready` returns `503` and names the failing dependency if Docker is not
 running. That is the fastest way to tell an app problem from an infrastructure
 one.
 
-Interactive API docs: <http://localhost:8000/docs>
+Interactive API docs: <http://localhost:4000/docs>
 
 ---
 
@@ -180,7 +182,7 @@ Setup is done. From then on it is two terminals:
 ```bash
 # Terminal 1 — API
 cd backend
-poetry run uvicorn app.main:app --reload --host 0.0.0.0
+poetry run python -m app
 
 # Terminal 2 — web app
 cd frontend
@@ -377,11 +379,11 @@ npx eslint src         # lint
 
 | URL | What |
 |---|---|
-| <http://localhost:3000> | The app |
-| <http://localhost:8000/docs> | Swagger UI |
-| <http://localhost:8000/redoc> | ReDoc |
-| <http://localhost:8000/health> | Liveness |
-| <http://localhost:8000/health/ready> | Postgres + Redis check |
+| <http://localhost:4041> | The app |
+| <http://localhost:4000/docs> | Swagger UI |
+| <http://localhost:4000/redoc> | ReDoc |
+| <http://localhost:4000/health> | Liveness |
+| <http://localhost:4000/health/ready> | Postgres + Redis check |
 
 ---
 

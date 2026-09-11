@@ -1,8 +1,8 @@
 """FastAPI application entry point.
 
-Run it with:
-    poetry run uvicorn app.main:app --reload
-Then open http://localhost:8000/docs
+Run it with (from backend/):
+    poetry run python -m app
+Then open http://localhost:4000/docs
 """
 
 import logging

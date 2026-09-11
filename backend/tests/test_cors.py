@@ -10,12 +10,12 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 
 LOCAL_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://[::1]:3000",
-    "http://192.168.1.135:3000",
-    "http://10.0.0.5:3000",
-    "http://172.16.4.2:3000",
+    "http://localhost:4041",
+    "http://127.0.0.1:4041",
+    "http://[::1]:4041",
+    "http://192.168.1.135:4041",
+    "http://10.0.0.5:4041",
+    "http://172.16.4.2:4041",
     "http://localhost:5173",  # a different dev server port
 ]
 
