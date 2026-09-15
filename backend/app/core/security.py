@@ -14,7 +14,14 @@ import jwt
 from app.core.config import settings
 
 ALGORITHM = "HS256"
-TokenType = Literal["access", "refresh"]
+# `watch` is the cookie that lets a signed-in user open the server's screen
+# through nginx (see api/auth.py). Its own type, so an access token in a
+# cookie cannot be used for it and it cannot be used as an access token.
+TokenType = Literal["access", "refresh", "watch"]
+
+#: How long a Watch live cookie lasts. Re-issued every time the button is
+#: pressed, so this only has to outlast one sitting in front of a run.
+WATCH_TOKEN_HOURS = 4
 
 # bcrypt hashes at most 72 bytes and raises on anything longer.
 BCRYPT_MAX_BYTES = 72
@@ -47,6 +54,10 @@ def create_access_token(subject: int | str) -> str:
 
 def create_refresh_token(subject: int | str) -> str:
     return _create_token(subject, "refresh", timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+
+
+def create_watch_token(subject: int | str) -> str:
+    return _create_token(subject, "watch", timedelta(hours=WATCH_TOKEN_HOURS))
 
 
 def _create_token(subject: int | str, token_type: TokenType, lifetime: timedelta) -> str:

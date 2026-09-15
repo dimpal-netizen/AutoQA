@@ -4,10 +4,17 @@ Routes stay thin: parse input, call one service method, return the result.
 Service errors are converted to HTTP responses by the handler in app/main.py.
 """
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.deps import CurrentUser, DbSession, require_role
+from app.core.security import (
+    WATCH_TOKEN_HOURS,
+    TokenError,
+    create_watch_token,
+    decode_token,
+)
 from app.models.enums import UserRole
+from app.models.user import User
 from app.schemas.user import (
     LoginRequest,
     RefreshRequest,
@@ -18,6 +25,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.services.auth_service import AuthService
+from app.services.exceptions import Unauthorized
 
 router = APIRouter()
 
@@ -51,6 +59,52 @@ def refresh_tokens(data: RefreshRequest, db: DbSession) -> TokenPair:
 @auth_router.get("/me", response_model=UserRead)
 def read_me(user: CurrentUser) -> UserRead:
     return UserRead.model_validate(user)
+
+
+# ---------------------------------------------------------------------------
+# Watch live
+#
+# The server's screen is served by noVNC behind nginx at /record/, and nginx
+# has to decide who may see it. It cannot read the app's bearer token - an
+# iframe and a WebSocket send cookies, not headers - so the app asks for a
+# cookie first, and nginx checks that cookie with `auth_request` on every
+# request under /record/ (see docker/nginx/autoqa.conf). One sign-in, no
+# second password.
+# ---------------------------------------------------------------------------
+WATCH_COOKIE = "autoqa_watch"
+#: Only sent to the screen, never to the API itself.
+WATCH_COOKIE_PATH = "/record/"
+
+
+@auth_router.post("/watch-cookie", status_code=status.HTTP_204_NO_CONTENT)
+def issue_watch_cookie(request: Request, response: Response, user: CurrentUser) -> None:
+    """Let this signed-in user open the server's screen for a while."""
+    forwarded = request.headers.get("x-forwarded-proto", request.url.scheme)
+    response.set_cookie(
+        WATCH_COOKIE,
+        create_watch_token(user.id),
+        max_age=WATCH_TOKEN_HOURS * 3600,
+        path=WATCH_COOKIE_PATH,
+        httponly=True,
+        secure=forwarded == "https",
+        samesite="lax",
+    )
+
+
+@auth_router.get("/watch-check", status_code=status.HTTP_204_NO_CONTENT)
+def check_watch_cookie(request: Request, db: DbSession) -> None:
+    """nginx's `auth_request` target: 204 lets the request through, 401 stops it."""
+    token = request.cookies.get(WATCH_COOKIE)
+    if not token:
+        raise Unauthorized("Sign in to AutoQA to watch a run")
+    try:
+        payload = decode_token(token, expected_type="watch")
+    except TokenError as exc:
+        raise Unauthorized(str(exc)) from exc
+    # A deactivated account stops here, cookie or no cookie.
+    user = db.get(User, int(payload["sub"]))
+    if user is None or not user.is_active:
+        raise Unauthorized("User no longer exists or is inactive")
 
 
 # ---------------------------------------------------------------------------
