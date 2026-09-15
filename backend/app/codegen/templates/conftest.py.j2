@@ -115,6 +115,32 @@ def base_url() -> str:
     return os.environ.get("BASE_URL", DEFAULT_BASE_URL)
 
 
+#: Roughly what a browser's own bars - tabs, address bar - add above the page.
+#: Only used to keep a watched window inside the screen it opens on.
+BROWSER_CHROME_PX = 90
+
+
+def _viewport() -> dict[str, int]:
+    """The recorded viewport - unless this run is being watched on a server.
+
+    There the window opens on a virtual screen of a fixed size, and the Watch
+    live panel shows that screen. A window larger than the screen is clipped,
+    which makes the live view useless, so the viewport is shrunk to fit. Only
+    then, and only by as much as it must: a headless run, or one on a
+    developer's own screen, keeps the viewport the recording had.
+    """
+    width, height = {{ viewport_width }}, {{ viewport_height }}
+    screen = os.environ.get("AUTOQA_WATCH_SCREEN", "")
+    try:
+        screen_w, screen_h = (int(v) for v in screen.lower().split("x")[:2])
+    except ValueError:
+        return {"width": width, "height": height}
+    return {
+        "width": min(width, screen_w),
+        "height": min(height, screen_h - BROWSER_CHROME_PX),
+    }
+
+
 @pytest.fixture(scope="session")
 def browser_context_args(browser_context_args: dict) -> dict:
     """A stable viewport for every test, so screenshots are comparable.
@@ -125,7 +151,7 @@ def browser_context_args(browser_context_args: dict) -> dict:
     """
     return {
         **browser_context_args,
-        "viewport": {"width": {{ viewport_width }}, "height": {{ viewport_height }}},
+        "viewport": _viewport(),
         "ignore_https_errors": True,
     }
 

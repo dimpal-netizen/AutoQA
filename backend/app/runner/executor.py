@@ -70,6 +70,19 @@ def has_display() -> bool:
     return Path(f"/tmp/.X11-unix/X{match.group(1)}").exists()
 
 
+def watch_screen() -> str | None:
+    """The size of the virtual screen a watched run opens on, as "WxH".
+
+    Only on a server: a developer's own screen is whatever it is, and a
+    window there is never clipped by anything the run controls. The size is
+    what docker/backend-entrypoint.sh gave Xvfb, from the same variable.
+    """
+    if sys.platform != "linux" or not has_display():
+        return None
+    match = re.match(r"^(\d+)x(\d+)", os.environ.get("AUTOQA_SCREEN", "1600x900x24"))
+    return f"{match.group(1)}x{match.group(2)}" if match else None
+
+
 @dataclass
 class CollectedArtifact:
     type: ArtifactType
@@ -140,7 +153,7 @@ def run_suite(
         outcome.exit_code, output, timed_out = _stream(
             _command(browser, headless=headless, slow_mo_ms=slow_mo_ms),
             cwd=workspace,
-            env=_environment(base_url, slow_mo_ms=slow_mo_ms),
+            env=_environment(base_url, slow_mo_ms=slow_mo_ms, headless=headless),
             timeout_s=timeout_s,
             run_id=run_id,
             on_progress=on_progress,
@@ -411,12 +424,21 @@ def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[s
     return command
 
 
-def _environment(base_url: str | None, *, slow_mo_ms: int = 0) -> dict[str, str]:
+def _environment(
+    base_url: str | None, *, slow_mo_ms: int = 0, headless: bool = True
+) -> dict[str, str]:
     env = os.environ.copy()
     if slow_mo_ms > 0:
         # Somebody is watching this one. The generated helpers read it to glide
         # the page instead of jumping it - see `_glide` in healing.py.
         env["AUTOQA_WATCH"] = "1"
+    screen = watch_screen() if not headless else None
+    if screen:
+        # The window opens on the server's virtual screen, which is what the
+        # Watch live panel shows. The generated conftest keeps the window
+        # inside it - a window larger than the screen is clipped, and clipped
+        # is the one thing a live view must not be.
+        env["AUTOQA_WATCH_SCREEN"] = screen
     if base_url:
         # The generated conftest reads this, so the same suite can be pointed
         # at staging without regenerating anything.

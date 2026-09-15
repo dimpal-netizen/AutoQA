@@ -23,7 +23,7 @@ log() { echo "[autoqa] $*"; }
 # instead - every test still keeps its video, screenshots and trace.
 # ---------------------------------------------------------------------------
 if [ "${AUTOQA_VIRTUAL_DISPLAY:-1}" = "1" ]; then
-    screen="${AUTOQA_SCREEN:-1920x1080x24}"
+    screen="${AUTOQA_SCREEN:-1600x900x24}"
     log "starting Xvfb on ${DISPLAY} at ${screen}"
     Xvfb "${DISPLAY}" -screen 0 "${screen}" -nolisten tcp -noreset &
 
