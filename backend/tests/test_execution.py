@@ -799,3 +799,19 @@ def test_watch_url_is_the_novnc_page_only_where_a_virtual_screen_runs(monkeypatc
 
     monkeypatch.setattr(settings, "WATCH_URL", "https://screens.example.com/vnc.html")
     assert runs.watch_url() == "https://screens.example.com/vnc.html"
+
+
+def test_a_watched_run_on_a_server_is_told_its_screen(monkeypatch):
+    """So the generated conftest can keep the window inside it."""
+    from app.runner import executor
+
+    monkeypatch.setattr(executor.sys, "platform", "linux")
+    monkeypatch.setattr(executor, "has_display", lambda: True)
+    monkeypatch.setenv("AUTOQA_SCREEN", "1600x900x24")
+
+    assert executor.watch_screen() == "1600x900"
+    assert executor._environment(None, headless=False)["AUTOQA_WATCH_SCREEN"] == "1600x900"
+    assert "AUTOQA_WATCH_SCREEN" not in executor._environment(None, headless=True)
+
+    monkeypatch.setattr(executor.sys, "platform", "win32")   # a developer's own screen
+    assert executor.watch_screen() is None

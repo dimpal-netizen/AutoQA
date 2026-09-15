@@ -7,6 +7,7 @@ three phases away.
 
 import ast
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -558,8 +559,35 @@ def test_conftest_uses_the_recorded_viewport(sample) -> None:
         if s.path == "conftest.py"
     ).content
 
-    assert '"width": 1440' in conftest
-    assert '"height": 900' in conftest
+    assert "1440, 900" in conftest
+
+
+
+def test_a_watched_viewport_shrinks_only_to_fit_the_screen(sample, monkeypatch) -> None:
+    """The recorded viewport is kept - unless the run is watched on a server
+    screen too small for the window, when it shrinks just enough to fit."""
+    ir = build_ir(sample["actions"], suite_name="Flow", start_url="https://x.test/")
+    conftest = next(
+        s for s in render(ir, browser_info=sample["session"]["browser_info"])
+        if s.path == "conftest.py"
+    ).content
+
+    # Only the helper, run as generated: the fixtures around it need pytest's
+    # own machinery and the browser, and the arithmetic is what is under test.
+    start = conftest.index("BROWSER_CHROME_PX")
+    end = conftest.index("@pytest.fixture", start)
+    namespace: dict = {"os": os}
+    exec(conftest[start:end], namespace)  # noqa: S102 - our own code
+    viewport = namespace["_viewport"]
+
+    monkeypatch.delenv("AUTOQA_WATCH_SCREEN", raising=False)
+    assert viewport() == {"width": 1440, "height": 900}
+
+    monkeypatch.setenv("AUTOQA_WATCH_SCREEN", "1600x900")
+    assert viewport() == {"width": 1440, "height": 810}
+
+    monkeypatch.setenv("AUTOQA_WATCH_SCREEN", "1280x1200")
+    assert viewport() == {"width": 1280, "height": 900}
 
 
 def test_assertions_are_given_longer_than_playwrights_default(sample) -> None:
@@ -588,7 +616,7 @@ def test_absurd_viewport_falls_back_to_a_sane_default() -> None:
         if s.path == "conftest.py"
     ).content
 
-    assert '"width": 1280' in conftest
+    assert "1280, 720" in conftest
 
 
 def test_the_bundle_is_collectable_by_pytest(generated, tmp_path) -> None:
