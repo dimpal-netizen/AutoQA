@@ -44,7 +44,15 @@ class RunCapabilities(BaseModel):
 #: host the web app is on. `view_only` because tests are automated and a
 #: stray click would only interfere; `resize=scale` fits the 1920x1080
 #: virtual screen into the panel.
-NOVNC_PATH = "/record/vnc.html?autoconnect=true&resize=scale&view_only=true"
+#:
+#: `path` is the WebSocket, and it is needed: noVNC builds that URL from the
+#: site root, not from the page it is on, so without it the socket goes to
+#: /websockify - which is the web app - and the page says "Failed to connect
+#: to server" under a perfectly good screen.
+NOVNC_PATH = (
+    "/record/vnc.html?autoconnect=true&resize=scale&view_only=true"
+    "&path=record/websockify"
+)
 
 
 def watch_url() -> str | None:
