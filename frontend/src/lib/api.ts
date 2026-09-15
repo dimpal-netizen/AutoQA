@@ -156,6 +156,12 @@ export const api = {
       }),
 
     me: () => request<User>("/auth/me"),
+
+    /** Sets the cookie nginx checks before serving the server's screen at
+     *  /record/. `credentials: "include"` because a cookie is the whole point,
+     *  and in development the API is on another port. */
+    watchCookie: () =>
+      request<void>("/auth/watch-cookie", { method: "POST", credentials: "include" }),
   },
 
   projects: {

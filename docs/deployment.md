@@ -59,20 +59,25 @@ notice nothing.
 
 Running a test is the other place a browser opens, and on a server it opens
 on a virtual screen: Xvfb provides it, x11vnc publishes it, and noVNC serves
-it as a web page on port 29383, which nginx exposes under `/record/` with a
-password. With `AUTOQA_VIRTUAL_DISPLAY=1` (the default) a run opens a real,
+it as a web page on port 29383, which nginx exposes under `/record/`. With
+`AUTOQA_VIRTUAL_DISPLAY=1` (the default) a run opens a real,
 headed browser on that screen, stepping through at the readable pace, and the
 web app shows the screen live behind **Watch live** on the run - the same
 thing you see on a laptop, watched through the page.
 
-Two things to know. It is **one screen for the server**: two runs at the same
-time both appear on it. And the `/record/` password is nginx's, separate from
-the AutoQA login; the browser asks for it once, inside the panel.
+Who may see it is decided by the AutoQA sign-in, not a second password: the
+web app sets a cookie for the signed-in user (`POST /auth/watch-cookie`) and
+nginx checks it with the API (`auth_request` → `/auth/watch-check`) on every
+request under `/record/`, the WebSocket included. Signed out, the screen is a
+401.
+
+One thing to know: it is **one screen for the server**. Two runs at the same
+time both appear on it.
 
 `AUTOQA_VIRTUAL_DISPLAY=0` turns all of this off. Runs then go headless at
 full speed, the button is hidden, and every test still keeps its video,
 screenshots and trace - which is how a run is reviewed afterwards either way.
-Delete the `/record/` block from nginx as well.
+Delete the `/record/` and `/_autoqa_watch_check` blocks from nginx as well.
 
 ---
 
@@ -130,10 +135,7 @@ A ready config is at [`docker/nginx/autoqa.conf`](../docker/nginx/autoqa.conf).
 Replace `autoqa.example.com` throughout, then:
 
 ```bash
-sudo apt install nginx certbot python3-certbot-nginx apache2-utils
-
-# The password for the recording screen. It has none of its own — see section 2.
-sudo htpasswd -c /etc/nginx/.htpasswd-autoqa qa
+sudo apt install nginx certbot python3-certbot-nginx
 
 sudo cp docker/nginx/autoqa.conf /etc/nginx/sites-available/autoqa
 sudo ln -s /etc/nginx/sites-available/autoqa /etc/nginx/sites-enabled/
@@ -155,7 +157,7 @@ What the config handles, and why each part is there:
 | `/api/` | `:29381` | `proxy_buffering off` — artifacts are streamed by `FileResponse` and a trace runs to tens of megabytes. With buffering on, nginx spools the whole file before sending a byte and a download looks like a hang. 300s timeouts, because generating a suite calls an AI provider. |
 | `/health` | `:29381` | Kept off the API prefix so uptime checks do not depend on the version. |
 | `/static/` | `:29381` | `recorder.js`, injected into recorded pages. |
-| `/record/` | `:29383` | The server's screen for **Watch live** (section 2). Basic auth, plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. `frame-ancestors 'self'` so the web app may embed it and nothing else may. Delete it with `AUTOQA_VIRTUAL_DISPLAY=0`. |
+| `/record/` | `:29383` | The server's screen for **Watch live** (section 2). `auth_request` to the API's `/auth/watch-check`, so only a signed-in AutoQA user gets it; plus `Upgrade`/`Connection` headers — noVNC is a WebSocket, and without them it connects, gets plain HTTP, and shows a blank grey canvas for ever with nothing in any log. `frame-ancestors 'self'` so the web app may embed it and nothing else may. Delete it, and the `/_autoqa_watch_check` block above it, with `AUTOQA_VIRTUAL_DISPLAY=0`. |
 | `/` | `:29382` | The web app. |
 
 Also set: `client_max_body_size 64m`. nginx defaults to 1 MB, and test-case
@@ -163,8 +165,8 @@ spreadsheets are uploaded through the API — over the limit, nginx returns 413
 without the request ever reaching the application, so the UI reports a failure
 the API logs know nothing about.
 
-With `AUTOQA_VIRTUAL_DISPLAY=0`, delete the `/record/` block and skip the
-`htpasswd` step.
+With `AUTOQA_VIRTUAL_DISPLAY=0`, delete the `/record/` and
+`/_autoqa_watch_check` blocks.
 
 <details>
 <summary>Caddy instead</summary>
@@ -176,7 +178,10 @@ autoqa.example.com {
 	handle /static/* { reverse_proxy 127.0.0.1:29381 }
 
 	handle /record/* {
-		basic_auth { qa $2a$14$...  }   # caddy hash-password
+		forward_auth 127.0.0.1:29381 {
+			uri /api/v1/auth/watch-check
+			copy_headers Cookie
+		}
 		uri strip_prefix /record
 		reverse_proxy 127.0.0.1:29383
 	}
@@ -278,10 +283,16 @@ The API found no screen: `AUTOQA_VIRTUAL_DISPLAY` is 0, or Xvfb failed to
 start - check `docker compose logs api` for
 `warning: /tmp/.X11-unix/X99 never appeared`. Runs still work, headless.
 
-**Watch live shows a grey screen, or asks for a password and then stays blank.**
+**Watch live shows a grey screen, or stays blank.**
 Grey with nothing on it means no browser is open on the screen yet - wait for
-the run to start its first test. Blank after the password means the WebSocket
-upgrade is not getting through nginx; see the `/record/` notes in section 4.
+the run to start its first test. Blank means the WebSocket upgrade is not
+getting through nginx; see the `/record/` notes in section 4.
+
+**Watch live shows a 401, or "Could not open the live view".**
+nginx's `auth_request` could not reach `/api/v1/auth/watch-check`, or the
+cookie was not set: the `/_autoqa_watch_check` block must proxy to the API
+and pass `Cookie` through, and the site must be served over one host so the
+cookie the API sets is the one nginx sees.
 
 **The noVNC page connects and stays black.**
 Nothing has opened a window yet. The screen exists from container start; it

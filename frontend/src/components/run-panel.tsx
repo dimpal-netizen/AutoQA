@@ -504,38 +504,74 @@ export function RunPanel({
  *
  *  A run on a server opens its browser on a virtual display nobody is in
  *  front of. noVNC streams that display over a WebSocket and draws it on a
- *  canvas; this is that page, in a frame, on the same origin as the app so
- *  nginx's password for it is asked once and remembered.
+ *  canvas; this is that page, in a frame, on the same origin as the app.
+ *
+ *  nginx only serves it to somebody signed in to AutoQA, and it tells by a
+ *  cookie - a frame and a WebSocket carry cookies, not bearer tokens. So the
+ *  cookie is asked for first, and the frame is not shown until it is set;
+ *  shown earlier it would be a 401 page that a later cookie cannot fix
+ *  without a reload.
  *
  *  It is the same thing every cloud testing service shows: the browser runs
  *  over there, and you watch it here. View only - the tests are automated,
  *  and a click into the picture would only get in their way. */
 function LiveView({ url }: { url: string }) {
   const src = url.startsWith("/") ? `${window.location.origin}${url}` : url;
+  const [ready, setReady] = useState<"pending" | "ok" | "failed">("pending");
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.auth
+      .watchCookie()
+      .then(() => !cancelled && setReady("ok"))
+      .catch(() => !cancelled && setReady("failed"));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-black shadow-md">
       <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
         <LiveDot className="text-destructive" />
         Live — the browser running on the server
-        <a
-          href={src}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="ml-auto text-primary underline-offset-4 hover:underline"
-        >
-          Open in a new tab
-        </a>
+        {ready === "ok" && (
+          <a
+            href={src}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="ml-auto text-primary underline-offset-4 hover:underline"
+          >
+            Open in a new tab
+          </a>
+        )}
       </div>
-      <iframe
-        src={src}
-        title="Live view of the test run"
-        className="block w-full"
-        style={{ aspectRatio: "16 / 9", minHeight: 320 }}
-        allow="fullscreen"
-      />
+      {ready === "ok" ? (
+        <iframe
+          src={src}
+          title="Live view of the test run"
+          className="block w-full"
+          style={{ aspectRatio: "16 / 9", minHeight: 320 }}
+          allow="fullscreen"
+        />
+      ) : (
+        <div
+          className="flex items-center justify-center bg-card text-sm text-muted-foreground"
+          style={{ aspectRatio: "16 / 9", minHeight: 320 }}
+        >
+          {ready === "pending" ? (
+            <>
+              <RefreshCw className="mr-2 size-4 animate-spin" />
+              Connecting to the server&apos;s screen…
+            </>
+          ) : (
+            "Could not open the live view - sign in again and retry."
+          )}
+        </div>
+      )}
       <p className="border-t border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
-        If it asks for a password, it is the one set for the recording screen on
-        the server. A grey screen means nothing is open on it yet.
+        A grey screen means nothing is open on it yet - the first test is still
+        starting.
       </p>
     </div>
   );
