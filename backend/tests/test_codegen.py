@@ -625,16 +625,13 @@ def test_the_bundle_is_collectable_by_pytest(generated, tmp_path) -> None:
     Catches broken imports between the test and its page objects, a conftest
     that raises, and an invalid pytest.ini — none of which ast.parse would see.
     """
-    for spec in generated:
-        target = tmp_path / spec.path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(spec.content, encoding="utf-8")
-
-    # The executor's own command and environment, not a hand-rolled pair. A
-    # bundle that collects under different flags than the ones it will actually
-    # be run with is not the bar this test claims to hold.
+    # The executor's own workspace, command and environment, not a hand-rolled
+    # set. A bundle that collects under different flags than the ones it will
+    # actually be run with is not the bar this test claims to hold.
     from app.models.enums import Browser
-    from app.runner.executor import _command, _environment
+    from app.runner.executor import _command, _environment, _materialise
+
+    _materialise({spec.path: spec.content for spec in generated}, tmp_path)
 
     result = subprocess.run(
         [*_command(Browser.CHROMIUM, headless=True), "--collect-only", "--no-header"],

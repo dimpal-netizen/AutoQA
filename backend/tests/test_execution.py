@@ -815,3 +815,4 @@ def test_a_watched_run_on_a_server_is_told_its_screen(monkeypatch):
 
     monkeypatch.setattr(executor.sys, "platform", "win32")   # a developer's own screen
     assert executor.watch_screen() is None
+

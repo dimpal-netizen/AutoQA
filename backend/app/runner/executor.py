@@ -243,6 +243,11 @@ def _materialise(
     bundle: dict[str, str], workspace: Path, samples: dict[str, bytes] | None = None
 ) -> None:
     """Write the suite into the workspace, refusing anything outside it."""
+    # See runtime_plugin.py: what must hold for every run, whatever the
+    # suite's own conftest says.
+    (workspace / f"{RUNTIME_PLUGIN_NAME}.py").write_text(
+        RUNTIME_PLUGIN_SOURCE.read_text(encoding="utf-8"), encoding="utf-8", newline="\n"
+    )
     for relative, content in bundle.items():
         destination = (workspace / relative).resolve()
         if not destination.is_relative_to(workspace.resolve()):
@@ -391,6 +396,12 @@ def _stream(
 #: defines it every test errors on an unknown fixture.
 _PLUGINS = ("pytest_playwright.pytest_playwright", "pytest_base_url.plugin")
 
+#: Our own plugin, copied into every workspace under this name and loaded like
+#: the two above. A file rather than an import path because the suite runs
+#: with the workspace as its only path - the API's package is not on it.
+RUNTIME_PLUGIN_SOURCE = Path(__file__).with_name("runtime_plugin.py")
+RUNTIME_PLUGIN_NAME = "_autoqa_runtime"
+
 
 def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[str]:
     """The pytest invocation.
@@ -413,7 +424,7 @@ def _command(browser: Browser, *, headless: bool, slow_mo_ms: int = 0) -> list[s
         "--tb=short",
     ]
     # Load exactly the plugins above and nothing else - see _environment.
-    for plugin in _PLUGINS:
+    for plugin in (*_PLUGINS, RUNTIME_PLUGIN_NAME):
         command += ["-p", plugin]
     if not headless:
         command.append("--headed")
