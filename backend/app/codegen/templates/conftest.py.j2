@@ -110,6 +110,26 @@ def _patient_actions(page: Page) -> None:
     page.set_default_navigation_timeout(ACTION_TIMEOUT_MS)
 
 
+@pytest.fixture(autouse=True)
+def _no_native_file_dialogs(context) -> None:
+    """Keep the operating system's file picker from ever opening.
+
+    A recording of an upload holds the click on "Choose file" and then the
+    file. Replayed headless, the click goes nowhere and `set_input_files` does
+    the upload. Replayed headed - a run somebody is watching - that click opens
+    the real picker, which no test can fill in, and the run sits behind it
+    until the timeout. With a listener attached, Playwright intercepts the
+    chooser instead of showing it; the listener has nothing to do, because the
+    upload step that follows sets the files directly.
+
+    On the context so that a popup or a second tab is covered too.
+    """
+    ignore = lambda chooser: None  # noqa: E731 - the point is that it does nothing
+    for open_page in context.pages:
+        open_page.on("filechooser", ignore)
+    context.on("page", lambda new_page: new_page.on("filechooser", ignore))
+
+
 @pytest.fixture(scope="session")
 def base_url() -> str:
     return os.environ.get("BASE_URL", DEFAULT_BASE_URL)
