@@ -32,15 +32,17 @@ class AuthService:
         if self.users.email_exists(data.email):
             raise AlreadyExists("That email is already registered")
 
-        # Everyone who signs up gets full access. This is a tool for one QA
-        # team, and nobody should have to wait for a promotion before they can
-        # create a project and test it. The role column and the checks on it
-        # stay, so a tiered model can come back by changing this one line.
+        # Everyone who signs up can do everything *with their own work* -
+        # create projects, record, generate, run - and sees nothing else.
+        # Sign-ups used to be admins, and an admin sees every project on the
+        # instance; the moment a second person signed up, they were looking at
+        # the first person's recordings. Admins are made by an admin, through
+        # /users.
         user = self.users.create(
             email=data.email,
             hashed_password=hash_password(data.password),
             full_name=data.full_name,
-            role=UserRole.ADMIN,
+            role=UserRole.QA_ENGINEER,
             is_active=True,
         )
         self.db.commit()

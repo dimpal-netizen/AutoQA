@@ -19,7 +19,7 @@ import {
 
 export default function RegisterPage() {
   const router = useRouter();
-  const setSession = useAuthStore((s) => s.setSession);
+  const logout = useAuthStore((s) => s.logout);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -33,14 +33,17 @@ export default function RegisterPage() {
     setBusy(true);
 
     try {
-      setSession(
-        await api.auth.register({
-          email,
-          password,
-          full_name: fullName || undefined,
-        }),
-      );
-      router.replace("/dashboard");
+      await api.auth.register({
+        email,
+        password,
+        full_name: fullName || undefined,
+      });
+      // Not signed in here. A new account goes to the sign-in screen and
+      // enters its own credentials, so what opens is that account's own
+      // workspace - and whatever this browser was signed in as before is
+      // dropped, so it cannot be mistaken for the account just created.
+      logout();
+      router.replace("/login?registered=1");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create account");
     } finally {
@@ -56,7 +59,7 @@ export default function RegisterPage() {
         <CardHeader>
           <CardTitle>Create your account</CardTitle>
           <CardDescription>
-            You can create projects and run tests straight away.
+            Then sign in, and create your first project.
           </CardDescription>
         </CardHeader>
 

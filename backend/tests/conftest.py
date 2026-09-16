@@ -106,9 +106,9 @@ def client() -> TestClient:
 def register_user(client: TestClient, role: str = "qa_engineer", **fields) -> dict:
     """Sign up through the API and return the token payload, as `role`.
 
-    Sign-up gives everyone full access, so a test that needs a lesser role
-    (to check it is refused something) sets it afterwards straight in the
-    database. The returned `user` reflects the role set.
+    Sign-up makes a qa_engineer, so a test that needs another role sets it
+    afterwards straight in the database. The returned `user` reflects the
+    role set.
     """
     payload = {
         "email": f"user-{uuid.uuid4().hex[:12]}@example.com",

@@ -45,26 +45,39 @@ def test_register_login_and_me(client: TestClient) -> None:
     assert me.json()["email"] == email
 
 
-def test_register_gives_full_access(client: TestClient) -> None:
-    register(client)  # so this is not the first account
+def test_register_gives_own_work_only(client: TestClient) -> None:
+    """A sign-up can do everything with its own projects and sees nobody
+    else's. Two people signing up must not be looking at each other's
+    recordings - which is what happened while every sign-up was an admin."""
+    first = register(client)
+    theirs = client.post(
+        f"{API}/projects",
+        headers=auth_header(first),
+        json={"name": f"Theirs {uuid.uuid4().hex[:6]}", "base_url": "https://example.com"},
+    ).json()
 
     response = client.post(
         f"{API}/auth/register",
-        json={"email": unique_email(), "password": "supersecret123", "role": "manual_qa"},
+        json={"email": unique_email(), "password": "supersecret123", "role": "admin"},
     )
     assert response.status_code == 201, response.text
-    # The role field is not part of sign-up; whatever is sent, the account can
-    # do everything.
-    assert response.json()["user"]["role"] == "admin"
+    # The role field is not part of sign-up; whatever is sent, the account is
+    # an engineer, not an admin.
+    assert response.json()["user"]["role"] == "qa_engineer"
 
     headers = auth_header(response.json())
-    assert client.get(f"{API}/users", headers=headers).status_code == 200
     created = client.post(
         f"{API}/projects",
         headers=headers,
         json={"name": f"Own {uuid.uuid4().hex[:6]}", "base_url": "https://example.com"},
     )
     assert created.status_code == 201, created.text
+
+    mine = client.get(f"{API}/projects", headers=headers).json()
+    assert [p["id"] for p in mine] == [created.json()["id"]]
+    assert client.get(f"{API}/projects/{theirs['id']}", headers=headers).status_code == 404
+    assert client.get(f"{API}/recordings", headers=headers).json() == []
+    assert client.get(f"{API}/users", headers=headers).status_code == 403
 
 
 def test_duplicate_email_is_rejected(client: TestClient) -> None:
