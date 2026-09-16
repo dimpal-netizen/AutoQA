@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
 import { Brand } from "@/components/brand";
@@ -18,8 +18,21 @@ import {
 } from "@/components/ui/card";
 
 export default function LoginPage() {
+  // useSearchParams needs a Suspense boundary under the app router, or the
+  // whole page bails out of static rendering.
+  return (
+    <Suspense>
+      <Login />
+    </Suspense>
+  );
+}
+
+function Login() {
   const router = useRouter();
   const setSession = useAuthStore((s) => s.setSession);
+  // Sent here by the register page, so the person who just made an account
+  // is told it worked rather than wondering why they are looking at a login.
+  const justRegistered = useSearchParams().get("registered") === "1";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,6 +66,9 @@ export default function LoginPage() {
 
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {justRegistered && !error && (
+              <Alert variant="info">Account created. Sign in to continue.</Alert>
+            )}
             {error && <Alert>{error}</Alert>}
 
             <div className="flex flex-col gap-2">
